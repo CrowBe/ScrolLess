@@ -6,14 +6,16 @@ Personal feed aggregator. External AI agent scrapes platforms → POSTs to this 
 
 - **Backend**: Node.js 20+, TypeScript, Fastify, better-sqlite3, web-push
 - **Frontend**: Vite, **Preact** (not React, not preact/compat), TypeScript, plain CSS
-- **DB**: SQLite via `schema.sql`
+- **DB**: SQLite via `sql/schema.sql`
 
 ## Docs
 
-- `ARCHITECTURE.md` — routes, auth, payload formats, schema, push, PWA
-- `TASKS.md` — 11 sequential build stages; read this first, complete in order
-- `DESIGN_SYSTEM.md` — color tokens, typography, component patterns (from Stitch screens)
-- `SKILL.md` — agent scraping instructions (separate deliverable, not server code)
+- `docs/ARCHITECTURE.md` — routes, auth, payload formats, schema, push, PWA
+- `docs/TASKS.md` — 11 sequential build stages; read this first, complete in order
+- `docs/DESIGN_SYSTEM.md` — color tokens, typography, component patterns (from Stitch screens)
+- `docs/design/` — reference designs and screen PNGs
+- `skill/SKILL.md` — agent scraping instructions (separate deliverable, not server code)
+- `skill/resources/` — per-platform scraping notes and agent payload schema
 
 ## Route Groups (keep separate)
 
