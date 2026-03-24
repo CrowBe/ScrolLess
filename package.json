@@ -1,0 +1,32 @@
+{
+  "name": "scrolless",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev:server": "tsx --watch server/index.ts",
+    "dev:client": "vite",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "build": "vite build && node build-sw.mjs",
+    "start": "NODE_ENV=production tsx server/index.ts",
+    "generate-token": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.1",
+    "@fastify/rate-limit": "^9.1.0",
+    "@fastify/static": "^7.0.4",
+    "better-sqlite3": "^9.4.3",
+    "fastify": "^4.27.0",
+    "preact": "^10.19.6",
+    "tsx": "^4.7.2",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.8.1",
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/node": "^20.11.30",
+    "@types/web-push": "^3.6.3",
+    "concurrently": "^8.2.2",
+    "typescript": "^5.4.3",
+    "vite": "^5.2.7"
+  }
+}
