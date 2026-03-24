@@ -1,0 +1,9 @@
+node_modules/
+dist/
+config.json
+skill/config.json
+*.db
+*.db-wal
+*.db-shm
+.env
+dry-run-output.json

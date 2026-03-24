@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Settings - ScrolLess</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "error": "#ffb4ab",
+                        "inverse-on-surface": "#1a1c1f",
+                        "surface-container-high": "#282a2d",
+                        "on-tertiary-fixed": "#311300",
+                        "primary-fixed-dim": "#8ed0e7",
+                        "surface-container-lowest": "#0d0e11",
+                        "on-primary-container": "#b4ebff",
+                        "surface": "#121212",
+                        "on-tertiary": "#ffffff",
+                        "secondary-fixed": "#d7e4f1",
+                        "on-secondary-container": "#d7e4f1",
+                        "on-surface": "#e2e2e6",
+                        "tertiary": "#ffb688",
+                        "on-error-container": "#ffdad6",
+                        "surface-container-highest": "#333539",
+                        "primary": "#4db6ac",
+                        "secondary": "#bbc8d5",
+                        "on-tertiary-fixed-variant": "#6b3a16",
+                        "on-secondary-fixed-variant": "#3c4853",
+                        "on-secondary": "#26323d",
+                        "background": "#121212",
+                        "error-container": "#93000a",
+                        "on-primary-fixed-variant": "#004e5f",
+                        "surface-tint": "#8ed0e7",
+                        "outline": "#899293",
+                        "on-tertiary-container": "#ffdbc7",
+                        "surface-container-low": "#1a1c1f",
+                        "on-background": "#e2e2e6",
+                        "surface-dim": "#121212",
+                        "surface-bright": "#38393d",
+                        "inverse-primary": "#00687b",
+                        "on-primary-fixed": "#001f28",
+                        "surface-variant": "#3f4949",
+                        "on-primary": "#003642",
+                        "primary-container": "#004e5f",
+                        "on-secondary-fixed": "#111d26",
+                        "outline-variant": "#3f4949",
+                        "tertiary-fixed": "#ffdbc7",
+                        "secondary-fixed-dim": "#bbc8d5",
+                        "secondary-container": "#3c4853",
+                        "surface-container": "#1e2023",
+                        "tertiary-fixed-dim": "#ffb688",
+                        "on-surface-variant": "#c0c8c9",
+                        "inverse-surface": "#e2e2e6",
+                        "primary-fixed": "#b4ebff",
+                        "tertiary-container": "#4a2800",
+                        "on-error": "#690005"
+                    },
+                    fontFamily: {
+                        "headline": ["Manrope"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    },
+                    borderRadius: { "DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem" },
+                },
+            },
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; background-color: #121212; }
+        .font-headline { font-family: 'Manrope', sans-serif; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+        .glass {
+            background: rgba(18, 18, 18, 0.85);
+            backdrop-filter: blur(20px);
+        }
+    </style>
+</head>
+<body class="bg-surface text-on-surface min-h-screen pb-24 font-body">
+<!-- TopAppBar -->
+<header class="sticky top-0 z-50 w-full glass shadow-[0_32px_48px_rgba(0,0,0,0.3)] flex items-center justify-between px-6 py-4">
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-[#004e5f] flex items-center justify-center shadow-lg active:scale-95 transition-transform cursor-pointer">
+<span class="material-symbols-outlined text-white text-xl font-bold" style="font-variation-settings: 'wght' 700;">all_inclusive</span>
+</div>
+<h1 class="text-primary font-['Manrope'] font-extrabold tracking-tighter text-xl">ScrolLess</h1>
+</div>
+</div>
+<div class="flex items-center">
+<img class="w-10 h-10 rounded-full border-2 border-primary-container object-cover active:scale-95 duration-200 transition-transform cursor-pointer" data-alt="User profile avatar of a professional male" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC4Ah9GE2MiflqPGFcuqs7Tw_ShC65zne8iHy5DrbB6fcRiEOEbqICEUceX5cakjAD6UPpZGMuN08afd2mgqUtHXbpG6ooXWApwqdUe0mV8Gw1VeJKZNqX2949Nzle7HCLEt5iwPe-Gat82SUSgh0MZ8sdEoexI1iJzGqP1EJkUsQy9I63pXRqwbalqudFRSah57TaAgbVRlyCuGZ0HylMi6UZsaWtfzGHj4TU60elnFxKcW8DIUGj-kJzBz9ORmuOrzK4_-7-s3Q"/>
+</div>
+</header>
+<main class="max-w-2xl mx-auto px-6 pt-8 space-y-10">
+<!-- Page Title & Editorial Header -->
+<section class="mb-12">
+<div class="flex items-center gap-3 mb-2">
+<div class="w-1 h-8 bg-primary rounded-full"></div>
+<h2 class="text-3xl font-headline font-bold tracking-tight text-on-surface">Settings</h2>
+</div>
+<p class="text-on-surface-variant font-body text-sm ml-4 opacity-80">Refine your intelligent curator experience.</p>
+</section>
+<!-- Account & Profile Section -->
+<section class="space-y-4">
+<h3 class="text-label-sm font-headline font-bold text-on-surface-variant uppercase tracking-widest text-[11px] ml-1">Account &amp; Profile</h3>
+<div class="bg-surface-container-low p-6 rounded-xl shadow-sm space-y-6">
+<div class="flex items-center gap-4">
+<div class="relative">
+<img class="w-20 h-20 rounded-full object-cover shadow-md" data-alt="Large user avatar profile photo" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCwix7oKVTAC-T161NiLwcqduTZYhj-xdCjn_mnXPaXyzZhSDeZdczFRdEqYglmVWeEz1ZovhaWLuRB62k_myFvmoiwvqqEf1mnC0ACXr4SsNGMMbDe7jGkOLzg0Kj5OBN8YZUdSnvIUqAuxngyEE_XnFbqwggTrpv97y9g5H5cgMM--LZrKDhxHqVTNTBYLb6sfTC5XVtaW3z0ZIyX8VMg-yiBuX6QnUJ3Gs4tAG1MdpChwu-gPe5bYZ6aj_c12EX8rv2T_iB7iA"/>
+<button class="absolute bottom-0 right-0 bg-primary p-1.5 rounded-full text-on-primary shadow-lg active:scale-95 transition-transform">
+<span class="material-symbols-outlined text-sm" data-icon="edit">edit</span>
+</button>
+</div>
+<div class="flex-1">
+<h4 class="font-headline font-bold text-on-surface">Alex Thompson</h4>
+<p class="text-on-surface-variant text-sm font-body">alex.t@curator.ai</p>
+</div>
+<button class="px-4 py-2 text-primary font-bold text-sm hover:bg-primary/10 rounded-full transition-colors">Manage</button>
+</div>
+</div>
+</section>
+<!-- App Configuration Section -->
+<section class="space-y-4">
+<h3 class="text-label-sm font-headline font-bold text-on-surface-variant uppercase tracking-widest text-[11px] ml-1">App Configuration</h3>
+<div class="bg-surface-container-low rounded-xl p-2 space-y-1">
+<!-- Theme Selection -->
+<div class="bg-surface-container-lowest rounded-xl p-4 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary" data-icon="dark_mode">dark_mode</span>
+<span class="font-body font-medium text-on-surface">Theme</span>
+</div>
+<div class="flex bg-surface-container-high p-1 rounded-full">
+<button class="px-4 py-1.5 rounded-full text-xs font-medium text-on-surface-variant">Light</button>
+<button class="px-4 py-1.5 rounded-full text-xs font-bold bg-primary text-on-primary shadow-sm">Dark</button>
+<button class="px-4 py-1.5 rounded-full text-xs font-medium text-on-surface-variant">Auto</button>
+</div>
+</div>
+<!-- Update Frequency -->
+<div class="bg-surface-container-lowest rounded-xl p-4 flex flex-col gap-4">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary" data-icon="update">update</span>
+<span class="font-body font-medium text-on-surface">Feed Update Frequency</span>
+</div>
+<span class="text-xs font-bold text-primary px-3 py-1 bg-primary/10 rounded-full">Hourly</span>
+</div>
+<input class="w-full h-1.5 bg-surface-container-highest rounded-lg appearance-none cursor-pointer accent-primary" max="3" min="0" step="1" type="range"/>
+<div class="flex justify-between text-[10px] text-on-surface-variant font-medium px-1">
+<span>15m</span>
+<span>Hourly</span>
+<span>Daily</span>
+<span>Weekly</span>
+</div>
+</div>
+<!-- Unsaved Content Deletion -->
+<div class="bg-surface-container-lowest rounded-xl p-4 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary" data-icon="auto_delete">auto_delete</span>
+<div class="flex flex-col">
+<span class="font-body font-medium text-on-surface">Auto-Purge Unsaved</span>
+<span class="text-[10px] text-on-surface-variant">Remove older articles automatically</span>
+</div>
+</div>
+<select class="bg-transparent text-sm font-bold text-primary focus:ring-0 border-none cursor-pointer appearance-none">
+<option class="bg-surface text-on-surface">24 Hours</option>
+<option class="bg-surface text-on-surface" selected="">7 Days</option>
+<option class="bg-surface text-on-surface">30 Days</option>
+<option class="bg-surface text-on-surface">Never</option>
+</select>
+</div>
+</div>
+</section>
+<!-- AI Agent & Integrations Section -->
+<section class="space-y-4">
+<h3 class="text-label-sm font-headline font-bold text-on-surface-variant uppercase tracking-widest text-[11px] ml-1">AI Agent &amp; Integrations</h3>
+<div class="space-y-3">
+<!-- AI Token Auth -->
+<div class="bg-surface-container-lowest border border-outline-variant/15 p-6 rounded-xl space-y-4">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary" data-icon="smart_toy">smart_toy</span>
+<h4 class="font-headline font-bold text-on-surface">Agent Authentication</h4>
+</div>
+<span class="material-symbols-outlined text-primary text-sm" data-icon="verified" style="font-variation-settings: 'FILL' 1;">verified</span>
+</div>
+<div class="relative">
+<input class="w-full bg-surface-container-low border-none rounded-xl px-4 py-3 font-mono text-sm text-on-surface-variant focus:ring-2 focus:ring-primary/20" readonly="" type="password" value="sk-curator-8822-x92j-alpha"/>
+<button class="absolute right-3 top-1/2 -translate-y-1/2 text-primary">
+<span class="material-symbols-outlined text-lg" data-icon="visibility">visibility</span>
+</button>
+</div>
+<p class="text-[11px] text-on-surface-variant leading-relaxed">Your AI Agent uses this token to fetch and summarize content across your connected platforms securely.</p>
+</div>
+<!-- Sources Grid -->
+<div class="grid grid-cols-2 gap-3">
+<div class="bg-surface-container-low p-4 rounded-xl flex items-center gap-3 border border-outline-variant/5">
+<div class="w-8 h-8 rounded-full bg-on-surface text-surface flex items-center justify-center font-bold text-xs">𝕏</div>
+<span class="font-body text-sm font-medium">Twitter / X</span>
+<div class="ml-auto w-2 h-2 rounded-full bg-green-500"></div>
+</div>
+<div class="bg-surface-container-low p-4 rounded-xl flex items-center gap-3 border border-outline-variant/5 opacity-60">
+<div class="w-8 h-8 rounded-full bg-[#FF4500] text-white flex items-center justify-center font-bold text-sm">r/</div>
+<span class="font-body text-sm font-medium">Reddit</span>
+<span class="material-symbols-outlined text-primary text-sm ml-auto" data-icon="add_circle">add_circle</span>
+</div>
+</div>
+<!-- Areas of Interest -->
+<div class="bg-surface-container-low p-5 rounded-xl space-y-4">
+<div class="flex items-center justify-between">
+<h4 class="font-headline font-bold text-on-surface text-sm">Discovery Interests</h4>
+<button class="text-primary text-xs font-bold uppercase tracking-wider">Edit</button>
+</div>
+<div class="flex flex-wrap gap-2">
+<span class="px-3 py-1.5 bg-primary text-on-primary text-[11px] font-bold rounded-lg shadow-sm">Generative AI</span>
+<span class="px-3 py-1.5 bg-primary text-on-primary text-[11px] font-bold rounded-lg shadow-sm">UI/UX Design</span>
+<span class="px-3 py-1.5 bg-surface-container-high text-on-surface-variant text-[11px] font-medium rounded-lg">Productivity</span>
+<span class="px-3 py-1.5 bg-surface-container-high text-on-surface-variant text-[11px] font-medium rounded-lg">Astrophysics</span>
+<span class="px-3 py-1.5 bg-surface-container-high text-on-surface-variant text-[11px] font-medium rounded-lg">+4 More</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Danger Zone -->
+<section class="pt-6 pb-12">
+<button class="w-full py-4 text-error font-headline font-bold text-sm flex items-center justify-center gap-2 hover:bg-error/10 rounded-xl transition-colors">
+<span class="material-symbols-outlined" data-icon="logout">logout</span>
+            Sign Out of ScrolLess
+        </button>
+</section>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full glass shadow-[0_-8px_32px_rgba(0,0,0,0.4)] flex justify-around items-center px-4 pb-4 pt-2 z-50 rounded-t-[24px] border-t border-outline-variant/10">
+<div class="flex flex-col items-center justify-center text-on-surface-variant p-3 hover:text-primary transition-colors active:scale-90 duration-300 ease-out cursor-pointer">
+<span class="material-symbols-outlined" data-icon="dynamic_feed">dynamic_feed</span>
+<span class="font-['Inter'] font-medium text-[11px] leading-tight mt-1">Feed</span>
+</div>
+<div class="flex flex-col items-center justify-center text-on-surface-variant p-3 hover:text-primary transition-colors active:scale-90 duration-300 ease-out cursor-pointer">
+<span class="material-symbols-outlined" data-icon="explore">explore</span>
+<span class="font-['Inter'] font-medium text-[11px] leading-tight mt-1">Discover</span>
+</div>
+<div class="flex flex-col items-center justify-center text-on-surface-variant p-3 hover:text-primary transition-colors active:scale-90 duration-300 ease-out cursor-pointer">
+<span class="material-symbols-outlined" data-icon="bookmarks">bookmarks</span>
+<span class="font-['Inter'] font-medium text-[11px] leading-tight mt-1">Saved</span>
+</div>
+<div class="flex flex-col items-center justify-center bg-primary text-on-primary rounded-full p-3 mb-1 active:scale-90 duration-300 ease-out cursor-pointer shadow-[0_4px_12px_rgba(77,182,172,0.4)]">
+<span class="material-symbols-outlined" data-icon="settings" style="font-variation-settings: 'FILL' 1;">settings</span>
+<span class="font-['Inter'] font-medium text-[11px] leading-tight">Settings</span>
+</div>
+</nav>
+</body></html>

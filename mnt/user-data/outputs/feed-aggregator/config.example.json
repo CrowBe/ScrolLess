@@ -1,0 +1,16 @@
+{
+  "db_path": "~/.feed-aggregator/feed.db",
+  "server": {
+    "port": 3333,
+    "host": "127.0.0.1"
+  },
+  "agent_token_hash": "",
+  "push": {
+    "vapid_public_key": "",
+    "vapid_private_key": "",
+    "vapid_subject": "mailto:you@example.com"
+  },
+  "rate_limit": {
+    "agent_max_per_hour": 60
+  }
+}

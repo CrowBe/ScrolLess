@@ -1,0 +1,21 @@
+{
+  "server_url": "https://feed.yourdomain.com",
+  "agent_token": "your-agent-api-key",
+  "platforms": {
+    "youtube": {
+      "enabled": true
+    },
+    "x": {
+      "enabled": false
+    },
+    "news": {
+      "enabled": true,
+      "sites": [
+        "https://news.ycombinator.com",
+        "https://arstechnica.com"
+      ]
+    }
+  },
+  "max_items_per_source": 20,
+  "scrape_timeout_seconds": 120
+}

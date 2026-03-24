@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>ScrolLess - Unified Feed</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "error": "#ffb4ab",
+                        "inverse-on-surface": "#1a1c1f",
+                        "surface-container-high": "#282a2d",
+                        "on-tertiary-fixed": "#311300",
+                        "primary-fixed-dim": "#8ed0e7",
+                        "surface-container-lowest": "#0d0e11",
+                        "on-primary-container": "#b4ebff",
+                        "surface": "#121212",
+                        "on-tertiary": "#ffffff",
+                        "secondary-fixed": "#d7e4f1",
+                        "on-secondary-container": "#d7e4f1",
+                        "on-surface": "#e2e2e6",
+                        "tertiary": "#ffb688",
+                        "on-error-container": "#ffdad6",
+                        "surface-container-highest": "#333539",
+                        "primary": "#4db6ac", // Vibrant Teal Accent
+                        "secondary": "#bbc8d5",
+                        "on-tertiary-fixed-variant": "#6b3a16",
+                        "on-secondary-fixed-variant": "#3c4853",
+                        "on-secondary": "#26323d",
+                        "background": "#121212",
+                        "error-container": "#93000a",
+                        "on-primary-fixed-variant": "#004e5f",
+                        "surface-tint": "#8ed0e7",
+                        "outline": "#899293",
+                        "on-tertiary-container": "#ffdbc7",
+                        "surface-container-low": "#1a1c1f",
+                        "on-background": "#e2e2e6",
+                        "surface-dim": "#121212",
+                        "surface-bright": "#38393d",
+                        "inverse-primary": "#00687b",
+                        "on-primary-fixed": "#001f28",
+                        "surface-variant": "#3f4949",
+                        "on-primary": "#003642",
+                        "primary-container": "#004e5f",
+                        "on-secondary-fixed": "#111d26",
+                        "outline-variant": "#3f4949",
+                        "tertiary-fixed": "#ffdbc7",
+                        "secondary-fixed-dim": "#bbc8d5",
+                        "secondary-container": "#3c4853",
+                        "surface-container": "#1e2023",
+                        "tertiary-fixed-dim": "#ffb688",
+                        "on-surface-variant": "#c0c8c9",
+                        "inverse-surface": "#e2e2e6",
+                        "primary-fixed": "#b4ebff",
+                        "tertiary-container": "#4a2800",
+                        "on-error": "#690005"
+                    },
+                    fontFamily: {
+                        "headline": ["Manrope"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    },
+                    borderRadius: { "DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.75rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style>
+        .glass {
+            background: rgba(18, 18, 18, 0.85);
+            backdrop-filter: blur(20px);
+        }
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+<style>
+        body {
+            min-height: max(884px, 100dvh);
+        }
+    </style>
+</head>
+<body class="bg-surface text-on-surface font-body selection:bg-primary-container selection:text-on-primary-container min-h-screen pb-24">
+<!-- TopAppBar -->
+<header class="sticky top-0 z-50 w-full glass shadow-[0_32px_48px_rgba(0,0,0,0.3)] flex items-center justify-between px-6 py-4">
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-3">
+<div class="relative w-10 h-10 flex items-center justify-center">
+<div class="absolute inset-0 bg-gradient-to-br from-primary to-[#004e5f] rounded-xl rotate-12 opacity-20"></div>
+<div class="relative bg-gradient-to-br from-primary to-[#8ed0e7] w-8 h-8 rounded-lg flex items-center justify-center shadow-lg transform -rotate-3 transition-transform hover:rotate-0 duration-300">
+</div>
+</div>
+<h1 class="font-headline font-black tracking-tight text-2xl bg-gradient-to-r from-primary to-[#8ed0e7] bg-clip-text text-transparent">ScrolLess</h1>
+</div></div>
+<div class="h-10 w-10 rounded-full overflow-hidden bg-surface-container-highest flex items-center justify-center cursor-pointer active:scale-95 duration-200 ring-1 ring-outline-variant">
+<img alt="User Profile" class="h-full w-full object-cover" data-alt="Minimalist user profile avatar silhouette" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAeLE3q66ZsX-tpIfjYXafbCqqrqXMdH8BMSmmxecI_iQY0jTtFOMs10R-HiXCehX3e_eo2qmVVKSatHo9lCgLVDauLoyx1pJN7_N0tyGOd12GbcrcXHhKOI5j9y1SH_y5hbg53MqryN--eg8nj1N07-umcBH-PXnal0_3y-89ixo-5BxCXlewwrZBebsF2FOnnYMl3d2YnW5XKTgNpvpPIg4XE1XkSr8-WFGuGWycr_1L7mgnHeGZ1aMA5G-cuguQ94k07LpyYBA"/>
+</div>
+</header>
+<main class="max-w-3xl mx-auto px-4 pt-6">
+<!-- Editorial Headline -->
+<section class="mb-8 ml-2">
+<div class="flex items-center gap-1 mb-2">
+<div class="w-0.5 h-6 bg-primary rounded-full"></div>
+<span class="font-label text-label-sm text-on-surface-variant uppercase tracking-widest pl-2">Daily Briefing</span>
+</div>
+<h2 class="font-headline text-4xl font-extrabold text-on-surface tracking-tight leading-none">Unified Feed</h2>
+</section>
+<!-- Horizontal Filter Chips -->
+<section class="mb-8 overflow-x-auto no-scrollbar flex items-center gap-3 py-2">
+<button class="flex-none px-5 py-2.5 rounded-xl bg-primary text-on-primary font-bold shadow-[0_4px_12px_rgba(77,182,172,0.3)] transition-all">All</button>
+<button class="flex-none px-5 py-2.5 rounded-xl bg-surface-container-high text-on-surface-variant font-medium hover:bg-surface-container-highest transition-colors">Unread</button>
+<button class="flex-none px-5 py-2.5 rounded-xl bg-surface-container-high text-on-surface-variant font-medium hover:bg-surface-container-highest transition-colors">Read</button>
+<button class="flex-none px-5 py-2.5 rounded-xl bg-surface-container-high text-on-surface-variant font-medium hover:bg-surface-container-highest transition-colors">X (Twitter)</button>
+<button class="flex-none px-5 py-2.5 rounded-xl bg-surface-container-high text-on-surface-variant font-medium hover:bg-surface-container-highest transition-colors">Reddit</button>
+<button class="flex-none px-5 py-2.5 rounded-xl bg-surface-container-high text-on-surface-variant font-medium hover:bg-surface-container-highest transition-colors">RSS</button>
+<button class="flex-none px-5 py-2.5 rounded-xl bg-surface-container-high text-on-surface-variant font-medium hover:bg-surface-container-highest transition-colors">News</button>
+</section>
+<!-- Content Feed -->
+<div class="space-y-6">
+<!-- Card 1: X/Twitter Style -->
+<article class="bg-surface-container-low rounded-xl p-5 shadow-[0_16px_32px_rgba(0,0,0,0.2)] hover:shadow-[0_24px_48px_rgba(0,0,0,0.3)] transition-all duration-300">
+<div class="flex justify-between items-start mb-4">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-white flex items-center justify-center">
+<span class="text-black font-bold text-xs">𝕏</span>
+</div>
+<div>
+<div class="flex items-center gap-1">
+<span class="font-headline font-bold text-on-surface">TechCrunch</span>
+<span class="material-symbols-outlined text-[16px] text-primary" style="font-variation-settings: 'FILL' 1;">verified</span>
+</div>
+<span class="font-label text-xs text-on-surface-variant">@TechCrunch • 2h</span>
+</div>
+</div>
+<div class="flex gap-2">
+<button class="text-on-surface-variant hover:text-primary transition-colors"><span class="material-symbols-outlined">bookmark</span></button>
+<button class="text-on-surface-variant hover:text-primary transition-colors"><span class="material-symbols-outlined">more_horiz</span></button>
+</div>
+</div>
+<div class="mb-4">
+<p class="font-body text-on-surface text-base leading-relaxed mb-4">SpaceX is readying the next Starship launch for this weekend, aiming for a full orbital demonstration. The aerospace industry is watching closely.</p>
+<div class="rounded-xl overflow-hidden aspect-video bg-surface-container-highest">
+<img alt="Spacecraft" class="w-full h-full object-cover opacity-90" data-alt="Dramatic image of a silver spacecraft on a launchpad at sunset" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDwpL5K10eEKtwJETf576GvfYM1bUMLLYqhFR249W_-8jyup7SBNvqQnrpwI2CyzBGipxkLj_eL4gh7eNj7jbGVlGa1tZDXCvX09rxurdmHa34UmBpe37PU3ocA1RCsa-FtkYx8655Deki1P_sX7TuV0WRJvDvgYTVtDAqfIG95vefbF5IVjvWcoI8MFUbn_uJC7CyT9-2om0Sw8rqaQ2qYcGnrW1rGXZHgSn97MlwqY7aXD7IaFwu1FP80ZcdSTniM2R3LxB5E1g"/>
+</div>
+</div>
+<div class="flex items-center justify-between pt-2">
+<div class="flex gap-6">
+<button class="flex items-center gap-1.5 text-on-surface-variant text-sm hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-sm">chat_bubble</span> 124
+                        </button>
+<button class="flex items-center gap-1.5 text-on-surface-variant text-sm hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-sm">repeat</span> 450
+                        </button>
+<button class="flex items-center gap-1.5 text-on-surface-variant text-sm hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-sm">favorite</span> 3.2k
+                        </button>
+</div>
+<a class="text-primary font-bold text-sm flex items-center gap-1 hover:underline" href="#">View Source <span class="material-symbols-outlined text-sm">open_in_new</span></a>
+</div>
+</article>
+<!-- Card 2: Reddit Style -->
+<article class="bg-surface-container-low rounded-xl p-5 shadow-[0_16px_32px_rgba(0,0,0,0.2)] transition-all duration-300">
+<div class="flex justify-between items-start mb-4">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-[#FF4500] flex items-center justify-center">
+<span class="text-white font-bold text-sm">r/</span>
+</div>
+<div>
+<span class="font-headline font-bold text-on-surface block">r/DesignSystem</span>
+<span class="font-label text-xs text-on-surface-variant">u/uicreator • 5h</span>
+</div>
+</div>
+<div class="flex gap-2">
+<button class="text-on-surface-variant hover:text-primary transition-colors"><span class="material-symbols-outlined">bookmark</span></button>
+<button class="text-on-surface-variant hover:text-primary transition-colors"><span class="material-symbols-outlined">more_horiz</span></button>
+</div>
+</div>
+<div class="mb-4">
+<h3 class="font-headline text-lg font-bold text-on-surface mb-2">How to build a design system that actually scales across 20+ teams?</h3>
+<p class="font-body text-on-surface-variant text-sm leading-relaxed">The biggest challenge isn't the components themselves, but the documentation and governance. We started by defining our tokens first...</p>
+</div>
+<div class="flex items-center justify-between pt-2">
+<div class="flex gap-4">
+<div class="flex items-center bg-surface-container-highest rounded-full px-3 py-1 gap-3">
+<button class="material-symbols-outlined text-sm text-on-surface-variant hover:text-primary">arrow_upward</button>
+<span class="font-bold text-sm text-on-surface">1.8k</span>
+<button class="material-symbols-outlined text-sm text-on-surface-variant hover:text-error">arrow_downward</button>
+</div>
+<button class="flex items-center gap-1.5 text-on-surface-variant text-sm bg-surface-container-highest rounded-full px-3 py-1 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-sm">mode_comment</span> 42
+                        </button>
+</div>
+<a class="text-primary font-bold text-sm flex items-center gap-1 hover:underline" href="#">Reddit.com <span class="material-symbols-outlined text-sm">launch</span></a>
+</div>
+</article>
+<!-- Card 3: News/Editorial Style -->
+<article class="bg-surface-container-low rounded-xl overflow-hidden shadow-[0_16px_32px_rgba(0,0,0,0.2)] transition-all duration-300">
+<div class="relative h-48 w-full">
+<img alt="Cybersecurity" class="w-full h-full object-cover opacity-80" data-alt="Neon binary code projecting onto a human hand in a dark room" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAVTH3-W3r1oSV4f-svenNgvxdlJJcxdyx2RTveXprvtutJI7h5MTWxpKEXo7uQpHkQftGFQlVSMgJKpT8ibWoA1kce3JIgt-CcDDTBj9wKzPvFC5WjPxH_GZwwKXUL8oWkhtE7BOLTAIWOjgptF3izt5dH2CvvQ-KOLPJcPfUsX4sOQHn2IcqiXd5kWV_QR_yvgE--TveoFWPaS-idHZRem-7eOcnAWGfvL2qrxyFBJJnNFC7BLmPRTCxSWyndlnaaS4sKUKsuHg"/>
+<div class="absolute top-4 left-4 bg-primary text-on-primary text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded">Editorial</div>
+</div>
+<div class="p-5">
+<div class="flex justify-between items-start mb-3">
+<div class="flex items-center gap-2">
+<div class="w-6 h-6 rounded-full bg-surface-container-highest flex items-center justify-center border border-outline-variant">
+<span class="text-[10px] font-extrabold text-on-surface">AT</span>
+</div>
+<span class="font-label text-xs font-bold text-on-surface-variant">Ars Technica • 8h</span>
+</div>
+<button class="text-on-surface-variant hover:text-primary"><span class="material-symbols-outlined">bookmark</span></button>
+</div>
+<h3 class="font-headline text-xl font-bold text-on-surface mb-3 leading-tight">New hardware vulnerability affects nearly all modern processors.</h3>
+<p class="font-body text-on-surface-variant text-sm mb-6 line-clamp-2">Security researchers have unveiled a new class of attacks that bypass traditional memory protections by exploiting branch prediction logic in high-end silicon.</p>
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="flex -space-x-2">
+<div class="w-6 h-6 rounded-full border-2 border-surface-container-low bg-surface-container-highest overflow-hidden"></div>
+<div class="w-6 h-6 rounded-full border-2 border-surface-container-low bg-primary-container overflow-hidden"></div>
+</div>
+<span class="text-[11px] text-on-surface-variant font-medium">85 others reading</span>
+</div>
+<button class="bg-primary text-on-primary px-4 py-2 rounded-full text-xs font-bold shadow-md active:scale-95 duration-200">Full Article</button>
+</div>
+</div>
+</article>
+</div>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full glass shadow-[0_-8px_32px_rgba(0,0,0,0.4)] flex justify-around items-center px-4 pb-4 pt-2 z-50 rounded-t-[24px] border-t border-outline-variant/10">
+<!-- Feed (Active) -->
+<a class="flex flex-col items-center justify-center bg-primary text-on-primary rounded-full p-3 mb-1 active:scale-90 duration-300 ease-out shadow-[0_4px_12px_rgba(77,182,172,0.4)]" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">dynamic_feed</span>
+</a>
+<!-- Discover -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant p-3 hover:text-primary transition-colors active:scale-90 duration-300 ease-out" href="#">
+<span class="material-symbols-outlined">explore</span>
+<span class="font-['Inter'] font-medium text-[11px] leading-tight mt-1">Discover</span>
+</a>
+<!-- Saved -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant p-3 hover:text-primary transition-colors active:scale-90 duration-300 ease-out" href="#">
+<span class="material-symbols-outlined">bookmarks</span>
+<span class="font-['Inter'] font-medium text-[11px] leading-tight mt-1">Saved</span>
+</a>
+<!-- Settings -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant p-3 hover:text-primary transition-colors active:scale-90 duration-300 ease-out" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-['Inter'] font-medium text-[11px] leading-tight mt-1">Settings</span>
+</a>
+</nav>
+<!-- Contextual FAB (Only for main feed) -->
+<button class="fixed right-6 bottom-24 w-14 h-14 bg-primary text-on-primary rounded-full shadow-[0_16px_32px_rgba(0,0,0,0.5)] flex items-center justify-center active:scale-95 transition-transform">
+<span class="material-symbols-outlined">add_comment</span>
+</button>
+</body></html>

@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Saved - ScrolLess</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "error": "#ffb4ab",
+                        "inverse-on-surface": "#1a1c1f",
+                        "surface-container-high": "#282a2d",
+                        "on-tertiary-fixed": "#311300",
+                        "primary-fixed-dim": "#8ed0e7",
+                        "surface-container-lowest": "#0d0e11",
+                        "on-primary-container": "#b4ebff",
+                        "surface": "#121212",
+                        "on-tertiary": "#ffffff",
+                        "secondary-fixed": "#d7e4f1",
+                        "on-secondary-container": "#d7e4f1",
+                        "on-surface": "#e2e2e6",
+                        "tertiary": "#ffb688",
+                        "on-error-container": "#ffdad6",
+                        "surface-container-highest": "#333539",
+                        "primary": "#4db6ac",
+                        "secondary": "#bbc8d5",
+                        "on-tertiary-fixed-variant": "#6b3a16",
+                        "on-secondary-fixed-variant": "#3c4853",
+                        "on-secondary": "#26323d",
+                        "background": "#121212",
+                        "error-container": "#93000a",
+                        "on-primary-fixed-variant": "#004e5f",
+                        "surface-tint": "#8ed0e7",
+                        "outline": "#899293",
+                        "on-tertiary-container": "#ffdbc7",
+                        "surface-container-low": "#1a1c1f",
+                        "on-background": "#e2e2e6",
+                        "surface-dim": "#121212",
+                        "surface-bright": "#38393d",
+                        "inverse-primary": "#00687b",
+                        "on-primary-fixed": "#001f28",
+                        "surface-variant": "#3f4949",
+                        "on-primary": "#003642",
+                        "primary-container": "#004e5f",
+                        "on-secondary-fixed": "#111d26",
+                        "outline-variant": "#3f4949",
+                        "tertiary-fixed": "#ffdbc7",
+                        "secondary-fixed-dim": "#bbc8d5",
+                        "secondary-container": "#3c4853",
+                        "surface-container": "#1e2023",
+                        "tertiary-fixed-dim": "#ffb688",
+                        "on-surface-variant": "#c0c8c9",
+                        "inverse-surface": "#e2e2e6",
+                        "primary-fixed": "#b4ebff",
+                        "tertiary-container": "#4a2800",
+                        "on-error": "#690005"
+                    },
+                    fontFamily: {
+                        "headline": ["Manrope"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glass {
+            background: rgba(18, 18, 18, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        body {
+            background-color: #121212;
+            color: #e2e2e6;
+            min-height: max(884px, 100dvh);
+        }
+    </style>
+</head>
+<body class="font-body selection:bg-primary/20">
+<!-- TopAppBar -->
+<header class="sticky top-0 z-50 w-full glass shadow-[0_32px_48px_rgba(0,0,0,0.3)]">
+<div class="flex items-center justify-between px-6 py-4 w-full">
+<div class="flex items-center gap-4">
+<button class="active:scale-95 duration-200 hover:opacity-80 transition-opacity">
+<span class="material-symbols-outlined text-primary" data-icon="menu_open">menu_open</span>
+</button>
+<div class="flex items-center gap-2">
+<div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-[#004e5f] flex items-center justify-center shadow-lg shadow-primary/20">
+<span class="text-white font-headline font-black text-lg italic">S</span>
+</div>
+<h1 class="text-primary font-['Manrope'] font-extrabold tracking-tighter text-xl">ScrolLess</h1>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<div class="w-9 h-9 rounded-full bg-surface-container-highest overflow-hidden ring-1 ring-outline-variant">
+<img alt="Profile" class="w-full h-full object-cover" data-alt="User profile avatar smiling headshot" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAeLE3q66ZsX-tpIfjYXafbCqqrqXMdH8BMSmmxecI_iQY0jTtFOMs10R-HiXCehX3e_eo2qmVVKSatHo9lCgLVDauLoyx1pJN7_N0tyGOd12GbcrcXHhKOI5j9y1SH_y5hbg53MqryN--eg8nj1N07-umcBH-PXnal0_3y-89ixo-5BxCXlewwrZBebsF2FOnnYMl3d2YnW5XKTgNpvpPIg4XE1XkSr8-WFGuGWycr_1L7mgnHeGZ1aMA5G-cuguQ94k07LpyYBA"/>
+</div>
+</div>
+</div>
+</header>
+<main class="pb-24 pt-6 px-4 max-w-2xl mx-auto space-y-6">
+<!-- Editorial Header Section -->
+<section class="mb-8">
+<div class="flex items-center gap-2 mb-2">
+<div class="w-0.5 h-6 bg-primary rounded-full"></div>
+<span class="text-label-sm font-medium text-on-surface-variant uppercase tracking-widest text-[10px] pl-2">Your Curation</span>
+</div>
+<h2 class="font-headline font-bold text-4xl tracking-tight text-on-surface">Saved</h2>
+<p class="text-on-surface-variant body-md mt-1 opacity-80">Insights and stories you've kept for later.</p>
+</section>
+<!-- Filter Chips -->
+<div class="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
+<button class="flex-none px-5 py-2.5 bg-primary text-on-primary rounded-xl text-sm font-bold shadow-[0_4px_12px_rgba(77,182,172,0.3)]">All Items</button>
+<button class="flex-none px-5 py-2.5 bg-surface-container-high text-on-surface-variant rounded-xl text-sm font-medium hover:bg-surface-container-highest transition-colors">Technology</button>
+<button class="flex-none px-5 py-2.5 bg-surface-container-high text-on-surface-variant rounded-xl text-sm font-medium hover:bg-surface-container-highest transition-colors">Design</button>
+<button class="flex-none px-5 py-2.5 bg-surface-container-high text-on-surface-variant rounded-xl text-sm font-medium hover:bg-surface-container-highest transition-colors">Culture</button>
+</div>
+<!-- Saved Content Feed -->
+<div class="space-y-6">
+<!-- Feed Item 1 -->
+<article class="bg-surface-container-low rounded-xl overflow-hidden shadow-[0_16px_32px_rgba(0,0,0,0.2)] hover:shadow-[0_24px_48px_rgba(0,0,0,0.3)] transition-all duration-300">
+<div class="relative h-48 bg-surface-container-high">
+<img class="w-full h-full object-cover opacity-90" data-alt="Abstract colorful flowing digital art 3D" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBzslQ6HiGlvwbJ6fO5elB1wZ2wMgBUEzr4uBPGF-mgLMlvic9NlIU0GhV8QHlyUxg7v2BJygDnAX1GGwl2mA8HWHKEE-SzYHx5WDoJIAI4lTbrGVpKoHnYHYO83quKpNo16-JX3AGaa1Ocyqch2X-JFVr9vkSZDYYdzzyXdhiKbeEZYi3KLc63pshBhoyNjgN32msqXXMtc5J3TZaM9fbDyBx_coAqfIA-gVE23US7eUFdf7vcuUkQxjNUci1AXePBTlDayRoWbg"/>
+<div class="absolute top-4 right-4 flex gap-2">
+<button class="p-2 bg-[#121212]/70 backdrop-blur-md rounded-full text-primary shadow-sm active:scale-90 transition-transform">
+<span class="material-symbols-outlined" data-icon="bookmark" style="font-variation-settings: 'FILL' 1;">bookmark</span>
+</button>
+<button class="p-2 bg-[#121212]/70 backdrop-blur-md rounded-full text-on-surface shadow-sm active:scale-90 transition-transform">
+<span class="material-symbols-outlined" data-icon="more_vert">more_vert</span>
+</button>
+</div>
+</div>
+<div class="p-5">
+<div class="flex items-center gap-2 mb-3">
+<div class="w-6 h-6 rounded-full bg-surface-container-highest flex items-center justify-center overflow-hidden border border-outline-variant">
+<img class="w-full h-full object-cover" data-alt="Source logo abstract minimalist shape" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDSrXIoZw5Xg-IpFKAlOwVRfuvqb-5hjw2GMBaFMH517LsYRdE3x-e2Q88UtvCeY8_KpgLP6sSmCT4aCxnnq1r1YLHilwPg7I9txFXDzRLB4aSUx6E7ToE1vjBgSskTPbFVCgw0rzaqvZtg6q4kKTjo70rL57vOpcn0IqOLDqh7ZXnv_KkL0QaUiTI0aiZNeRB5WTdEnePIiTJKMQdZ_VG6Tb-nHEvLx4a391rXOXKhcml6dwcMpp31BH7V7ij84_4BAYbmHY2RLQ"/>
+</div>
+<span class="text-[11px] font-bold text-on-surface-variant uppercase tracking-widest">Architectural Digest</span>
+<span class="text-[11px] text-outline">•</span>
+<span class="text-[11px] text-on-surface-variant">2h ago</span>
+</div>
+<h3 class="font-headline font-bold text-xl leading-tight text-on-surface mb-2">The Quiet Revolution of Digital Minimalism in Urban Spaces</h3>
+<p class="text-on-surface-variant text-sm line-clamp-2 leading-relaxed opacity-90">Exploring how modern architects are integrating screen-free zones in the heart of bustling metropolitan areas to foster mental clarity.</p>
+</div>
+</article>
+<!-- Feed Item 2 -->
+<article class="bg-surface-container-low rounded-xl overflow-hidden shadow-[0_16px_32px_rgba(0,0,0,0.2)] hover:shadow-[0_24px_48px_rgba(0,0,0,0.3)] transition-all duration-300">
+<div class="p-5">
+<div class="flex justify-between items-start mb-4">
+<div class="flex items-center gap-2">
+<div class="w-6 h-6 rounded-full bg-surface-container-highest flex items-center justify-center overflow-hidden border border-outline-variant">
+<img class="w-full h-full object-cover" data-alt="Source logo brand icon" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA-fo1bgG25JuThoDau-gyqyHVVjVqQgnNqt--ETh90g1K59HiJAvv_k9SBcbcvfXxvzBhPNm2Ua4VLQIN0ZP93xciZZQdxnfuVpqZFx46lzdHMFvSHg3jSy_D7ts_s0xUCMUH_uZevMR-i12Yfco-rXqLLiigGXpC76VeJ-TmKHpOCTv9MDAYd9ZJIhATpQ7o1510SdfrAfjE6NiskAsw7mIvOPx1ZC9EXuzGCvXyS0Dtk24-doIdfrHzVMuMH0nWm1Yh5aFIF9w"/>
+</div>
+<span class="text-[11px] font-bold text-on-surface-variant uppercase tracking-widest">The Curator</span>
+<span class="text-[11px] text-outline">•</span>
+<span class="text-[11px] text-on-surface-variant">Yesterday</span>
+</div>
+<div class="flex gap-2">
+<button class="text-primary active:scale-90 transition-transform">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">bookmark</span>
+</button>
+<button class="text-on-surface-variant active:scale-90 transition-transform">
+<span class="material-symbols-outlined">more_vert</span>
+</button>
+</div>
+</div>
+<h3 class="font-headline font-bold text-xl leading-tight text-on-surface mb-3">Why Intelligent Quietude is the Next Big Trend in UI Design</h3>
+<div class="flex gap-4">
+<p class="text-on-surface-variant text-sm flex-1 leading-relaxed opacity-90">A deep dive into why users are moving away from dopamine-driven interfaces towards intentional, calm digital environments.</p>
+<div class="w-24 h-24 rounded-lg overflow-hidden flex-shrink-0 bg-surface-container-high border border-outline-variant/10">
+<img class="w-full h-full object-cover opacity-90" data-alt="Minimalist lamp against white wall" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC9_DGJEDZT3NP-Vlr7ZQcUoCr5LQTF7aBR4y8htONrwV_ULlE4_Vyrq5fxZ8QGfTOe5ge1k9IpmR11XwJXXfNkTwjWuQ3ymR8tBuHZdg1iT_iHeZCef4miIWre0o7XuQwjMbbTNqpqyYzIN-1vqSSrs6OzNPwlSXS9yVCbRRDms-opkpgsll2srGHVPL40UjAeoAmP-rctKxLmv3U3sraEhrk1fGvuYK-S6W4ZmWEr4qGwDw7vcFNKC-1GflpqUDKIAgOkvMA8Ag"/>
+</div>
+</div>
+</div>
+</article>
+<!-- Feed Item 3 -->
+<article class="bg-surface-container-low rounded-xl overflow-hidden shadow-[0_16px_32px_rgba(0,0,0,0.2)] hover:shadow-[0_24px_48px_rgba(0,0,0,0.3)] transition-all duration-300">
+<div class="relative h-48 bg-surface-container-high">
+<img class="w-full h-full object-cover opacity-90" data-alt="Retro computer and synth keyboard aesthetic" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCrdDJVOv4CsTZKKmSRi5sFqEcK2EcTb9HGjZV1C2vcHBTfzcMgJU-uOvM80mmCtq87Yc2m180Z_jNWX3iWhYybOKQwuXXrnRh5ULRg40zcNku62Xzpj5Y4O8J-VzIo4pCBzjsxX9G9TVHqFznhthwpvQgy0nJj-Nme6vFhUwllSHF3FSCgYxtIl7zGFaDeYgzIccny54dys9UYpGzQTg5KyLpqYgJH26Bx6bFR9v-Ehpz9KHRv8CyCbQIhEooWF2GV2ElgusY8Xw"/>
+<div class="absolute top-4 right-4 flex gap-2">
+<button class="p-2 bg-[#121212]/70 backdrop-blur-md rounded-full text-primary shadow-sm active:scale-90 transition-transform">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">bookmark</span>
+</button>
+<button class="p-2 bg-[#121212]/70 backdrop-blur-md rounded-full text-on-surface shadow-sm active:scale-90 transition-transform">
+<span class="material-symbols-outlined">more_vert</span>
+</button>
+</div>
+</div>
+<div class="p-5">
+<div class="flex items-center gap-2 mb-3">
+<div class="w-6 h-6 rounded-full bg-surface-container-highest flex items-center justify-center overflow-hidden border border-outline-variant">
+<img class="w-full h-full object-cover" data-alt="Source logo letter icon" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCRCa5FuZiSjWckBmQ1csZoOLOGXpJn8vCE6_sl0UawmvfGjl2fOQ_eef5NYRQz3CG6S4aSDTF1d-n_fbdWSTcr6mYddS8wZwoUJsWHi6R9nDg_y4tg7MuyOtvv17qELUOStHUXkyHQt3qaUDLuvEYAQDIEHIPLyJISpG0yuvLCyH3PBqWG50lfr3uTSthVymuUeNCeSeb29fD07GZ5TbHOrbyJj7cqJg0D7LbzirxRj7WFdi2XFOe31bg1CWXIBLuBYnvWfQSZWw"/>
+</div>
+<span class="text-[11px] font-bold text-on-surface-variant uppercase tracking-widest">Tech Ethics</span>
+<span class="text-[11px] text-outline">•</span>
+<span class="text-[11px] text-on-surface-variant">3 days ago</span>
+</div>
+<h3 class="font-headline font-bold text-xl leading-tight text-on-surface mb-2">Sustainable Computing: The Hidden Cost of AI Training</h3>
+<p class="text-on-surface-variant text-sm line-clamp-2 leading-relaxed opacity-90">How the world's leading tech labs are pivoting to more energy-efficient models to offset environmental impact.</p>
+</div>
+</article>
+</div>
+<!-- Empty State Prompt -->
+<div class="py-12 text-center">
+<div class="w-16 h-16 bg-surface-container-high rounded-full flex items-center justify-center mx-auto mb-4 border border-outline-variant/10">
+<span class="material-symbols-outlined text-outline" data-icon="inventory_2">inventory_2</span>
+</div>
+<p class="text-on-surface font-medium text-sm">End of your library</p>
+<p class="text-on-surface-variant text-xs opacity-60">Discover more to save more.</p>
+</div>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full glass shadow-[0_-8px_32px_rgba(0,0,0,0.4)] flex justify-around items-center px-4 pb-4 pt-2 z-50 rounded-t-[24px] border-t border-outline-variant/10">
+<!-- Feed Tab -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant p-3 hover:text-primary transition-colors active:scale-90 duration-300 ease-out" href="#">
+<span class="material-symbols-outlined">dynamic_feed</span>
+<span class="font-['Inter'] font-medium text-[11px] leading-tight mt-1">Feed</span>
+</a>
+<!-- Discover Tab -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant p-3 hover:text-primary transition-colors active:scale-90 duration-300 ease-out" href="#">
+<span class="material-symbols-outlined">explore</span>
+<span class="font-['Inter'] font-medium text-[11px] leading-tight mt-1">Discover</span>
+</a>
+<!-- Saved Tab (ACTIVE) -->
+<a class="flex flex-col items-center justify-center bg-primary text-on-primary rounded-full p-3 mb-1 active:scale-90 duration-300 ease-out shadow-[0_4px_12px_rgba(77,182,172,0.4)]" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">bookmarks</span>
+<span class="font-['Inter'] font-medium text-[11px] leading-tight sr-only">Saved</span>
+</a>
+<!-- Settings Tab -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant p-3 hover:text-primary transition-colors active:scale-90 duration-300 ease-out" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-['Inter'] font-medium text-[11px] leading-tight mt-1">Settings</span>
+</a>
+</nav>
+</body></html>

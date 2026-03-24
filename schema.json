@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentFeedPayload",
+  "description": "Payload for POST /agent/feed-items. Submit a batch of scraped feed items from a single source.",
+  "type": "object",
+  "required": ["source", "items"],
+  "properties": {
+    "source": {
+      "type": "string",
+      "description": "Platform identifier. Use: 'youtube', 'x', 'news', or a custom string.",
+      "examples": ["youtube", "x", "news"]
+    },
+    "items": {
+      "type": "array",
+      "description": "Array of feed items to insert. Server deduplicates by URL.",
+      "items": {
+        "type": "object",
+        "required": ["source_id", "title", "url", "published_at"],
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "description": "Platform-native unique ID. Video ID for YouTube, tweet ID for X, URL hash for news."
+          },
+          "title": {
+            "type": "string",
+            "description": "Item title. Video title, tweet text (first 200 chars), or article headline."
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Canonical URL of the content. Server normalises this for deduplication."
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp of when the content was originally published."
+          },
+          "author": {
+            "type": "string",
+            "description": "Content author. Channel name, @handle, or publication name."
+          },
+          "content_preview": {
+            "type": "string",
+            "description": "First ~300 characters of content body, description, or subtitle."
+          },
+          "thumbnail_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL of a preview image or thumbnail."
+          },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Tags for categorisation and filtering. Agent-assigned or derived from source."
+          },
+          "is_discovery": {
+            "type": "boolean",
+            "default": false,
+            "description": "false = from subscriptions/follows (main feed). true = from recommendations/trending (discovery feed)."
+          }
+        }
+      }
+    }
+  }
+}
