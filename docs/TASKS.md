@@ -922,12 +922,13 @@ With installation instructions in comments:
 
 Create `docs/DEPLOYMENT.md` covering two deployment targets:
 
-**Fly.io / Railway (primary — recommended)**:
-1. Create `fly.toml` / `railway.toml` with port 3333, health check on `/api/stats`
-2. Set environment variables for `config.json` values
-3. Persistent volume for the SQLite database file
-4. Deploy command and verification steps
-5. Configure a custom domain
+**Render (primary — recommended, free tier)**:
+1. Create a Render Web Service pointing to the repo; set build command `npm install && npm run build` and start command `npm start`
+2. Add a Render Disk (persistent volume) mounted at `/data`; set `db_path` in config to `/data/feed.db`
+3. Set environment variables for all `config.json` values (agent token hash, VAPID keys, etc.)
+4. Configure a custom domain (or use the `.onrender.com` subdomain)
+5. Verify: health check on `GET /api/stats` returns 200
+6. Note: free tier instances spin down after inactivity — upgrade to a paid instance ($7/mo) if you need always-on push notifications
 
 **Cloudflare Tunnel (personal/self-hosted fallback)**:
 1. `cloudflared` installation on Fedora
@@ -947,7 +948,7 @@ Document how to set up the agent as a recurring Claude Code task:
 4. Verify: feed populates automatically on schedule
 
 ### Acceptance criteria
-- Server runs as a systemd service (self-hosted) or on Fly.io/Railway (cloud)
+- Server runs as a systemd service (self-hosted) or on Render (cloud)
 - HTTPS access established via Cloudflare Tunnel or platform proxy
 - PWA installs on Android from the public URL
 - Push notifications work end-to-end

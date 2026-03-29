@@ -13,7 +13,7 @@
 ## Deployment Topology
 
 ```
- Any MCP Client (Claude Code,            Hosting (Fly.io / Railway)
+ Any MCP Client (Claude Code,            Hosting (Render / self-hosted)
  Claude Desktop, LangChain…)        ┌─────────────────────────────┐
 ┌────────────────────────┐          │  Fastify Server :3333       │
 │  MCP tools:            │          │  ├── /mcp  (MCP transport)  │
