@@ -4,14 +4,14 @@ Personal feed aggregator. External AI agent scrapes platforms → POSTs to this 
 
 ## Stack
 
-- **Backend**: Node.js 20+, TypeScript, Fastify, better-sqlite3, web-push
+- **Backend**: Node.js 20+, TypeScript, Fastify, better-sqlite3, web-push, @modelcontextprotocol/sdk
 - **Frontend**: Vite, **Preact** (not React, not preact/compat), TypeScript, plain CSS
 - **DB**: SQLite via `sql/schema.sql`
 
 ## Docs
 
 - `docs/ARCHITECTURE.md` — routes, auth, payload formats, schema, push, PWA
-- `docs/TASKS.md` — 11 sequential build stages; read this first, complete in order
+- `docs/TASKS.md` — 13 sequential build stages; read this first, complete in order
 - `docs/DESIGN_SYSTEM.md` — color tokens, typography, component patterns (from Stitch screens)
 - `docs/design/` — reference designs and screen PNGs
 - `skill/SKILL.md` — agent scraping instructions (separate deliverable, not server code)
@@ -20,15 +20,19 @@ Personal feed aggregator. External AI agent scrapes platforms → POSTs to this 
 ## Route Groups (keep separate)
 
 ```
-/agent/*  →  Bearer token auth  →  server/agent-routes.ts
-/api/*    →  no auth (PoC)      →  server/api-routes.ts
+/agent/*  →  Bearer token auth          →  server/agent-routes.ts
+/mcp      →  Bearer or OAuth token auth →  server/mcp.ts
+/oauth/*  →  public (auth server)       →  server/oauth-routes.ts
+/api/*    →  session auth (Clerk)       →  server/api-routes.ts
 ```
 
 ## Non-Obvious Rules (common mistakes)
 
 - Every DB query needs `WHERE user_id = ?` (always `'local'` in PoC — production seam)
 - URL dedup: normalise → SHA-256 → unique index on `(user_id, url_hash)` → `INSERT OR IGNORE`
-- Agent auth: hash Bearer token with SHA-256, compare to `agent_tokens.token_hash`. Never store plaintext.
+- Agent auth: two valid paths — Bearer token (hash with SHA-256, compare to `agent_tokens.token_hash`) or OAuth access token (validate against `oauth_tokens` table). Both resolve to a `userId`; route handlers never care which was used.
+- `blocked_sources` is gone — use `user_sources.enabled = 0` instead. Never add `blocked_sources` back as a preference key.
+- MCP resources are served from `skill/resources/{name}.md` — keep those files in sync with any source added to the UI.
 - Push: one notification per agent POST (grouped by source), not per item
 - Cleanup uses `fetched_at`, not `published_at`; default `retention_days = 7`
 - `tags` stored as JSON string `'["a","b"]'`, returned to frontend as parsed array
