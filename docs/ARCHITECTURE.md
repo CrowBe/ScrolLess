@@ -13,7 +13,7 @@
 ## Deployment Topology
 
 ```
- Any MCP Client (Claude Code,            Hosting (Fly.io / Railway)
+ Any MCP Client (Claude Code,            Backend (Render)
  Claude Desktop, LangChain…)        ┌─────────────────────────────┐
 ┌────────────────────────┐          │  Fastify Server :3333       │
 │  MCP tools:            │          │  ├── /mcp  (MCP transport)  │
@@ -24,12 +24,14 @@
  Phone / Desktop (anywhere)         │  ├── Web Push sender        │
 ┌────────────────────────┐          │  └── Cron (cleanup)         │
 │  PWA (Preact)          │── HTTPS ─▶  └─────────────────────────┘
-│  Reads from /api/*     │
+│  Hosted on Vercel      │
 │  Push notifications    │
 └────────────────────────┘
 ```
 
-For personal/self-hosted use: a Cloudflare Tunnel (`cloudflared`) provides HTTPS from a home server without opening inbound ports. HTTPS is provided at the Cloudflare edge; Fastify serves plain HTTP on :3333.
+**Split hosting (recommended)**: Frontend is deployed to Vercel (free tier, global CDN); backend runs on Render (free tier, persistent disk for SQLite). The frontend build sets `VITE_API_BASE_URL` to the Render service URL; the backend sets `CORS_ORIGIN` to the Vercel app URL. Both can be the same Git repo with separate deployment configs.
+
+**Self-hosted**: A Cloudflare Tunnel (`cloudflared`) provides HTTPS from a home server without opening inbound ports. Frontend and backend are served from the same Fastify process. HTTPS is provided at the Cloudflare edge; Fastify serves plain HTTP on :3333.
 
 For quick testing: `cloudflared tunnel --url http://localhost:3333` generates a temporary public URL instantly.
 

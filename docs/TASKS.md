@@ -1,6 +1,6 @@
 # Implementation Tasks
 
-This document breaks the feed aggregator build into discrete stages. Each stage is self-contained: a coding agent should be able to complete any stage given only this document, `ARCHITECTURE.md`, and the code produced by prior stages.
+This document breaks the feed aggregator build into discrete stages. Each stage is self-contained: a coding agent should be able to complete any stage given only this document, `ARCHITECTURE.md`, `DESIGN_SYSTEM.md`, and the code produced by prior stages.
 
 Stages are ordered by dependency. Complete them sequentially.
 
@@ -88,10 +88,12 @@ Populate with placeholder files:
 
 Create `sql/schema.sql` with all tables as specified in ARCHITECTURE.md:
 - `feed_items` (with all indexes, including composite unique on `user_id, url_hash`)
+- `user_sources` — user-configured scraping sources (name, enabled, urls JSON, max_items, scraping_notes)
 - `agent_tokens`
 - `sync_log`
 - `push_subscriptions`
 - `user_preferences`
+- `oauth_clients`, `oauth_auth_codes`, `oauth_tokens` — OAuth 2.0 tables
 
 Use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` throughout.
 
@@ -105,11 +107,15 @@ Create `server/db.ts`:
 - Open with `better-sqlite3`
 - Set pragmas: `journal_mode = WAL`, `synchronous = NORMAL`, `foreign_keys = ON`
 - Execute `sql/schema.sql`
-- Seed default `user_preferences` if not present:
-  - `blocked_sources`: `[]`
+- Seed default `user_preferences` if not present (for `user_id = 'local'`):
   - `blocked_keywords`: `[]`
   - `max_items_per_source`: `50`
   - `retention_days`: `7`
+  - Note: do **not** seed `blocked_sources` — per-source enable/disable lives in `user_sources.enabled`
+- Seed default `user_sources` rows if not present (for `user_id = 'local'`):
+  - `youtube` — `enabled = 0`, `urls = '["https://www.youtube.com/feed/subscriptions"]'`
+  - `x` — `enabled = 0`, `urls = '["https://x.com/home"]'`
+  - `news` — `enabled = 0`, `urls = '["https://news.ycombinator.com","https://arstechnica.com"]'`
 - Return database instance
 
 **`normaliseUrl(raw: string): string`**
@@ -129,8 +135,7 @@ Create `server/types.ts`:
 - `AgentFeedPayload` — `{ source, items: AgentFeedItem[] }`
 - `AgentFeedItem` — as specified in ARCHITECTURE.md
 - `AgentFeedResponse` — `{ inserted, duplicates }`
-- `AgentState` — `{ sources: { [source]: { last_sync, item_count } } }`
-- `AgentPreferences` — `{ blocked_sources, blocked_keywords, max_items_per_source }`
+- `AgentSyncContext` — full response shape of `GET /agent/sync-context` (see ARCHITECTURE.md for exact fields)
 - `AppConfig` — typed `config.json` structure
 
 Create `src/types.ts` for frontend:
@@ -141,8 +146,9 @@ Create `src/types.ts` for frontend:
 - `PushPayload` — `{ title, body, source, count, url }`
 
 ### Acceptance criteria
-- `initDb()` creates `~/.feed-aggregator/feed.db` with all tables
-- Default preferences are seeded
+- `initDb()` creates `~/.feed-aggregator/feed.db` with all tables including `user_sources` and OAuth tables
+- Default preferences are seeded (no `blocked_sources` key)
+- Default `user_sources` rows seeded for youtube, x, news — all with `enabled = 0`
 - `normaliseUrl('https://youtu.be/abc?utm_source=twitter')` returns `'https://www.youtube.com/watch?v=abc'`
 - `hashUrl` returns a consistent 64-character hex string
 
@@ -205,7 +211,7 @@ Update `config.example.json`:
 
 ## Stage 4: Agent Endpoints
 
-**Goal**: Implement the three `/agent/*` routes that the scraping agent uses.
+**Goal**: Implement the `/agent/*` routes that the scraping agent uses.
 
 ### Task 4.1: POST /agent/feed-items
 
@@ -233,32 +239,43 @@ After all inserts:
 
 **Rate limiting**: Apply `@fastify/rate-limit` to agent routes (default: 60 req/hour per token).
 
-### Task 4.2: GET /agent/state
+### Task 4.2: GET /agent/sync-context
 
-Return the `AgentState` object:
-- For each distinct `source` in `feed_items` (for this `user_id`):
-  - `last_sync`: the `published_at` of the most recent item for that source
-  - `item_count`: total items for that source
+Replace the old two-call workflow (`GET /agent/state` + `GET /agent/preferences`) with a single endpoint.
 
-```sql
-SELECT source,
-       MAX(published_at) as last_sync,
-       COUNT(*) as item_count
-FROM feed_items
-WHERE user_id = ?
-GROUP BY source
+Return everything an agent needs to plan a scraping run:
+
+```typescript
+// Response shape (see ARCHITECTURE.md for full definition)
+{
+  sources: [
+    {
+      name: "youtube",
+      enabled: true,
+      urls: ["https://www.youtube.com/feed/subscriptions"],
+      last_sync: "2026-03-28T10:00:00Z",  // MAX(published_at) from feed_items for this source
+      max_items: 20,
+      scraping_resource: "scrolless://platforms/youtube"
+    },
+    {
+      name: "x",
+      enabled: false   // no further fields when disabled
+    }
+  ],
+  filters: {
+    blocked_keywords: ["sponsored"]   // from user_preferences
+  }
+}
 ```
 
-### Task 4.3: GET /agent/preferences
+Implementation:
+- Join `user_sources` with a sub-query on `feed_items` to get `last_sync` per source
+- `max_items` comes from `user_sources.max_items` (falls back to `user_preferences.max_items_per_source` if NULL)
+- `scraping_resource` is always `scrolless://platforms/{name}`
+- Disabled sources appear in the array with only `name` and `enabled: false` — agents must skip them
+- `blocked_keywords` from `user_preferences` (never `blocked_sources` — that concept is gone)
 
-Read from `user_preferences` table for this `user_id`:
-- `blocked_sources` → parse as JSON array
-- `blocked_keywords` → parse as JSON array
-- `max_items_per_source` → parse as integer
-
-Return the `AgentPreferences` object.
-
-### Task 4.4: Data retention cleanup
+### Task 4.3: Data retention cleanup
 
 Create a function `cleanupOldItems(db, userId, retentionDays)`:
 - `DELETE FROM feed_items WHERE user_id = ? AND fetched_at < datetime('now', '-N days')`
@@ -269,7 +286,7 @@ Schedule as a daily cron in `server/index.ts` (3:00 AM):
 - Read `retention_days` from `user_preferences` (default 7)
 - Call `cleanupOldItems()`
 
-### Task 4.5: Dedup verification
+### Task 4.4: Dedup verification
 
 Write a test or verification script that:
 1. POSTs a feed item with URL `https://www.youtube.com/watch?v=abc`
@@ -280,8 +297,9 @@ Write a test or verification script that:
 ### Acceptance criteria
 - `POST /agent/feed-items` with valid payload returns `{ inserted: N, duplicates: M }`
 - Duplicate URLs (even with tracking params or short-link variants) are rejected
-- `GET /agent/state` returns per-source timestamps and counts
-- `GET /agent/preferences` returns the seeded defaults
+- `GET /agent/sync-context` returns enabled sources with URLs, `last_sync`, `max_items`, `scraping_resource`, and a `filters` object with `blocked_keywords`
+- Disabled sources appear in the response with only `name` and `enabled: false`
+- `blocked_sources` does not appear anywhere in the response
 - Invalid payloads return 400 with clear error messages
 - Rate limiting kicks in after 60 requests/hour
 - Daily cleanup removes items older than retention period
@@ -329,13 +347,40 @@ GROUP BY source
 HAVING synced_at = MAX(synced_at)
 ```
 
-### Task 5.2: Static file serving
+### Task 5.2: Source management routes
 
-Register `@fastify/static` to serve `dist/client/` when the directory exists. Add a catch-all route serving `index.html` for non-`/api/` and non-`/agent/` paths (SPA fallback).
+Add CRUD endpoints for managing `user_sources` in `server/api-routes.ts`:
 
-In dev mode: register `@fastify/cors` with origin `http://localhost:5173`.
+**`GET /api/sources`**
+- Return all `user_sources` rows for `user_id = 'local'`
+- Parse `urls` from JSON string to array before returning
 
-### Task 5.3: Wire Fastify into entry point
+**`POST /api/sources`**
+- Body: `{ name, urls: string[], max_items?, scraping_notes? }`
+- `name` must be non-empty, URL-safe string; reject duplicates with 409
+- `urls` must be a non-empty array of valid URL strings
+- Insert into `user_sources` with `enabled = 0`
+- Return the created row
+
+**`PATCH /api/sources/:name`**
+- Body may contain any subset of: `enabled`, `urls`, `max_items`, `scraping_notes`
+- Update only the provided fields
+- Return updated row
+
+**`DELETE /api/sources/:name`**
+- Delete the row
+- Return `{ ok: true }`
+
+### Task 5.3: Static file serving and CORS
+
+Register `@fastify/static` to serve `dist/client/` when the directory exists (used in self-hosted deployments and local production testing). Add a catch-all route serving `index.html` for non-`/api/`, non-`/agent/`, non-`/mcp`, and non-`/oauth/` paths (SPA fallback).
+
+Register `@fastify/cors` using the configured frontend origin:
+- Dev: `http://localhost:5173`
+- Split hosting: the `CORS_ORIGIN` environment variable (e.g. `https://yourapp.vercel.app`)
+- Self-hosted (combined): CORS is not required since frontend and backend share the same origin
+
+### Task 5.4: Wire Fastify into entry point
 
 Update `server/index.ts`:
 - Create Fastify instance
@@ -350,6 +395,9 @@ Update `server/index.ts`:
 - Read/unread toggling works
 - `GET /api/sync/status` returns last sync per source
 - `GET /api/stats` returns correct counts
+- `GET /api/sources` returns the three seeded default sources
+- PATCH can toggle `enabled` and update `urls` on a source
+- DELETE removes a source; subsequent GET does not include it
 
 ---
 
@@ -420,6 +468,15 @@ Generate placeholder icon PNGs. Update `src/index.html` with manifest link, them
 
 Create `src/api.ts` — typed fetch wrappers for all `/api/*` endpoints.
 
+Prefix all request paths with `import.meta.env.VITE_API_BASE_URL` (defaults to `''` so relative paths work in self-hosted mode):
+
+```typescript
+const BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+// e.g. fetch(`${BASE}/api/feed`)
+```
+
+In split hosting, Vercel sets `VITE_API_BASE_URL=https://yourapp.onrender.com` at build time so all API calls go to the Render backend.
+
 ### Task 7.3: App shell
 
 Create `src/app.tsx`:
@@ -468,11 +525,29 @@ Create `src/components/notification-prompt.tsx`:
 - "Not now" → dismiss, remember in localStorage
 - If granted: show "Notifications: On" with disable toggle
 
-### Task 7.9: Service worker (placeholder)
+### Task 7.9: Settings screen
+
+Create `src/settings.tsx` — the `/settings` route:
+
+**`SourceList` component** (`src/components/source-list.tsx`):
+- Fetches `GET /api/sources` on mount
+- Renders a card per source showing: name, enabled toggle, URL list (editable), max_items override
+- Toggle calls `PATCH /api/sources/:name` with `{ enabled: 0|1 }`
+- URL edits call `PATCH /api/sources/:name` with `{ urls: [...] }`
+- Delete button calls `DELETE /api/sources/:name` (with confirmation)
+
+**`AddSourceForm` component** (`src/components/add-source-form.tsx`):
+- Fields: name (text), urls (textarea, one URL per line), optional max_items
+- Submits `POST /api/sources`
+- Validation: name required, at least one valid URL
+
+Refer to `docs/DESIGN_SYSTEM.md` for the Settings screen layout, card patterns, and form styles.
+
+### Task 7.10: Service worker (placeholder)
 
 Create `src/sw.ts` with minimal push handler (will be fleshed out in Stage 8). Register in `src/main.tsx`. Configure Vite to output `sw.js` at the root of `dist/client/`.
 
-### Task 7.10: Styling
+### Task 7.11: Styling
 
 Single `src/styles.css`:
 - CSS custom properties for theming
@@ -488,6 +563,8 @@ Single `src/styles.css`:
 - "Mark all read" works
 - Notification prompt appears, permission flow works
 - PWA manifest is served correctly
+- Settings screen renders the source list; toggling enabled and editing URLs persists via the API
+- AddSourceForm creates a new source; it appears in the list immediately
 
 ---
 
@@ -545,132 +622,250 @@ Ensure `sw.ts` compiles to `dist/client/sw.js` at the root (not hashed, not nest
 
 ---
 
-## Stage 9: Agent Skill
+## Stage 9: MCP Server
 
-**Goal**: Write the scraping skill that runs in Cowork / Claude Code.
+**Goal**: Expose the agent interface as a Remote MCP server so AI agent runtimes (Claude Code, Claude Desktop, LangChain, etc.) can connect directly.
 
-### Task 9.1: Skill main instructions
+### Task 9.1: Install MCP SDK
 
-Create `skill/SKILL.md`:
+Add `@modelcontextprotocol/sdk` to `package.json` runtime dependencies.
 
-This is the primary instruction file the agent reads. It should cover:
+### Task 9.2: MCP server module
 
-1. **Purpose**: You are a feed scraping agent. Your job is to visit platforms in the browser, extract feed items, and POST them to the server.
-2. **Config**: Read `config.json` from this skill's directory for server URL, agent token, and platform settings.
-3. **Workflow**:
-   a. Call `GET /agent/state` to get last sync timestamps
-   b. Call `GET /agent/preferences` to get blocked sources/keywords
-   c. For each enabled platform, read the corresponding platform instruction file
-   d. Open the platform in the browser, extract items newer than last sync
-   e. Filter out blocked keywords
-   f. POST to `/agent/feed-items`
-4. **Error handling**: If a platform fails (CAPTCHA, timeout, layout change), log the error and continue to the next platform. Don't fail the entire run.
-5. **Payload format**: Reference `schema.json` for the exact shape.
+Create `server/mcp.ts`. Use `@modelcontextprotocol/sdk` with the Streamable HTTP transport, mounted at `/mcp`.
 
-### Task 9.2: Platform instruction files
+Apply the same Bearer/OAuth auth middleware as `/agent/*`. Agents authenticate with the same token — the MCP layer is just another interface to the same business logic.
 
-**`skill/platforms/youtube.md`**:
-- Navigate to `https://www.youtube.com/feed/subscriptions`
-- Requires the user to be logged into YouTube in Chrome
-- Extract: video title, channel name, video URL, publish timestamp, thumbnail URL
-- Identify videos by the video ID in the URL (the `v=` parameter)
-- Set `source: "youtube"`, `source_id` to the video ID
-- Skip: YouTube Shorts (URL contains `/shorts/`), ads, premieres that haven't aired
-- Scroll to load more videos if needed (up to `max_items_per_source`)
-- Set `is_discovery: false` for subscription feed items
+### Task 9.3: Tool — get_sync_context
 
-**`skill/platforms/x.md`**:
-- Navigate to `https://x.com/home` (Following tab, not For You)
-- Requires the user to be logged into X in Chrome
-- Extract: author handle, display name, tweet text, tweet URL, publish timestamp
-- Set `source: "x"`, `source_id` to the tweet ID (from the URL)
-- Skip: ads/promoted tweets, retweets (unless quote tweets), Twitter Spaces
-- Set `is_discovery: false` for timeline items
+Register a `get_sync_context` tool (no input arguments).
 
-**`skill/platforms/news.md`**:
-- Navigate to each URL in `config.platforms.news.sites` (e.g. Hacker News, Ars Technica)
-- No login required for public news sites
-- Extract: article title, source/publication name, article URL, publish timestamp
-- Set `source: "news"`, `source_id` to a hash of the article URL
-- Handle different site layouts semantically (HN looks different from Ars Technica)
-- Set `is_discovery: false`
+Implementation: call the same logic as `GET /agent/sync-context` (extract to a shared function so both routes use it). Return the `AgentSyncContext` object.
 
-### Task 9.3: Payload schema
+### Task 9.4: Tool — submit_items
 
-Create `skill/schema.json` — a JSON Schema document describing the `POST /agent/feed-items` payload. The agent can reference this to validate its output before posting.
-
-### Task 9.4: Agent config template
-
-Create `skill/config.example.json`:
-```json
+Register a `submit_items` tool with input schema:
+```typescript
 {
-  "server_url": "https://feed.yourdomain.com",
-  "agent_token": "your-agent-api-key",
-  "platforms": {
-    "youtube": { "enabled": true },
-    "x": { "enabled": false },
-    "news": {
-      "enabled": true,
-      "sites": [
-        "https://news.ycombinator.com",
-        "https://arstechnica.com"
-      ]
-    }
-  },
-  "max_items_per_source": 20,
-  "scrape_timeout_seconds": 120
+  source: string;
+  items: AgentFeedItem[];
 }
 ```
 
+Implementation: call the same logic as `POST /agent/feed-items`. Return `{ inserted, duplicates }`.
+
+### Task 9.5: Resources — platform scraping instructions
+
+Register a resource provider for the `scrolless://platforms/{name}` URI scheme.
+
+- Read content from `skill/resources/{name}.md`
+- If the source has `scraping_notes` in `user_sources`, append them to the file content
+- If no file exists for `{name}`, return a generic extraction prompt
+- Return as MIME type `text/markdown`
+
+This allows agents to fetch per-platform instructions at runtime without any local files.
+
+### Task 9.6: Prompt — run_feed_sync
+
+Register a `run_feed_sync` prompt template with no arguments:
+
+```
+Call get_sync_context to get your work order.
+For each source where enabled is true:
+  1. Fetch the scraping_resource to get platform-specific instructions
+  2. Navigate to each URL in urls[]
+  3. Extract items published after last_sync
+  4. Skip any item whose title or content contains a blocked_keyword
+  5. Collect up to max_items items
+  6. Call submit_items with the batch
+Log the inserted/duplicates counts. If a source fails, continue to the next.
+```
+
+### Task 9.7: Wire MCP into server
+
+Register the MCP handler in `server/index.ts` at `/mcp`.
+
 ### Acceptance criteria
-- A Cowork session can read the skill files and understand the task
-- Running the skill with YouTube enabled populates the feed on the server
-- Items have correct source, source_id, title, URL, and timestamp
-- Blocked keywords from preferences are respected
-- The agent handles failures gracefully (one platform failing doesn't stop others)
+- An MCP client can connect to `http://localhost:3333/mcp` using a Bearer token
+- `get_sync_context` returns the correct structure
+- `submit_items` inserts items and triggers push notifications (same as REST POST)
+- `scrolless://platforms/youtube` returns the content of `skill/resources/youtube.md`
+- `run_feed_sync` prompt is listed and returns the correct template text
+- Unauthenticated requests return 401
 
 ---
 
-## Stage 10: Skill Evaluation
+## Stage 10: OAuth 2.0
+
+**Goal**: Add Authorization Code + PKCE flow so Claude connector and third-party MCP clients can authenticate without a pre-shared token.
+
+### Task 10.1: OAuth routes module
+
+Create `server/oauth-routes.ts`. These routes are public (no auth middleware on the routes themselves — the endpoints implement the OAuth protocol).
+
+**`GET /oauth/.well-known/oauth-authorization-server`**
+- Return server metadata: `issuer`, `authorization_endpoint`, `token_endpoint`, `revocation_endpoint`, `response_types_supported`, `code_challenge_methods_supported`
+
+**`GET /oauth/authorize`**
+- Query params: `client_id`, `redirect_uri`, `response_type=code`, `code_challenge`, `code_challenge_method=S256`, `state`
+- Validate `client_id` against `oauth_clients` in config
+- Validate `redirect_uri` against registered URIs
+- Show a consent screen (can be minimal for PoC — HTML form with "Allow" button)
+- On approval: generate a random auth code, store in `oauth_auth_codes` with 10-minute expiry, redirect to `redirect_uri?code=CODE&state=STATE`
+
+**`POST /oauth/token`**
+- Body: `grant_type`, `code`, `redirect_uri`, `code_verifier` (for authorization_code) or `refresh_token` (for refresh)
+- For `authorization_code`: verify code exists, not expired, PKCE challenge matches (`SHA-256(code_verifier) == code_challenge`)
+- Issue access token (random 32-byte hex, 1-hour expiry) and refresh token
+- Store in `oauth_tokens`
+- Delete used auth code
+- Return `{ access_token, token_type: "Bearer", expires_in: 3600, refresh_token }`
+
+**`POST /oauth/revoke`**
+- Body: `token` (access or refresh token)
+- Delete matching row from `oauth_tokens`
+- Return 200 (always, per RFC 7009)
+
+### Task 10.2: Extend auth middleware
+
+Update the auth middleware in `server/auth.ts` to accept both token types:
+
+1. Try Bearer token path: hash incoming token, look up in `agent_tokens`
+2. If not found, try OAuth path: look up raw token in `oauth_tokens`, check `access_expires`
+3. Return resolved `userId` from whichever path succeeds
+4. If both fail: return 401
+
+Existing Bearer token agents must continue working unchanged.
+
+### Task 10.3: Client registration
+
+Read OAuth client registrations from `config.json` at startup and seed `oauth_clients` table. See ARCHITECTURE.md for the `config.json` shape.
+
+### Task 10.4: Cleanup
+
+Extend the daily cron to also delete:
+- `oauth_auth_codes` where `expires_at < now`
+- `oauth_tokens` where `access_expires < now` and no valid `refresh_expires`
+
+### Acceptance criteria
+- Claude connector OAuth flow completes end-to-end (authorize → token exchange → MCP request with access token)
+- Refresh token exchange works
+- Revocation invalidates the token immediately
+- Expired tokens return 401 with `WWW-Authenticate: Bearer error="invalid_token"`
+- Bearer token agents are unaffected — existing tokens still work
+- `GET /oauth/.well-known/oauth-authorization-server` returns valid metadata
+
+---
+
+## Stage 11: Agent Skill
+
+**Goal**: Write the scraping skill instructions for Claude Code / Cowork agents.
+
+### Task 11.1: Skill main instructions
+
+Update `skill/SKILL.md` to document the MCP-first workflow:
+
+1. **Primary path**: Agent connects to the ScrolLess MCP server and invokes the `run_feed_sync` prompt. That prompt contains the full workflow — no other instructions needed.
+2. **Expanded MCP steps** (for agents that need explicit steps): call `get_sync_context`, read each source's `scraping_resource`, scrape, call `submit_items`.
+3. **REST fallback** (non-MCP clients): `GET /agent/sync-context` for context, `POST /agent/feed-items` to submit.
+
+Do **not** include references to local `config.json` for platform settings — sources come from `get_sync_context`. Do **not** include references to `blocked_sources`.
+
+### Task 11.2: Platform resource files
+
+Create `skill/resources/youtube.md`, `skill/resources/x.md`, `skill/resources/news.md`.
+
+These files are served as MCP resources at `scrolless://platforms/{name}`. Each file provides:
+1. Target URL(s) to navigate
+2. Extraction guidance (described semantically — not selectors)
+3. Pagination instructions
+4. Edge cases to skip
+5. Field mapping to `AgentFeedItem`
+
+**`skill/resources/youtube.md`**:
+- Navigate to `https://www.youtube.com/feed/subscriptions`
+- Requires the user to be logged into YouTube in Chrome
+- Extract: video title, channel name, video URL, publish timestamp, thumbnail URL
+- `source_id` = video ID from the `v=` parameter
+- Skip: YouTube Shorts (`/shorts/` in URL), ads, unaired premieres
+- `is_discovery: false`
+
+**`skill/resources/x.md`**:
+- Navigate to `https://x.com/home` (Following tab, not For You)
+- Requires the user to be logged into X in Chrome
+- Extract: author handle, display name, tweet text, tweet URL, publish timestamp
+- `source_id` = tweet ID from URL
+- Skip: ads/promoted tweets, retweets (unless quote tweets), Spaces
+- `is_discovery: false`
+
+**`skill/resources/news.md`**:
+- Navigate to each URL provided in the source's `urls[]`
+- No login required for public news sites
+- Extract: article title, publication name, article URL, publish timestamp
+- `source_id` = SHA-256 of the article URL
+- Handle different site layouts semantically
+- `is_discovery: false`
+
+### Task 11.3: Payload schema
+
+Create `skill/schema.json` — a JSON Schema document describing the `AgentFeedItem` payload. Agents can reference this to validate output before submitting.
+
+### Acceptance criteria
+- `skill/SKILL.md` clearly describes MCP-first workflow with REST fallback
+- No references to local `config.json` platform settings or `blocked_sources`
+- `skill/resources/` contains files for youtube, x, and news
+- An agent reading the files can execute a full sync run against a live server
+
+---
+
+## Stage 12: Skill Evaluation
 
 **Goal**: Validate that the skill reliably populates the feed across platforms and error conditions.
 
-### Task 10.1: Dry run mode
+### Task 12.1: Dry run mode
 
 Add a `--dry-run` flag to the skill instructions:
-- When enabled, the agent writes extracted items to a local `dry-run-output.json` file instead of POSTing
+- When enabled, the agent writes extracted items to a local `dry-run-output.json` file instead of submitting
 - Inspect the output: are all fields present? Are timestamps valid ISO 8601? Are URLs valid?
 
-### Task 10.2: Single-source smoke test
+### Task 12.2: MCP smoke test
 
-- Enable only YouTube in the skill config
-- Run the skill
+- Connect an MCP client to `http://localhost:3333/mcp` using a Bearer token
+- Call `get_sync_context` — verify it returns enabled sources with the expected structure
+- Call `submit_items` with a sample YouTube item — verify `inserted: 1`
+- Call `submit_items` again with the same item — verify `duplicates: 1`
+- Fetch resource `scrolless://platforms/youtube` — verify it returns the instruction markdown
+
+### Task 12.3: Single-source end-to-end test
+
+- Enable YouTube in the Settings screen (`PATCH /api/sources/youtube` with `enabled: 1`)
+- Run the `run_feed_sync` prompt via MCP (or REST fallback)
 - Verify: items appear in `GET /api/feed?source=youtube`
 - Run again: verify no duplicates (dedup working)
 - Verify: push notification was received
 
-### Task 10.3: Multi-source test
+### Task 12.4: Multi-source test
 
 - Enable YouTube + news
 - Run the skill
 - Verify: both sources appear in the feed
 - Verify: source filter tabs show correct counts
-- Verify: `GET /agent/state` shows both sources with correct timestamps
+- Verify: `GET /agent/sync-context` shows both sources with correct `last_sync` timestamps
 
-### Task 10.4: Preferences test
+### Task 12.5: Keyword filter test
 
 - Add a blocked keyword to preferences (e.g. "sponsored")
 - Run the skill
-- Verify: items matching the keyword are not posted
+- Verify: items containing the keyword are not submitted
 
-### Task 10.5: Failure recovery test
+### Task 12.6: Failure recovery test
 
-- Run the skill targeting a site that requires a login the agent doesn't have
-- Verify: the agent logs the error and continues to the next platform
-- Verify: sync_log shows the error for that source
+- Run the skill targeting a source that requires a login the agent doesn't have
+- Verify: the agent logs the error and continues to the next source
+- Verify: `sync_log` shows the error for that source
 - Verify: other sources still populated correctly
 
-### Task 10.6: Freshness test
+### Task 12.7: Freshness test
 
 - Let the skill run on its scheduled cadence for 24+ hours
 - Verify: new items appear in each sync
@@ -679,27 +874,36 @@ Add a `--dry-run` flag to the skill instructions:
 - Verify: push notifications continue to arrive for new content
 
 ### Acceptance criteria
-- All five test levels pass
-- The feed is reliably populated from scheduled agent runs
+- MCP tools and resources respond correctly
+- End-to-end sync populates the feed reliably
+- Keyword filtering works
 - Errors are logged, not silent
 - Dedup and cleanup work over time
 
 ---
 
-## Stage 11: Production Build & Deployment
+## Stage 13: Production Build & Deployment
 
 **Goal**: Make the app deployable for daily use.
 
-### Task 11.1: Production server
+### Task 13.1: Production server
 
-Verify `npm run build && npm start` serves:
+Two valid production configurations:
+
+**Split hosting (Vercel + Render)**: `npm start` on Render serves only the backend routes. The frontend is built and deployed to Vercel separately. Verify:
+- `/api/*`, `/agent/*`, `/mcp`, `/oauth/*` respond correctly from the Render URL
+- `CORS_ORIGIN` is set to the Vercel app URL so browser requests are accepted
+
+**Self-hosted (combined)**: `npm run build && npm start` serves both frontend and backend from the same process. Verify:
 - All API routes on `/api/*`
 - Agent routes on `/agent/*` (with auth)
+- MCP endpoint at `/mcp` (with auth)
+- OAuth endpoints at `/oauth/*`
 - Built frontend at `/`
 - Service worker at `/sw.js`
 - Manifest at `/manifest.json`
 
-### Task 11.2: Systemd service
+### Task 13.2: Systemd service (self-hosted)
 
 Create `feed-aggregator.service` for systemd user service:
 
@@ -732,30 +936,50 @@ With installation instructions in comments:
 # sudo loginctl enable-linger $USER
 ```
 
-### Task 11.3: Cloudflare Tunnel
+### Task 13.3: Deployment options
 
-Create `docs/DEPLOYMENT.md` with:
+Create `docs/DEPLOYMENT.md` covering two deployment paths:
+
+**Vercel + Render (primary — recommended, free tier)**:
+
+*Backend on Render*:
+1. Create a Render Web Service pointing to the repo; set build command `npm install` and start command `npm start`
+2. Add a Render Disk (persistent volume) mounted at `/data`; set `db_path` in config to `/data/feed.db`
+3. Set environment variables: agent token hash, VAPID keys, `CORS_ORIGIN=https://yourapp.vercel.app`, and any other `config.json` values
+4. Note: free tier instances spin down after inactivity — upgrade to a paid instance ($7/mo) if you need always-on push notifications
+
+*Frontend on Vercel*:
+1. Create a Vercel project pointing to the same repo; set framework preset to Vite, build command `npm run build`, output directory `dist/client`
+2. Add environment variable: `VITE_API_BASE_URL=https://yourapp.onrender.com`
+3. Add `vercel.json` at the repo root to configure SPA routing:
+```json
+{ "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }] }
+```
+4. Verify: PWA loads from Vercel, API calls reach Render, push subscription flow works end-to-end
+
+**Cloudflare Tunnel (personal/self-hosted — combined)**:
 1. `cloudflared` installation on Fedora
 2. Quick test: `cloudflared tunnel --url http://localhost:3333`
 3. Permanent tunnel with custom domain
 4. Tunnel config YAML
 5. DNS routing
 6. Systemd service for cloudflared
-7. Verification: PWA installs, push works, agent can reach server
+7. Verification: PWA installs, push works, agent can reach server and MCP endpoint
 
-### Task 11.4: Cowork scheduled task setup
+### Task 13.4: Claude Code scheduled task setup
 
-Document how to set up the agent as a recurring Cowork task:
-1. Create a Cowork project
-2. Grant access to the `skill/` folder
-3. Enable Claude in Chrome connector
-4. Set up the recurring task (e.g. every 30 minutes)
-5. Verify: feed populates automatically on schedule
+Document how to set up the agent as a recurring Claude Code task:
+1. Configure the ScrolLess MCP server in Claude Code (`~/.claude/mcp_servers.json`)
+2. Enable Claude in Chrome connector
+3. Set up a `/loop` or `/schedule` task (e.g. every 30 minutes): `Use the run_feed_sync prompt from the ScrolLess MCP server.`
+4. Verify: feed populates automatically on schedule
 
 ### Acceptance criteria
-- Server runs as a systemd service, survives reboots
-- Cloudflare Tunnel provides stable HTTPS access
+- Frontend deploys to Vercel; backend deploys to Render (or both run from one process self-hosted)
+- HTTPS access established via Cloudflare Tunnel or platform proxy
 - PWA installs on Android from the public URL
 - Push notifications work end-to-end
-- Scheduled Cowork task populates the feed automatically
+- MCP server is reachable from Claude Code at the public URL
+- OAuth flow completes end-to-end with Claude connector
+- Scheduled Claude Code task populates the feed automatically
 - The app is usable as a daily driver
