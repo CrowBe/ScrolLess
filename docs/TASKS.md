@@ -371,11 +371,14 @@ Add CRUD endpoints for managing `user_sources` in `server/api-routes.ts`:
 - Delete the row
 - Return `{ ok: true }`
 
-### Task 5.3: Static file serving
+### Task 5.3: Static file serving and CORS
 
-Register `@fastify/static` to serve `dist/client/` when the directory exists. Add a catch-all route serving `index.html` for non-`/api/`, non-`/agent/`, non-`/mcp`, and non-`/oauth/` paths (SPA fallback).
+Register `@fastify/static` to serve `dist/client/` when the directory exists (used in self-hosted deployments and local production testing). Add a catch-all route serving `index.html` for non-`/api/`, non-`/agent/`, non-`/mcp`, and non-`/oauth/` paths (SPA fallback).
 
-In dev mode: register `@fastify/cors` with origin `http://localhost:5173`.
+Register `@fastify/cors` using the configured frontend origin:
+- Dev: `http://localhost:5173`
+- Split hosting: the `CORS_ORIGIN` environment variable (e.g. `https://yourapp.vercel.app`)
+- Self-hosted (combined): CORS is not required since frontend and backend share the same origin
 
 ### Task 5.4: Wire Fastify into entry point
 
@@ -464,6 +467,15 @@ Generate placeholder icon PNGs. Update `src/index.html` with manifest link, them
 ### Task 7.2: API client
 
 Create `src/api.ts` — typed fetch wrappers for all `/api/*` endpoints.
+
+Prefix all request paths with `import.meta.env.VITE_API_BASE_URL` (defaults to `''` so relative paths work in self-hosted mode):
+
+```typescript
+const BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+// e.g. fetch(`${BASE}/api/feed`)
+```
+
+In split hosting, Vercel sets `VITE_API_BASE_URL=https://yourapp.onrender.com` at build time so all API calls go to the Render backend.
 
 ### Task 7.3: App shell
 
@@ -876,7 +888,13 @@ Add a `--dry-run` flag to the skill instructions:
 
 ### Task 13.1: Production server
 
-Verify `npm run build && npm start` serves:
+Two valid production configurations:
+
+**Split hosting (Vercel + Render)**: `npm start` on Render serves only the backend routes. The frontend is built and deployed to Vercel separately. Verify:
+- `/api/*`, `/agent/*`, `/mcp`, `/oauth/*` respond correctly from the Render URL
+- `CORS_ORIGIN` is set to the Vercel app URL so browser requests are accepted
+
+**Self-hosted (combined)**: `npm run build && npm start` serves both frontend and backend from the same process. Verify:
 - All API routes on `/api/*`
 - Agent routes on `/agent/*` (with auth)
 - MCP endpoint at `/mcp` (with auth)
@@ -920,17 +938,26 @@ With installation instructions in comments:
 
 ### Task 13.3: Deployment options
 
-Create `docs/DEPLOYMENT.md` covering two deployment targets:
+Create `docs/DEPLOYMENT.md` covering two deployment paths:
 
-**Render (primary — recommended, free tier)**:
-1. Create a Render Web Service pointing to the repo; set build command `npm install && npm run build` and start command `npm start`
+**Vercel + Render (primary — recommended, free tier)**:
+
+*Backend on Render*:
+1. Create a Render Web Service pointing to the repo; set build command `npm install` and start command `npm start`
 2. Add a Render Disk (persistent volume) mounted at `/data`; set `db_path` in config to `/data/feed.db`
-3. Set environment variables for all `config.json` values (agent token hash, VAPID keys, etc.)
-4. Configure a custom domain (or use the `.onrender.com` subdomain)
-5. Verify: health check on `GET /api/stats` returns 200
-6. Note: free tier instances spin down after inactivity — upgrade to a paid instance ($7/mo) if you need always-on push notifications
+3. Set environment variables: agent token hash, VAPID keys, `CORS_ORIGIN=https://yourapp.vercel.app`, and any other `config.json` values
+4. Note: free tier instances spin down after inactivity — upgrade to a paid instance ($7/mo) if you need always-on push notifications
 
-**Cloudflare Tunnel (personal/self-hosted fallback)**:
+*Frontend on Vercel*:
+1. Create a Vercel project pointing to the same repo; set framework preset to Vite, build command `npm run build`, output directory `dist/client`
+2. Add environment variable: `VITE_API_BASE_URL=https://yourapp.onrender.com`
+3. Add `vercel.json` at the repo root to configure SPA routing:
+```json
+{ "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }] }
+```
+4. Verify: PWA loads from Vercel, API calls reach Render, push subscription flow works end-to-end
+
+**Cloudflare Tunnel (personal/self-hosted — combined)**:
 1. `cloudflared` installation on Fedora
 2. Quick test: `cloudflared tunnel --url http://localhost:3333`
 3. Permanent tunnel with custom domain
@@ -948,7 +975,7 @@ Document how to set up the agent as a recurring Claude Code task:
 4. Verify: feed populates automatically on schedule
 
 ### Acceptance criteria
-- Server runs as a systemd service (self-hosted) or on Render (cloud)
+- Frontend deploys to Vercel; backend deploys to Render (or both run from one process self-hosted)
 - HTTPS access established via Cloudflare Tunnel or platform proxy
 - PWA installs on Android from the public URL
 - Push notifications work end-to-end
