@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite';
 import preact from '@preact/preset-vite';
 import { resolve } from 'path';
@@ -17,5 +18,11 @@ export default defineConfig({
       '/api': 'http://localhost:3333',
       '/agent': 'http://localhost:3333',
     },
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./test-setup.ts'],
+    include: ['**/*.test.{ts,tsx}'],
   },
 });
