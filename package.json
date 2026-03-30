@@ -8,7 +8,11 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "build": "vite build && node build-sw.mjs",
     "start": "NODE_ENV=production tsx server/index.ts",
-    "generate-token": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+    "generate-token": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:update": "playwright test --update-snapshots"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",
@@ -24,12 +28,17 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@preact/preset-vite": "^2.8.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/preact": "^3.2.4",
     "@types/better-sqlite3": "^7.6.8",
     "@types/node": "^20.11.30",
     "@types/web-push": "^3.6.3",
     "concurrently": "^8.2.2",
+    "jsdom": "^29.0.1",
     "typescript": "^5.4.3",
-    "vite": "^5.2.7"
+    "vite": "^5.2.7",
+    "vitest": "^4.1.2"
   }
 }
