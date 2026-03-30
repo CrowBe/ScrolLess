@@ -28,6 +28,13 @@ export function initDb(dbPath?: string): Database.Database {
   const schema = readFileSync(join(__dirname, '../sql/schema.sql'), 'utf8');
   db.exec(schema);
 
+  // Idempotent migrations for columns added after initial schema
+  try {
+    db.exec(`ALTER TABLE user_sources ADD COLUMN scraping_notes TEXT`);
+  } catch {
+    // Column already exists — safe to ignore
+  }
+
   // Seed default user_preferences if not present
   const seedPref = db.prepare(
     `INSERT OR IGNORE INTO user_preferences (user_id, key, value) VALUES ('local', ?, ?)`

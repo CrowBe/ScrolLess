@@ -67,12 +67,13 @@ CREATE TABLE IF NOT EXISTS user_preferences (
 
 -- User-managed content sources
 CREATE TABLE IF NOT EXISTS user_sources (
-    user_id     TEXT NOT NULL DEFAULT 'local',
-    name        TEXT NOT NULL,                -- "youtube" | "x" | custom
-    enabled     INTEGER NOT NULL DEFAULT 1,
-    urls        TEXT,                         -- JSON array of URLs
-    max_items   INTEGER,                      -- per-source override
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    user_id         TEXT NOT NULL DEFAULT 'local',
+    name            TEXT NOT NULL,                -- "youtube" | "x" | custom
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    urls            TEXT,                         -- JSON array of URLs
+    max_items       INTEGER,                      -- per-source override
+    scraping_notes  TEXT,                         -- freeform notes appended to platform resource
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (user_id, name)
 );
 

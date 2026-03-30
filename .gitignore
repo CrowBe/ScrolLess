@@ -8,3 +8,4 @@ skill/config.json
 .env
 dry-run-output.json
 .claude/worktrees
+.mcp.json
