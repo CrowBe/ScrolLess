@@ -62,10 +62,38 @@ async function start() {
 
   const fastify = Fastify({ logger: { level: isProd ? 'warn' : 'info' } });
 
-  // CORS in dev
-  if (!isProd) {
-    await fastify.register(fastifyCors, { origin: 'http://localhost:5173' });
-  }
+  // CORS — allow PWA dev origin in dev; always allow the MCP endpoint to be reached
+  // by Claude Desktop / claude.ai (they make direct HTTP, not browser-CORS requests,
+  // but we add the header for any web-based MCP client)
+  await fastify.register(fastifyCors, {
+    origin: (origin, done) => {
+      const allowed = [
+        'https://claude.ai',
+        'https://www.claude.ai',
+        ...(isProd ? [] : ['http://localhost:5173']),
+        ...(config.base_url ? [config.base_url.replace(/\/$/, '')] : []),
+      ];
+      if (!origin || allowed.includes(origin)) {
+        done(null, true);
+      } else {
+        done(null, false);
+      }
+    },
+    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Mcp-Session-Id'],
+    exposedHeaders: ['Mcp-Session-Id'],
+  });
+
+  // Security headers on every response
+  fastify.addHook('onSend', async (_req, reply) => {
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('X-Frame-Options', 'DENY');
+    reply.header('X-XSS-Protection', '1; mode=block');
+    reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+    if (isProd) {
+      reply.header('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
+    }
+  });
 
   // Form body parsing (for OAuth authorize POST)
   await fastify.register(fastifyFormbody);

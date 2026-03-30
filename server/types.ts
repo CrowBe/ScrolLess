@@ -62,6 +62,8 @@ export interface OAuthClientConfig {
 export interface AppConfig {
   agent_token_hash: string;
   db_path?: string;
+  base_url?: string;       // Public-facing URL for OAuth issuer (e.g. "https://scrolless.example.com")
+  admin_password?: string; // If set, required to approve OAuth consent screen
   server?: {
     port?: number;
     host?: string;

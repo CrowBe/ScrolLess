@@ -70,8 +70,8 @@ export function registerMcpHandler(
   db: Database.Database,
   pushCallback?: PushCallback
 ): void {
-  // Map of session ID to transport + creation time (for stateful mode)
-  const transports = new Map<string, { transport: StreamableHTTPServerTransport; createdAt: number }>();
+  // Map of session ID to transport, owning userId, and creation time
+  const transports = new Map<string, { transport: StreamableHTTPServerTransport; userId: string; createdAt: number }>();
 
   // Periodically evict stale sessions
   const cleanupInterval = setInterval(() => {
@@ -229,7 +229,12 @@ export function registerMcpHandler(
     let transport: StreamableHTTPServerTransport;
 
     if (sessionId && transports.has(sessionId)) {
-      transport = transports.get(sessionId)!.transport;
+      const entry = transports.get(sessionId)!;
+      // Verify the authenticated user owns this session
+      if (entry.userId !== userId) {
+        return reply.status(403).send({ error: 'Session belongs to a different user' });
+      }
+      transport = entry.transport;
     } else if (!sessionId && req.method === 'POST') {
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => crypto.randomUUID(),
@@ -239,7 +244,7 @@ export function registerMcpHandler(
       await mcp.connect(transport);
 
       if (transport.sessionId) {
-        transports.set(transport.sessionId, { transport, createdAt: Date.now() });
+        transports.set(transport.sessionId, { transport, userId, createdAt: Date.now() });
       }
 
       transport.onclose = () => {

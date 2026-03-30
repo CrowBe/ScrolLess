@@ -29,20 +29,34 @@ export function registerOAuthRoutes(
   const tokenExpiresIn = config.oauth?.token_expires_in ?? 3600;
   const refreshExpiresIn = config.oauth?.refresh_token_expires_in ?? 2592000;
 
-  // --- Server metadata discovery ---
-  fastify.get('/oauth/.well-known/oauth-authorization-server', async (_req, reply) => {
-    const host = config.server?.host ?? '127.0.0.1';
+  function getIssuer(): string {
+    if (config.base_url) return config.base_url.replace(/\/$/, '');
+    const host = config.server?.host === '0.0.0.0' ? '127.0.0.1' : (config.server?.host ?? '127.0.0.1');
     const port = config.server?.port ?? 3333;
-    const issuer = `http://${host}:${port}`;
+    return `http://${host}:${port}`;
+  }
 
-    return reply.send({
+  function buildMetadata() {
+    const issuer = getIssuer();
+    return {
       issuer,
       authorization_endpoint: `${issuer}/oauth/authorize`,
       token_endpoint: `${issuer}/oauth/token`,
       revocation_endpoint: `${issuer}/oauth/revoke`,
       response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
       code_challenge_methods_supported: ['S256'],
-    });
+      token_endpoint_auth_methods_supported: ['none'],
+    };
+  }
+
+  // RFC 8414 §3 — discovery at both root and /oauth/ prefix
+  fastify.get('/.well-known/oauth-authorization-server', async (_req, reply) => {
+    return reply.send(buildMetadata());
+  });
+
+  fastify.get('/oauth/.well-known/oauth-authorization-server', async (_req, reply) => {
+    return reply.send(buildMetadata());
   });
 
   // --- Authorization endpoint ---
@@ -78,6 +92,11 @@ export function registerOAuthRoutes(
     }
 
     // Render minimal consent screen
+    const needsPassword = !!config.admin_password;
+    const passwordField = needsPassword
+      ? `<div class="field"><label for="admin_password">Admin password</label><input id="admin_password" type="password" name="admin_password" required autocomplete="current-password"></div>`
+      : '';
+
     const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -90,7 +109,10 @@ export function registerOAuthRoutes(
     h1 { font-size: 1.25rem; margin: 0 0 0.5rem; }
     p { color: #999; margin: 0 0 1.5rem; }
     .client { color: #60a5fa; font-weight: 600; }
-    form { display: flex; gap: 0.75rem; justify-content: center; }
+    .field { margin: 0 0 1.25rem; text-align: left; }
+    .field label { display: block; font-size: 0.8rem; color: #999; margin-bottom: 0.4rem; }
+    .field input { width: 100%; box-sizing: border-box; padding: 0.5rem 0.75rem; background: #111; border: 1px solid #444; border-radius: 6px; color: #e5e5e5; font-size: 0.9rem; }
+    .actions { display: flex; gap: 0.75rem; justify-content: center; }
     button { padding: 0.625rem 1.5rem; border-radius: 8px; border: none; font-size: 0.875rem; cursor: pointer; font-weight: 500; }
     .allow { background: #2563eb; color: #fff; }
     .allow:hover { background: #1d4ed8; }
@@ -109,8 +131,11 @@ export function registerOAuthRoutes(
       <input type="hidden" name="code_challenge_method" value="${escapeHtml(code_challenge_method)}">
       <input type="hidden" name="state" value="${escapeHtml(state)}">
       <input type="hidden" name="response_type" value="code">
-      <button type="submit" name="approve" value="1" class="allow">Allow</button>
-      <button type="submit" name="approve" value="0" class="deny">Deny</button>
+      ${passwordField}
+      <div class="actions">
+        <button type="submit" name="approve" value="1" class="allow">Allow</button>
+        <button type="submit" name="approve" value="0" class="deny">Deny</button>
+      </div>
     </form>
   </div>
 </body>
@@ -122,11 +147,18 @@ export function registerOAuthRoutes(
   // --- Authorization approval (POST) ---
   fastify.post('/oauth/authorize', async (req: FastifyRequest, reply: FastifyReply) => {
     const body = req.body as Record<string, string>;
-    const { client_id, redirect_uri, code_challenge, code_challenge_method, state, approve } = body;
+    const { client_id, redirect_uri, code_challenge, code_challenge_method, state, approve, admin_password } = body;
 
     if (approve !== '1') {
       const denyUrl = `${redirect_uri}?error=access_denied&state=${encodeURIComponent(state ?? '')}`;
       return reply.redirect(denyUrl);
+    }
+
+    // Verify admin password if configured
+    if (config.admin_password) {
+      if (!admin_password || admin_password !== config.admin_password) {
+        return reply.status(403).send({ error: 'access_denied', error_description: 'Invalid admin password' });
+      }
     }
 
     // Re-validate client
@@ -231,6 +263,7 @@ export function registerOAuthRoutes(
       token_type: 'Bearer',
       expires_in: tokenExpiresIn,
       refresh_token: refreshToken,
+      scope: 'feed',
     });
   }
 
@@ -282,6 +315,7 @@ export function registerOAuthRoutes(
       token_type: 'Bearer',
       expires_in: tokenExpiresIn,
       refresh_token: newRefreshToken,
+      scope: 'feed',
     });
   }
 
