@@ -49,3 +49,11 @@ export interface PushPayload {
   count: number;
   url: string;
 }
+
+export interface UserSource {
+  name: string;
+  enabled: boolean;
+  urls: string[];
+  max_items: number | null;
+  created_at: string;
+}

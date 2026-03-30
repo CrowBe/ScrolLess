@@ -5,6 +5,7 @@ import { SourceFilter } from './components/source-filter';
 import { FeedList } from './components/feed-list';
 import { SyncStatus } from './components/sync-status';
 import { NotificationPrompt } from './components/notification-prompt';
+import { Settings } from './settings';
 
 type View = 'feed' | 'discover' | 'saved' | 'settings';
 
@@ -83,7 +84,21 @@ export function App() {
       {/* Glass header */}
       <header class="app-header glass">
         <span class="app-header__logo">ScrolLess</span>
-        <SyncStatus />
+        <div class="app-header__right">
+          <SyncStatus />
+          <button
+            class="app-header__settings"
+            onClick={() => setView('settings')}
+            aria-label="Settings"
+          >
+            <span
+              class="material-symbols-outlined"
+              style={view === 'settings' ? 'font-variation-settings: "FILL" 1' : ''}
+            >
+              settings
+            </span>
+          </button>
+        </div>
       </header>
 
       <main class="app-main">
@@ -104,7 +119,7 @@ export function App() {
         )}
 
         {view === 'settings' ? (
-          <SettingsView />
+          <Settings />
         ) : (
           <FeedList
             items={items}
@@ -134,33 +149,6 @@ export function App() {
           </button>
         ))}
       </nav>
-    </div>
-  );
-}
-
-function SettingsView() {
-  return (
-    <div class="settings">
-      <section class="settings__section">
-        <h2 class="settings__heading">Agent Token</h2>
-        <p class="settings__help">
-          Generate a token with <code>npm run generate-token</code>, hash it with SHA-256,
-          and add it to <code>config.json</code> as <code>agent_token_hash</code>.
-        </p>
-      </section>
-
-      <section class="settings__section">
-        <h2 class="settings__heading">Connected Sources</h2>
-        <p class="settings__help">
-          Sources are populated automatically when the agent syncs. Run the agent skill
-          to start seeing content.
-        </p>
-      </section>
-
-      <section class="settings__section settings__section--danger">
-        <h2 class="settings__heading">About</h2>
-        <p class="settings__help">ScrolLess — personal feed aggregator PoC</p>
-      </section>
     </div>
   );
 }

@@ -1,0 +1,15 @@
+[Unit]
+Description=ScrolLess Feed Aggregator
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/ScrolLess
+ExecStart=/usr/bin/node --import tsx server/index.ts
+Environment=NODE_ENV=production
+EnvironmentFile=%h/.config/scrolless/env
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

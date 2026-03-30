@@ -198,4 +198,101 @@ export function registerApiRoutes(
 
     return reply.send({ ok: true });
   });
+
+  // GET /api/sources
+  fastify.get('/api/sources', async (_req: FastifyRequest, reply: FastifyReply) => {
+    const rows = db.prepare(
+      `SELECT name, enabled, urls, max_items, created_at FROM user_sources WHERE user_id = 'local' ORDER BY name`
+    ).all() as Array<{ name: string; enabled: number; urls: string | null; max_items: number | null; created_at: string }>;
+
+    const sources = rows.map((r) => ({
+      name: r.name,
+      enabled: r.enabled === 1,
+      urls: r.urls ? JSON.parse(r.urls) as string[] : [],
+      max_items: r.max_items,
+      created_at: r.created_at,
+    }));
+
+    return reply.send(sources);
+  });
+
+  // POST /api/sources
+  fastify.post('/api/sources', async (req: FastifyRequest, reply: FastifyReply) => {
+    const body = req.body as { name?: string; urls?: string[]; max_items?: number };
+
+    if (!body?.name || typeof body.name !== 'string' || !body.name.trim()) {
+      return reply.status(400).send({ error: 'name is required' });
+    }
+    if (!Array.isArray(body.urls) || body.urls.length === 0) {
+      return reply.status(400).send({ error: 'at least one url is required' });
+    }
+
+    const name = body.name.trim().toLowerCase();
+    const urls = JSON.stringify(body.urls.filter((u) => typeof u === 'string' && u.trim()));
+    const maxItems = body.max_items != null ? body.max_items : null;
+
+    try {
+      db.prepare(
+        `INSERT INTO user_sources (user_id, name, urls, max_items) VALUES ('local', ?, ?, ?)`
+      ).run(name, urls, maxItems);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes('UNIQUE constraint')) {
+        return reply.status(409).send({ error: 'source already exists' });
+      }
+      throw err;
+    }
+
+    return reply.status(201).send({ ok: true });
+  });
+
+  // PATCH /api/sources/:name
+  fastify.patch('/api/sources/:name', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { name } = req.params as { name: string };
+    const body = req.body as { enabled?: number; urls?: string[]; max_items?: number | null };
+
+    const sets: string[] = [];
+    const params: unknown[] = [];
+
+    if (body.enabled != null) {
+      sets.push('enabled = ?');
+      params.push(body.enabled);
+    }
+    if (body.urls != null) {
+      sets.push('urls = ?');
+      params.push(JSON.stringify(body.urls));
+    }
+    if (body.max_items !== undefined) {
+      sets.push('max_items = ?');
+      params.push(body.max_items);
+    }
+
+    if (sets.length === 0) {
+      return reply.status(400).send({ error: 'nothing to update' });
+    }
+
+    params.push(decodeURIComponent(name));
+    const result = db.prepare(
+      `UPDATE user_sources SET ${sets.join(', ')} WHERE user_id = 'local' AND name = ?`
+    ).run(...params);
+
+    if (result.changes === 0) {
+      return reply.status(404).send({ error: 'source not found' });
+    }
+
+    return reply.send({ ok: true });
+  });
+
+  // DELETE /api/sources/:name
+  fastify.delete('/api/sources/:name', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { name } = req.params as { name: string };
+    const result = db.prepare(
+      `DELETE FROM user_sources WHERE user_id = 'local' AND name = ?`
+    ).run(decodeURIComponent(name));
+
+    if (result.changes === 0) {
+      return reply.status(404).send({ error: 'source not found' });
+    }
+
+    return reply.send({ ok: true });
+  });
 }
