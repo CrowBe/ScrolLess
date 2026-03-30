@@ -12,5 +12,16 @@
   },
   "rate_limit": {
     "agent_max_per_hour": 60
+  },
+  "oauth": {
+    "clients": [
+      {
+        "client_id": "claude-connector",
+        "redirect_uris": ["https://claude.ai/oauth/callback"],
+        "is_public": true
+      }
+    ],
+    "token_expires_in": 3600,
+    "refresh_token_expires_in": 2592000
   }
 }

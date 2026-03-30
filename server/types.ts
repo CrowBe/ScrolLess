@@ -37,6 +37,28 @@ export interface AgentPreferences {
   max_items_per_source: number;
 }
 
+export interface AgentSyncSource {
+  name: string;
+  enabled: boolean;
+  urls?: string[];
+  last_sync?: string | null;
+  max_items?: number;
+  scraping_resource?: string;
+}
+
+export interface AgentSyncContext {
+  sources: AgentSyncSource[];
+  filters: {
+    blocked_keywords: string[];
+  };
+}
+
+export interface OAuthClientConfig {
+  client_id: string;
+  redirect_uris: string[];
+  is_public?: boolean;
+}
+
 export interface AppConfig {
   agent_token_hash: string;
   db_path?: string;
@@ -51,5 +73,10 @@ export interface AppConfig {
   };
   rate_limit?: {
     agent_max_per_hour?: number;
+  };
+  oauth?: {
+    clients?: OAuthClientConfig[];
+    token_expires_in?: number;
+    refresh_token_expires_in?: number;
   };
 }

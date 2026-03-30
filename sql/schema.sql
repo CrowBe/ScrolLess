@@ -64,3 +64,46 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     value       TEXT NOT NULL,                -- JSON-encoded
     PRIMARY KEY (user_id, key)
 );
+
+-- User-managed content sources
+CREATE TABLE IF NOT EXISTS user_sources (
+    user_id     TEXT NOT NULL DEFAULT 'local',
+    name        TEXT NOT NULL,                -- "youtube" | "x" | custom
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    urls        TEXT,                         -- JSON array of URLs
+    max_items   INTEGER,                      -- per-source override
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, name)
+);
+
+-- OAuth 2.0 clients (seeded from config.json)
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    client_id       TEXT PRIMARY KEY,
+    client_secret   TEXT,                     -- NULL for public clients (PKCE only)
+    redirect_uris   TEXT NOT NULL,            -- JSON array
+    label           TEXT,
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- OAuth 2.0 authorization codes (short-lived, 10-min expiry)
+CREATE TABLE IF NOT EXISTS oauth_auth_codes (
+    code            TEXT PRIMARY KEY,
+    client_id       TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    redirect_uri    TEXT NOT NULL,
+    code_challenge  TEXT NOT NULL,            -- PKCE S256 challenge
+    expires_at      TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- OAuth 2.0 access + refresh tokens
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    access_token    TEXT PRIMARY KEY,
+    refresh_token   TEXT UNIQUE,
+    client_id       TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    access_expires  TEXT NOT NULL,
+    refresh_expires TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);

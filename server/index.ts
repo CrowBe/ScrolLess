@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import fastifyCors from '@fastify/cors';
+import fastifyFormbody from '@fastify/formbody';
 import fastifyRateLimit from '@fastify/rate-limit';
 import { readFileSync, existsSync } from 'fs';
 import { join, resolve, dirname } from 'path';
@@ -10,6 +11,8 @@ import { initDb } from './db.js';
 import { hashToken, seedAgentToken, verifyAgentToken } from './auth.js';
 import { registerAgentRoutes, scheduleCleanup } from './agent-routes.js';
 import { registerApiRoutes } from './api-routes.js';
+import { registerOAuthRoutes, seedOAuthClients } from './oauth-routes.js';
+import { registerMcpHandler } from './mcp.js';
 import { initPush, notifyNewItems } from './push.js';
 import type { AppConfig } from './types.js';
 
@@ -45,6 +48,9 @@ async function start() {
     seedAgentToken(db, config.agent_token_hash, 'default');
   }
 
+  // Seed OAuth clients from config
+  seedOAuthClients(db, config);
+
   // Store VAPID public key in preferences so /api/push/vapid-key can serve it
   if (config.push?.vapid_public_key) {
     db.prepare(
@@ -60,6 +66,9 @@ async function start() {
   if (!isProd) {
     await fastify.register(fastifyCors, { origin: 'http://localhost:5173' });
   }
+
+  // Form body parsing (for OAuth authorize POST)
+  await fastify.register(fastifyFormbody);
 
   // Rate limiting for agent routes
   await fastify.register(fastifyRateLimit, {
@@ -98,6 +107,8 @@ async function start() {
   // Register routes
   registerAgentRoutes(fastify, db, pushCallback);
   registerApiRoutes(fastify, db);
+  registerOAuthRoutes(fastify, db, config);
+  registerMcpHandler(fastify, db, pushCallback);
 
   // Static file serving in production
   const distPath = resolve(__dirname, '../dist/client');
@@ -109,7 +120,7 @@ async function start() {
 
     // SPA fallback — serve index.html for non-api, non-agent paths
     fastify.setNotFoundHandler(async (req, reply) => {
-      if (!req.url.startsWith('/api/') && !req.url.startsWith('/agent/')) {
+      if (!req.url.startsWith('/api/') && !req.url.startsWith('/agent/') && !req.url.startsWith('/oauth/') && !req.url.startsWith('/mcp')) {
         return reply.sendFile('index.html');
       }
       return reply.status(404).send({ error: 'Not found' });

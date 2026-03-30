@@ -7,3 +7,4 @@ skill/config.json
 *.db-shm
 .env
 dry-run-output.json
+.claude/worktrees

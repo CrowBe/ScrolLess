@@ -1,4 +1,4 @@
-import type { FeedResponse, Stats, SyncLogEntry, FeedItemResponse } from './types';
+import type { FeedResponse, Stats, SyncLogEntry, FeedItemResponse, UserSource } from './types';
 
 const base = '';
 
@@ -68,6 +68,34 @@ export function unsubscribePush(endpoint: string): Promise<{ ok: boolean }> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ endpoint }),
   });
+}
+
+// Sources management
+export function getSources(): Promise<UserSource[]> {
+  return req<UserSource[]>('/api/sources');
+}
+
+export function addSource(data: { name: string; urls: string[]; max_items?: number }): Promise<{ ok: boolean }> {
+  return req('/api/sources', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateSource(
+  name: string,
+  data: { enabled?: number; urls?: string[]; max_items?: number | null }
+): Promise<{ ok: boolean }> {
+  return req(`/api/sources/${encodeURIComponent(name)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteSource(name: string): Promise<{ ok: boolean }> {
+  return req(`/api/sources/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
 // Re-export FeedItemResponse for convenience
