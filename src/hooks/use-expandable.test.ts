@@ -33,9 +33,9 @@ describe('useExpandable', () => {
   it('does not call markRead on collapse', () => {
     const markRead = vi.fn();
     const { result } = renderHook(() => useExpandable('item-1', false, markRead));
-    act(() => result.current.toggle()); // expand
+    act(() => result.current.toggle());
     markRead.mockClear();
-    act(() => result.current.toggle()); // collapse
+    act(() => result.current.toggle());
     expect(markRead).not.toHaveBeenCalled();
   });
 });

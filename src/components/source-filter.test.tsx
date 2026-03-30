@@ -90,7 +90,6 @@ describe('SourceFilter', () => {
 
   it('shows zero unread badges with null stats', () => {
     render(<SourceFilter {...defaultProps} stats={null} />);
-    // No badge numbers should appear
     expect(screen.queryByText('8')).not.toBeInTheDocument();
   });
 
