@@ -34,16 +34,26 @@ export function initDb(dbPath?: string): Database.Database {
   } catch {
     // Column already exists — safe to ignore
   }
+  try {
+    db.exec(`ALTER TABLE feed_items ADD COLUMN is_saved INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists — safe to ignore
+  }
 
   // Seed default user_preferences if not present
   const seedPref = db.prepare(
     `INSERT OR IGNORE INTO user_preferences (user_id, key, value) VALUES ('local', ?, ?)`
   );
+  const seedSource = db.prepare(
+    `INSERT OR IGNORE INTO user_sources (user_id, name, enabled) VALUES ('local', ?, 0)`
+  );
   const seedAll = db.transaction(() => {
-    seedPref.run('blocked_sources', JSON.stringify([]));
     seedPref.run('blocked_keywords', JSON.stringify([]));
     seedPref.run('max_items_per_source', JSON.stringify(50));
     seedPref.run('retention_days', JSON.stringify(7));
+    seedSource.run('youtube');
+    seedSource.run('x');
+    seedSource.run('news');
   });
   seedAll();
 

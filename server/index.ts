@@ -79,7 +79,7 @@ async function start() {
         done(null, false);
       }
     },
-    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type', 'Mcp-Session-Id'],
     exposedHeaders: ['Mcp-Session-Id'],
   });
@@ -98,7 +98,7 @@ async function start() {
   // Form body parsing (for OAuth authorize POST)
   await fastify.register(fastifyFormbody);
 
-  // Rate limiting for agent routes
+  // Rate limiting — applies only to /agent/* and /mcp routes
   await fastify.register(fastifyRateLimit, {
     max: config.rate_limit?.agent_max_per_hour ?? 60,
     timeWindow: '1 hour',
@@ -106,7 +106,7 @@ async function start() {
       const auth = req.headers.authorization ?? '';
       return auth || req.ip;
     },
-    // Only apply to /agent/* — we'll scope this in the route registration
+    skipIf: (req) => !req.url.startsWith('/agent/') && !req.url.startsWith('/mcp'),
   });
 
   // Auth preHandler for agent routes

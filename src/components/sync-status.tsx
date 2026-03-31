@@ -24,6 +24,12 @@ export function SyncStatus() {
   }, []);
 
   if (entries.length === 0 && !error) return null;
+  if (error) return (
+    <div class="sync-status sync-status--error">
+      <span class="material-symbols-outlined sync-status__icon">sync_problem</span>
+      <span class="sync-status__text">Sync unavailable</span>
+    </div>
+  );
 
   const hasErrors = entries.some((e) => e.error);
   const latest = entries.reduce<SyncLogEntry | null>((best, e) => {
