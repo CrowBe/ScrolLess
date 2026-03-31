@@ -1,28 +1,29 @@
-# Feed Aggregator
+# ScrolLess
 
 A personal feed aggregator where an AI agent scrapes content from your platforms, posts it to your server, and a PWA serves it as a unified feed with push notifications. The server never talks to YouTube, X, or any content platform — your agent does, using your own browser sessions.
 
 ## How It Works
 
 ```
- Your Desktop                        Cloudflare Edge           Home Server
-┌──────────────────────┐          ┌──────────────────┐     ┌────────────────────┐
-│  Cowork / Claude Code│          │                  │     │                    │
-│  + Claude in Chrome  │─ HTTPS ──│  Tunnel          │─────│  Fastify API :3333 │
-│                      │          │  (free tier)     │     │  SQLite storage    │
-│  Scrapes YouTube, X, │          │                  │     │  Push sender       │
-│  news sites using    │          └──────────────────┘     │                    │
-│  YOUR logged-in      │                                   └────────┬───────────┘
-│  browser sessions    │                                            │
-└──────────────────────┘                                   ┌────────▼───────────┐
-                                                           │  PWA on your phone │
-                                                           │  Installable       │
-                                                           │  Push notifications│
-                                                           └────────────────────┘
+ Your Desktop                                          Your Server
+┌──────────────────────┐                           ┌────────────────────┐
+│  Claude Code / Claude │                           │                    │
+│  in Chrome            │──── POST /agent/* ───────▶│  Fastify API :3333 │
+│                       │    (Bearer token)         │  SQLite storage    │
+│  Scrapes YouTube, X,  │                           │  MCP server /mcp   │
+│  news using YOUR      │◀─── MCP tools/resources ──│  Push sender       │
+│  logged-in sessions   │                           │                    │
+└──────────────────────┘                           └────────┬───────────┘
+                                                            │ Web Push
+                                                   ┌────────▼───────────┐
+                                                   │  PWA on your phone │
+                                                   │  Installable       │
+                                                   │  Push notifications│
+                                                   └────────────────────┘
 ```
 
-1. **Agent scrapes**: A scheduled Cowork task (or Claude Code, OpenClaw, etc.) opens your browser, visits your YouTube subscriptions, X timeline, and news sites, and extracts feed items.
-2. **Agent posts**: The agent sends structured feed items to `POST /agent/feed-items`, authenticated with a personal API key.
+1. **Agent scrapes**: Claude (via MCP or direct API calls) opens your browser, visits your YouTube subscriptions, X timeline, and news sites, and extracts feed items.
+2. **Agent posts**: The agent sends structured feed items to `POST /agent/feed-items`, authenticated with a personal Bearer token, or via the `submit_items` MCP tool.
 3. **Server stores + notifies**: The server inserts items (deduplicating by URL hash), then sends a Web Push notification to your phone.
 4. **PWA renders**: You open the app, it fetches the feed from `/api/feed`, and displays it sorted by recency with source filtering and read/unread tracking.
 
@@ -35,85 +36,178 @@ The server is deliberately dumb — it stores data, serves it, and sends push no
 | **Runtime** | Node.js 20+ | Available on target machine (Fedora Linux) |
 | **Database** | SQLite via `better-sqlite3` | Zero-config, single-file, on-device storage |
 | **Backend API** | Fastify | Lightweight HTTP server |
+| **MCP server** | `@modelcontextprotocol/sdk` | Exposes tools + resources to Claude |
 | **Push** | `web-push` (VAPID) | Server-initiated notifications to the PWA |
 | **Frontend** | Vite + Preact + TypeScript | Fast dev iteration, 3KB framework |
-| **Tunnel** | Cloudflare Tunnel | Public HTTPS, zero firewall config, free tier |
-| **Agent** | Cowork + Claude in Chrome | Browser-based scraping using logged-in sessions |
+| **Agent** | Claude Code / Claude in Chrome | Browser-based scraping using logged-in sessions |
 
 ## Project Structure
 
 ```
-feed-aggregator/
+ScrolLess/
 ├── README.md
 ├── CLAUDE.md                        # Coding agent context file
+├── config.example.json              # Server config template
+├── .mcp.json.example                # MCP client config template
 ├── docs/
-│   ├── ARCHITECTURE.md              # System design + production seams
-│   └── TASKS.md                     # Implementation plan (build stages)
-├── skill/                           # Agent skill (for Cowork / Claude Code)
+│   ├── ARCHITECTURE.md              # Routes, auth, payload formats, schema, push, PWA
+│   ├── TASKS.md                     # 13 sequential build stages
+│   ├── DESIGN_SYSTEM.md             # Color tokens, typography, component patterns
+│   └── DEPLOYMENT.md                # Production deployment guide
+├── skill/                           # Agent skill
 │   ├── SKILL.md                     # Main agent instructions
-│   ├── platforms/
-│   │   ├── youtube.md               # YouTube scraping instructions
-│   │   ├── x.md                     # X scraping instructions
-│   │   └── news.md                  # News site scraping instructions
-│   └── config.example.json          # Agent-side config template
+│   └── resources/
+│       ├── schema.json              # Agent payload schema
+│       ├── youtube.md               # YouTube scraping instructions
+│       ├── x.md                     # X scraping instructions
+│       └── news.md                  # News site scraping instructions
 ├── package.json
 ├── tsconfig.json
 ├── vite.config.ts
-├── config.example.json              # Server-side config template
 ├── server/
-│   ├── index.ts                     # Entry: init DB, start cron + API
-│   ├── db.ts                        # SQLite init, migrations, helpers
-│   ├── agent-routes.ts              # /agent/* endpoints (agent auth)
+│   ├── index.ts                     # Entry: Fastify setup, auth hook, route registration
+│   ├── db.ts                        # SQLite init, URL normalisation + hashing
+│   ├── auth.ts                      # Token hashing + verification
+│   ├── types.ts                     # Shared TypeScript interfaces
+│   ├── agent-routes.ts              # /agent/* endpoints (Bearer token auth)
 │   ├── api-routes.ts                # /api/* endpoints (PWA)
-│   ├── push.ts                      # Web Push subscription mgmt + notify
-│   └── auth.ts                      # Agent token hashing + verification
+│   ├── mcp.ts                       # /mcp endpoint (MCP server, tools, resources)
+│   ├── oauth-routes.ts              # /oauth/* endpoints (OAuth 2.0)
+│   └── push.ts                      # Web Push subscription mgmt + notify
 ├── src/                             # Frontend (Vite + Preact PWA)
 │   ├── index.html
 │   ├── main.tsx
 │   ├── app.tsx
 │   ├── api.ts                       # Typed fetch wrapper
-│   ├── types.ts                     # Shared types
+│   ├── types.ts
 │   ├── sw.ts                        # Service worker (push + offline)
 │   ├── manifest.json                # PWA manifest
 │   └── components/
 │       ├── feed-list.tsx
-│       ├── feed-card.tsx
 │       ├── youtube-card.tsx
 │       ├── x-card.tsx
 │       ├── news-card.tsx
 │       ├── source-filter.tsx
 │       ├── sync-status.tsx
+│       ├── source-list.tsx
+│       ├── add-source-form.tsx
 │       └── notification-prompt.tsx
 └── sql/
     └── schema.sql
 ```
 
-## Quick Start (after implementation)
+## Local Setup
+
+### 1. Install dependencies
 
 ```bash
-# Install dependencies
 npm install
-
-# Copy and configure
-cp config.example.json config.json
-# Edit config.json: set VAPID keys (see below)
-
-# Generate VAPID keys for Web Push (one-time)
-npx web-push generate-vapid-keys
-
-# Generate your agent API key (one-time)
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-# Paste the output into config.json as agent_token
-
-# Start the server
-export FEED_AGG_KEY="your-encryption-passphrase"
-npm run dev
-
-# Set up the agent (separate step — see skill/SKILL.md)
-# Copy skill/ folder into your Cowork project
-# Edit skill/config.json with your server URL + agent token
-# Schedule a recurring Cowork task to run the scraper
 ```
+
+### 2. Generate an agent token
+
+```bash
+npm run generate-token
+# prints a random hex token — save it, you'll need it twice below
+```
+
+### 3. Create `config.json`
+
+```bash
+cp config.example.json config.json
+```
+
+Hash your token and paste it in:
+
+```bash
+node -e "console.log(require('crypto').createHash('sha256').update('YOUR_TOKEN').digest('hex'))"
+```
+
+Set `agent_token_hash` in `config.json` to the output.
+
+The remaining fields are optional for local testing:
+
+| Field | Required for |
+|---|---|
+| `push.vapid_public_key/private_key` | Web Push notifications |
+| `push.subject` | Web Push (set to `mailto:you@example.com`) |
+| `base_url` | OAuth flow, cloud tunnel access |
+| `admin_password` | OAuth consent screen |
+
+Generate VAPID keys if you want push notifications:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+### 4. Start the server
+
+```bash
+npm run dev:server        # backend only, port 3333
+# or
+npm run dev               # backend + Vite frontend on port 5173
+```
+
+The server binds to `127.0.0.1:3333` by default. To accept connections from other devices on your local network, set `"host": "0.0.0.0"` in the `server` block of `config.json`.
+
+### 5. Connect Claude via MCP
+
+```bash
+cp .mcp.json.example .mcp.json
+# Edit .mcp.json: replace YOUR_AGENT_TOKEN_HERE with your raw token
+```
+
+The MCP server is at `http://localhost:3333/mcp`. Claude Code picks up `.mcp.json` automatically when you start a session in this directory.
+
+Available MCP tools:
+
+| Tool | Description |
+|---|---|
+| `get_sync_context` | Returns enabled sources, URLs, last sync times, and content filters |
+| `submit_items` | Submit a batch of scraped items; returns inserted/duplicate counts |
+
+Available MCP resources: `scrolless://platforms/{name}` — platform-specific scraping instructions from `skill/resources/{name}.md`.
+
+### 6. Quick agent test (curl)
+
+```bash
+curl -X POST http://localhost:3333/agent/feed-items \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"source":"youtube","items":[{"source_id":"abc123","title":"Test","url":"https://youtube.com/watch?v=abc123","published_at":"2026-03-23T10:00:00Z"}]}'
+```
+
+---
+
+## Optional: Cloud Tunnel for Web Access
+
+If you want to access the PWA from your phone or use Claude.ai's remote MCP connector (rather than Claude Code on the same machine), expose the server over HTTPS via a tunnel.
+
+### Cloudflare Tunnel (recommended, free tier)
+
+```bash
+# Install cloudflared (one-time)
+# https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+
+# Start a temporary tunnel (no account needed for quick testing)
+cloudflared tunnel --url http://localhost:3333
+# prints a URL like https://random-name.trycloudflare.com
+```
+
+For a stable named tunnel tied to a domain you control, follow the [Cloudflare Tunnel docs](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/).
+
+### Other options
+
+- **`ngrok`**: `ngrok http 3333` (free tier gives a temporary HTTPS URL)
+- **Tailscale**: expose the server on your Tailnet; no public URL needed if all your devices are on it
+
+### After setting up the tunnel
+
+1. Set `base_url` in `config.json` to your public HTTPS URL (e.g. `https://random-name.trycloudflare.com`). This is required for the OAuth flow when connecting via claude.ai.
+2. Add the public origin to the CORS allowlist — edit the `allowed` array in `server/index.ts` or set `base_url` (it's included automatically).
+3. Update your `.mcp.json` URL to the tunnel URL if using a remote MCP client.
+
+---
 
 ## Production Path
 
