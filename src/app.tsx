@@ -23,7 +23,8 @@ export function App() {
 
   async function loadStats() {
     try {
-      setStats(await getStats());
+      const discoveryParam = view === 'discover' ? true : view === 'feed' ? false : undefined;
+      setStats(await getStats(discoveryParam));
     } catch {
       // ignore
     }
@@ -38,7 +39,7 @@ export function App() {
         offset: currentOffset,
         source: source || undefined,
         discovery: view === 'discover' ? true : (discovery ? true : undefined),
-        unread_only: view === 'saved' ? false : undefined,
+        saved: view === 'saved' ? true : undefined,
       });
       setTotal(res.total);
       setOffset(currentOffset + LIMIT);

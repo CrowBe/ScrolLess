@@ -20,6 +20,11 @@ export function NotificationPrompt() {
       setState('hidden');
       return;
     }
+    // Push API requires a secure context (HTTPS or localhost)
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+      setState('hidden');
+      return;
+    }
 
     const perm = Notification.permission;
     if (perm === 'granted') {

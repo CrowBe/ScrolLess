@@ -14,6 +14,7 @@ export interface FeedParams {
   source?: string;
   unread_only?: boolean;
   discovery?: boolean;
+  saved?: boolean;
 }
 
 export function getFeed(params: FeedParams = {}): Promise<FeedResponse> {
@@ -23,6 +24,7 @@ export function getFeed(params: FeedParams = {}): Promise<FeedResponse> {
   if (params.source) q.set('source', params.source);
   if (params.unread_only != null) q.set('unread_only', String(params.unread_only));
   if (params.discovery != null) q.set('discovery', String(params.discovery));
+  if (params.saved != null) q.set('saved', String(params.saved));
   return req<FeedResponse>(`/api/feed?${q}`);
 }
 
@@ -34,13 +36,22 @@ export function markUnread(id: string): Promise<{ ok: boolean }> {
   return req(`/api/feed/${encodeURIComponent(id)}/unread`, { method: 'PATCH' });
 }
 
+export function saveItem(id: string): Promise<{ ok: boolean }> {
+  return req(`/api/feed/${encodeURIComponent(id)}/save`, { method: 'PATCH' });
+}
+
+export function unsaveItem(id: string): Promise<{ ok: boolean }> {
+  return req(`/api/feed/${encodeURIComponent(id)}/unsave`, { method: 'PATCH' });
+}
+
 export function markAllRead(source?: string): Promise<{ ok: boolean }> {
   const q = source ? `?source=${encodeURIComponent(source)}` : '';
   return req(`/api/feed/mark-all-read${q}`, { method: 'POST' });
 }
 
-export function getStats(): Promise<Stats> {
-  return req<Stats>('/api/stats');
+export function getStats(discovery?: boolean): Promise<Stats> {
+  const q = discovery != null ? `?discovery=${discovery}` : '';
+  return req<Stats>(`/api/stats${q}`);
 }
 
 export function getSyncStatus(): Promise<SyncLogEntry[]> {
@@ -96,6 +107,30 @@ export function updateSource(
 
 export function deleteSource(name: string): Promise<{ ok: boolean }> {
   return req(`/api/sources/${encodeURIComponent(name)}`, { method: 'DELETE' });
+}
+
+// Agent token management
+export interface AgentToken {
+  token_hash: string;
+  label: string | null;
+  created_at: string;
+  last_used: string | null;
+}
+
+export function getTokens(): Promise<AgentToken[]> {
+  return req<AgentToken[]>('/api/tokens');
+}
+
+export function createToken(label: string): Promise<{ token: string; token_hash: string; label: string }> {
+  return req('/api/tokens', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label }),
+  });
+}
+
+export function revokeToken(hash: string): Promise<{ ok: boolean }> {
+  return req(`/api/tokens/${encodeURIComponent(hash)}`, { method: 'DELETE' });
 }
 
 // Re-export FeedItemResponse for convenience

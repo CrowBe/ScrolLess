@@ -13,6 +13,7 @@ export interface FeedItemResponse {
   published_at: string; // ISO 8601
   fetched_at: string;
   is_read: boolean;
+  is_saved: boolean;
 }
 
 export interface FeedResponse {

@@ -1,3 +1,4 @@
+import { randomBytes, createHash } from 'crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 
@@ -7,6 +8,7 @@ interface FeedQuery {
   source?: string;
   unread_only?: string;
   discovery?: string;
+  saved?: string;
 }
 
 function parseTags(raw: string | null): string[] {
@@ -39,6 +41,9 @@ export function registerApiRoutes(
     if (q.unread_only === 'true' || q.unread_only === '1') {
       where += ' AND is_read = 0';
     }
+    if (q.saved === 'true' || q.saved === '1') {
+      where += ' AND is_saved = 1';
+    }
     if (q.discovery === 'true' || q.discovery === '1') {
       where += ' AND is_discovery = 1';
     } else if (q.discovery === 'false' || q.discovery === '0') {
@@ -51,7 +56,7 @@ export function registerApiRoutes(
 
     const rows = db.prepare(`
       SELECT id, user_id, source, title, author, url, content_preview,
-             thumbnail_url, tags, is_discovery, published_at, fetched_at, is_read
+             thumbnail_url, tags, is_discovery, published_at, fetched_at, is_read, is_saved
       FROM feed_items
       ${where}
       ORDER BY published_at DESC
@@ -69,6 +74,7 @@ export function registerApiRoutes(
       published_at: string;
       fetched_at: string;
       is_read: number;
+      is_saved: number;
     }>;
 
     const items = rows.map((row) => ({
@@ -76,6 +82,7 @@ export function registerApiRoutes(
       tags: parseTags(row.tags),
       is_discovery: row.is_discovery === 1,
       is_read: row.is_read === 1,
+      is_saved: row.is_saved === 1,
     }));
 
     return reply.send({ items, total: countRow.total, limit, offset });
@@ -99,6 +106,24 @@ export function registerApiRoutes(
     return reply.send({ ok: result.changes > 0 });
   });
 
+  // PATCH /api/feed/:id/save
+  fastify.patch('/api/feed/:id/save', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    const result = db.prepare(
+      `UPDATE feed_items SET is_saved = 1 WHERE id = ? AND user_id = 'local'`
+    ).run(decodeURIComponent(id));
+    return reply.send({ ok: result.changes > 0 });
+  });
+
+  // PATCH /api/feed/:id/unsave
+  fastify.patch('/api/feed/:id/unsave', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    const result = db.prepare(
+      `UPDATE feed_items SET is_saved = 0 WHERE id = ? AND user_id = 'local'`
+    ).run(decodeURIComponent(id));
+    return reply.send({ ok: result.changes > 0 });
+  });
+
   // POST /api/feed/mark-all-read
   fastify.post('/api/feed/mark-all-read', async (req: FastifyRequest, reply: FastifyReply) => {
     const q = req.query as { source?: string };
@@ -115,13 +140,21 @@ export function registerApiRoutes(
   });
 
   // GET /api/stats
-  fastify.get('/api/stats', async (_req: FastifyRequest, reply: FastifyReply) => {
+  fastify.get('/api/stats', async (req: FastifyRequest, reply: FastifyReply) => {
+    const q = req.query as { discovery?: string };
+    let discoveryFilter = '';
+    if (q.discovery === 'true' || q.discovery === '1') {
+      discoveryFilter = ' AND is_discovery = 1';
+    } else if (q.discovery === 'false' || q.discovery === '0') {
+      discoveryFilter = ' AND is_discovery = 0';
+    }
+
     const total = (db.prepare(
-      `SELECT COUNT(*) as n FROM feed_items WHERE user_id = 'local'`
+      `SELECT COUNT(*) as n FROM feed_items WHERE user_id = 'local'${discoveryFilter}`
     ).get() as { n: number }).n;
 
     const unread = (db.prepare(
-      `SELECT COUNT(*) as n FROM feed_items WHERE user_id = 'local' AND is_read = 0`
+      `SELECT COUNT(*) as n FROM feed_items WHERE user_id = 'local' AND is_read = 0${discoveryFilter}`
     ).get() as { n: number }).n;
 
     const bySource = db.prepare(`
@@ -129,7 +162,7 @@ export function registerApiRoutes(
              COUNT(*) as count,
              SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) as unread
       FROM feed_items
-      WHERE user_id = 'local'
+      WHERE user_id = 'local'${discoveryFilter}
       GROUP BY source
     `).all() as Array<{ source: string; count: number; unread: number }>;
 
@@ -293,6 +326,38 @@ export function registerApiRoutes(
       return reply.status(404).send({ error: 'source not found' });
     }
 
+    return reply.send({ ok: true });
+  });
+
+  // GET /api/tokens — list agent tokens (hashes are safe to expose; plain tokens are never stored)
+  fastify.get('/api/tokens', async (_req: FastifyRequest, reply: FastifyReply) => {
+    const rows = db.prepare(
+      `SELECT token_hash, label, created_at, last_used FROM agent_tokens WHERE user_id = 'local' ORDER BY created_at DESC`
+    ).all() as Array<{ token_hash: string; label: string | null; created_at: string; last_used: string | null }>;
+    return reply.send(rows);
+  });
+
+  // POST /api/tokens — create a new agent token; returns the plain token once
+  fastify.post('/api/tokens', async (req: FastifyRequest, reply: FastifyReply) => {
+    const body = req.body as { label?: string } | null;
+    const label = (body?.label ?? '').trim() || 'agent';
+    const plain = randomBytes(32).toString('hex');
+    const hash = createHash('sha256').update(plain).digest('hex');
+    db.prepare(
+      `INSERT INTO agent_tokens (token_hash, user_id, label) VALUES (?, 'local', ?)`
+    ).run(hash, label);
+    return reply.status(201).send({ token: plain, token_hash: hash, label });
+  });
+
+  // DELETE /api/tokens/:hash — revoke a token by its hash
+  fastify.delete('/api/tokens/:hash', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { hash } = req.params as { hash: string };
+    const result = db.prepare(
+      `DELETE FROM agent_tokens WHERE token_hash = ? AND user_id = 'local'`
+    ).run(hash);
+    if (result.changes === 0) {
+      return reply.status(404).send({ error: 'token not found' });
+    }
     return reply.send({ ok: true });
   });
 }
