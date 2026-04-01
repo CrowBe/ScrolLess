@@ -325,7 +325,7 @@ img { display: block; max-width: 100%; }
   border: none;
   cursor: pointer;
   padding: 0.25rem;
-  color: var(--text-secondary);
+  color: var(--on-surface-variant);
   opacity: 0.6;
   transition: opacity 0.15s, color 0.15s;
 }

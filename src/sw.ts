@@ -29,6 +29,7 @@ self.addEventListener('fetch', (event: FetchEvent) => {
 
   // Pass API and agent requests through to network
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/agent/')) {
+    event.respondWith(fetch(event.request));
     return;
   }
 
