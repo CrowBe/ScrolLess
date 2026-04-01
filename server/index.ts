@@ -98,17 +98,6 @@ async function start() {
   // Form body parsing (for OAuth authorize POST)
   await fastify.register(fastifyFormbody);
 
-  // Rate limiting — applies only to /agent/* and /mcp routes
-  await fastify.register(fastifyRateLimit, {
-    max: config.rate_limit?.agent_max_per_hour ?? 60,
-    timeWindow: '1 hour',
-    keyGenerator: (req) => {
-      const auth = req.headers.authorization ?? '';
-      return auth || req.ip;
-    },
-    skipIf: (req) => !req.url.startsWith('/agent/') && !req.url.startsWith('/mcp'),
-  });
-
   // Auth preHandler for agent routes
   fastify.addHook('preHandler', async (req, reply) => {
     if (!req.url.startsWith('/agent/')) return;
@@ -132,11 +121,24 @@ async function start() {
   const pushCallback = (userId: string, source: string, count: number, latestTitle?: string) =>
     notifyNewItems(db, userId, source, count, latestTitle);
 
-  // Register routes
-  registerAgentRoutes(fastify, db, pushCallback);
+  // Rate limiting — scoped to agent/MCP routes only
+  // (skipIf does not exist in @fastify/rate-limit v9; use scoped plugin instead)
+  await fastify.register(async (agentScope) => {
+    await agentScope.register(fastifyRateLimit, {
+      max: config.rate_limit?.agent_max_per_hour ?? 60,
+      timeWindow: '1 hour',
+      keyGenerator: (req) => {
+        const auth = req.headers.authorization ?? '';
+        return auth || req.ip;
+      },
+    });
+    registerAgentRoutes(agentScope, db, pushCallback);
+    registerMcpHandler(agentScope, db, pushCallback);
+  });
+
+  // Register non-rate-limited routes
   registerApiRoutes(fastify, db);
   registerOAuthRoutes(fastify, db, config);
-  registerMcpHandler(fastify, db, pushCallback);
 
   // Static file serving in production
   const distPath = resolve(__dirname, '../dist/client');

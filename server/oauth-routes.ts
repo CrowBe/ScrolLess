@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
-import { randomBytes, createHash } from 'crypto';
+import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import type { AppConfig } from './types.js';
 
 function base64url(buf: Buffer): string {
@@ -86,7 +86,12 @@ export function registerOAuthRoutes(
       return reply.status(400).send({ error: 'Unknown client_id' });
     }
 
-    const allowedUris: string[] = JSON.parse(client.redirect_uris);
+    let allowedUris: string[];
+    try {
+      allowedUris = JSON.parse(client.redirect_uris);
+    } catch {
+      return reply.status(500).send({ error: 'server_error', error_description: 'Malformed client configuration' });
+    }
     if (!allowedUris.includes(redirect_uri)) {
       return reply.status(400).send({ error: 'Invalid redirect_uri' });
     }
@@ -149,19 +154,7 @@ export function registerOAuthRoutes(
     const body = req.body as Record<string, string>;
     const { client_id, redirect_uri, code_challenge, code_challenge_method, state, approve, admin_password } = body;
 
-    if (approve !== '1') {
-      const denyUrl = `${redirect_uri}?error=access_denied&state=${encodeURIComponent(state ?? '')}`;
-      return reply.redirect(denyUrl);
-    }
-
-    // Verify admin password if configured
-    if (config.admin_password) {
-      if (!admin_password || admin_password !== config.admin_password) {
-        return reply.status(403).send({ error: 'access_denied', error_description: 'Invalid admin password' });
-      }
-    }
-
-    // Re-validate client
+    // Re-validate client and redirect_uri before any redirect (prevent open redirect)
     const client = db.prepare(
       'SELECT client_id, redirect_uris FROM oauth_clients WHERE client_id = ? AND is_active = 1'
     ).get(client_id) as { client_id: string; redirect_uris: string } | undefined;
@@ -170,9 +163,28 @@ export function registerOAuthRoutes(
       return reply.status(400).send({ error: 'Unknown client_id' });
     }
 
-    const allowedUris: string[] = JSON.parse(client.redirect_uris);
+    let allowedUris: string[];
+    try {
+      allowedUris = JSON.parse(client.redirect_uris);
+    } catch {
+      return reply.status(500).send({ error: 'server_error', error_description: 'Malformed client configuration' });
+    }
     if (!allowedUris.includes(redirect_uri)) {
       return reply.status(400).send({ error: 'Invalid redirect_uri' });
+    }
+
+    if (approve !== '1') {
+      const denyUrl = `${redirect_uri}?error=access_denied&state=${encodeURIComponent(state ?? '')}`;
+      return reply.redirect(denyUrl);
+    }
+
+    // Verify admin password if configured (timing-safe comparison)
+    if (config.admin_password) {
+      const expected = Buffer.from(config.admin_password);
+      const received = Buffer.from(admin_password ?? '');
+      if (expected.length !== received.length || !timingSafeEqual(expected, received)) {
+        return reply.status(403).send({ error: 'access_denied', error_description: 'Invalid admin password' });
+      }
     }
 
     if (code_challenge_method !== 'S256') {

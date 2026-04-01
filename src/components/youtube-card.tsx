@@ -1,13 +1,15 @@
 import { useExpandable } from '../hooks/use-expandable';
 import type { FeedItemResponse } from '../types';
 import { relativeTime } from '../utils';
+import { SaveButton } from './save-button';
 
 interface Props {
   item: FeedItemResponse;
   onMarkRead: (id: string) => void;
+  onToggleSave: (id: string, currentlySaved: boolean) => void;
 }
 
-export function YouTubeCard({ item, onMarkRead }: Props) {
+export function YouTubeCard({ item, onMarkRead, onToggleSave }: Props) {
   const { expanded, toggle } = useExpandable(item.id, item.is_read, onMarkRead);
 
   return (
@@ -30,6 +32,7 @@ export function YouTubeCard({ item, onMarkRead }: Props) {
         <div class="card__meta">
           {item.author && <span class="card__author">{item.author}</span>}
           <span class="card__time">{relativeTime(item.published_at)}</span>
+          <SaveButton saved={item.is_saved} onToggle={() => onToggleSave(item.id, item.is_saved)} />
         </div>
         <h3 class="card__title">{item.title}</h3>
         {expanded && (

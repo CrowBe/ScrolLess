@@ -32,7 +32,6 @@ export interface AgentState {
 }
 
 export interface AgentPreferences {
-  blocked_sources: string[];
   blocked_keywords: string[];
   max_items_per_source: number;
 }

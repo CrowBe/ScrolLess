@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 import type { UserSource } from '../types';
 import { updateSource, deleteSource } from '../api';
+import { displayName } from '../source-labels';
 
 interface Props {
   sources: UserSource[];
@@ -78,7 +79,7 @@ function SourceCard({ source, onRefresh }: { source: UserSource; onRefresh: () =
   return (
     <div class={`settings__section source-card${source.enabled ? '' : ' source-card--disabled'}`}>
       <div class="source-card__header">
-        <span class="source-card__name">{source.name}</span>
+        <span class="source-card__name">{displayName(source.name)}</span>
         <button
           class={`toggle${source.enabled ? ' toggle--on' : ''}`}
           onClick={handleToggle}
