@@ -1,247 +1,177 @@
-# ScrolLess — Local Testing Issues
+# ScrolLess — Issue Log
 
-**Tested:** 2026-03-31
-**Branch:** `test/local-run-and-issues`
-**Tested against:** `main` @ a35c105
-**Tester:** Claude (automated via Playwright + curl)
+Two testing rounds against `main`. Screenshots for Round 2 are in [`screenshots/`](./screenshots/).
 
 ---
 
-## Setup Notes
+## Round 2 Issues (current — main @ 7a22c4b)
 
-- Config created from `config.example.json` with fresh VAPID keys and a generated agent token
-- Dev server (`npm run dev`) could not be used due to **Issue #1** below
-- All testing was done against the production build served by Fastify (`npm run build && npm start`)
-- MCP endpoint verified working with correct `Accept` header
+Tested: 2026-04-01 · Node 20 · Production build · AEDT (UTC+11)
 
 ---
 
-## Issues
-
-### 🔴 #1 — Dev server is completely broken: Vite proxy intercepts the `api.ts` module
+### [BUG-R2-1] CRITICAL — Rate limit applies to all routes (`skipIf` not implemented in @fastify/rate-limit v9)
 
 **Severity:** Critical
-**File:** `vite.config.ts:17`
 
-**Steps to reproduce:**
-1. `npm run dev`
-2. Open `http://localhost:5173`
-
-**Expected:** App loads with dark UI, feed view visible.
-**Actual:** Blank white page. No CSS applied. No UI rendered.
+**Symptom:** After ~60 browser API calls the entire app breaks. Feed shows "No items yet", header shows "Sync unavailable". Unusable until the 1-hour rate-limit window expires.
 
 **Root cause:**
-The Vite dev proxy is configured as:
+`server/index.ts` registers `@fastify/rate-limit` globally with `skipIf: (req) => ...`. The `skipIf` option **does not exist** in `@fastify/rate-limit` v9.1.0 — it is silently ignored and the limit applies to every route including `/api/*`.
+
+```bash
+grep -c "skipIf" node_modules/@fastify/rate-limit/index.js
+# → 0
+```
+
+**Reproduce:** Run the Playwright suite (12 tests × ~4 API calls each = ~48 requests); subsequent manual browsing immediately hits 429.
+
+**Fix:** Register the rate-limit plugin only around agent/MCP routes via a scoped plugin:
 ```ts
-proxy: {
-  '/api': 'http://localhost:3333',
-  '/agent': 'http://localhost:3333',
+await fastify.register(async (agentScope) => {
+  await agentScope.register(fastifyRateLimit, { max: 60, timeWindow: '1 hour' });
+  registerAgentRoutes(agentScope, db, pushCallback);
+  registerMcpHandler(agentScope, db, pushCallback);
+});
+```
+
+---
+
+### [BUG-R2-2] CRITICAL — Vite proxy `/api/` still intercepts `src/api.ts` in dev mode
+
+**Severity:** Critical (dev only — app completely broken in `npm run dev`)
+
+**Symptom:** In dev mode, the Preact app does not boot at all. `src/api.ts` is proxied to port 3333 (Fastify), which returns 404 JSON. The JS bundle fails to load, leaving a blank page.
+
+**Reproduce:**
+```bash
+npm run dev
+# Navigate to http://localhost:5173
+# → blank page, console: Failed to load resource: 404 /api.ts
+```
+
+**Root cause:**
+The Round 1 fix changed the proxy key from `/api` to `/api/`. However, Vite's proxy matching treats `/api/` as a prefix for **any path that starts with `/api`** — including `/api.ts`. The trailing slash does not restrict matching to only paths with a subsequent slash.
+
+Confirmed: `curl http://localhost:5173/api.ts` returns a response with `Mcp-Session-Id` header (Fastify, not Vite).
+
+**Fix:** Use a regex key to anchor the proxy strictly to paths followed by a slash:
+```ts
+server: {
+  proxy: {
+    '^/api/': 'http://localhost:3333',
+    '^/agent/': 'http://localhost:3333',
+  }
 }
 ```
-Vite's proxy rules match on path _prefix_. The path `/api` matches not only `/api/feed` (the intended API route) but also `/api.ts` — the frontend source module that `main.tsx` imports as `import … from './api'`. When the browser fetches `http://localhost:5173/api.ts`, Vite forwards the request to the backend, which returns `404 {"message":"Route GET:/api.ts not found"}`. The module fails to load silently; the Preact app never mounts.
-
-**Evidence:** Network request log shows `GET /api.ts → 503` during Vite dev session. `document.getElementById('app').innerHTML` is empty after page load.
-
-**Fix direction:** Change the proxy key to `'/api/'` (trailing slash) so it only matches actual API calls, not source file paths with the `api` prefix.
 
 ---
 
-### 🔴 #2 — Global rate limiter applies to all routes, including the PWA's `/api/*` endpoints
-
-**Severity:** Critical
-**File:** `server/index.ts:101–110`
-
-**Steps to reproduce:**
-1. Start the server
-2. Make ~60 requests to any combination of `/agent/*`, `/api/*`, `/mcp` within one hour (this happens easily during automated testing or page reloads)
-3. Call `GET /api/stats` (or any `/api/*` endpoint)
-
-**Expected:** Rate limiting applies only to agent/MCP routes. PWA routes (`/api/*`) are always accessible.
-**Actual:** `{"statusCode":429,"error":"Too Many Requests","message":"Rate limit exceeded, retry in 1 hour"}` — the entire PWA becomes non-functional.
-
-**Root cause:**
-The `@fastify/rate-limit` plugin is registered at the root Fastify instance (no `prefix` or route filter), so it applies to every route. The code comment on line 109 says:
-```
-// Only apply to /agent/* — we'll scope this in the route registration
-```
-…but the scoping was never implemented.
-
-**Fix direction:** Either (a) register the rate limiter only inside the `registerAgentRoutes`/`registerMcpHandler` scope, or (b) add a `skipIf` function that returns `true` for all paths not starting with `/agent/` or `/mcp`.
-
----
-
-### 🟠 #3 — Default sources (youtube, x, news) are not seeded — agent sync returns empty
+### [BUG-R2-3] HIGH — `is_discovery=true` items leak into main Feed tab
 
 **Severity:** High
-**File:** `server/db.ts`
+**Screenshot:** `screenshots/01-feed-all.png` (`@ddevault` item with `is_discovery=true` visible in Feed)
 
-**Steps to reproduce:**
-1. Fresh install (no existing DB)
-2. `GET /agent/sync-context` with a valid Bearer token
+**Reproduce:**
+1. POST an item with `"is_discovery": true`
+2. Open Feed tab → discovery item appears
+3. Open Discover sub-tab → same item appears (correct)
+4. Source filter badge counts 6 (correctly excludes discovery) but the card still renders in Feed
 
-**Expected:** Response includes three default sources (youtube, x, news) with `enabled: false`, per architecture docs:
-> "Default sources are seeded at account creation (youtube, x, news — all with enabled = 0 until the user activates them)."
-
-**Actual:** `{"sources":[],"filters":{"blocked_keywords":[]}}` — empty sources array.
-
-**Root cause:** `initDb()` seeds `user_preferences` but never inserts default rows into `user_sources`. The Settings UI consequently shows "No sources configured yet. Add one below." on a fresh install, which is confusing — users expect to see youtube/x/news pre-populated (but disabled) and just toggle them on.
-
-**Fix direction:** Add `INSERT OR IGNORE INTO user_sources (user_id, name, enabled, urls) VALUES ...` for youtube, x, and news inside the `seedAll` transaction in `db.ts`.
+**Fix:** Add `AND is_discovery = 0` to the `/api/feed` query when serving the Feed tab. Accept `?discovery=true` to return only discovery items for the Discover tab.
 
 ---
 
-### 🟠 #4 — `blocked_sources` still seeded as a user_preference (violates documented constraint)
+### [BUG-R2-4] HIGH — No URL routing; `/settings` serves raw source in dev, 404 in prod
 
 **Severity:** High
-**File:** `server/db.ts:43`
 
-**Observed:**
-```ts
-seedPref.run('blocked_sources', JSON.stringify([]));
-```
+**Symptom (dev):** Navigating to `http://localhost:5173/settings` serves the raw transformed source of `src/settings.tsx` (Vite matches it as a module file).
 
-**Expected:** `blocked_sources` is not a valid preference key per `CLAUDE.md`:
-> "`blocked_sources` is gone — use `user_sources.enabled = 0` instead. Never add `blocked_sources` back as a preference key."
+**Symptom (prod):** Navigating to `http://localhost:3333/settings` returns 404 (Fastify has no route for it).
 
-**Actual:** It is seeded into `user_preferences` on every fresh DB init. While currently harmless (nothing reads it), it is dead data that contradicts the architecture decision and could cause confusion if future code attempts to use it.
+**Root cause:** The app uses component-state routing (`useState<View>`) — there is no URL router. Views are only reachable by clicking nav buttons. Bookmarking or sharing any view is impossible.
 
-**Fix direction:** Remove the `seedPref.run('blocked_sources', ...)` line from `db.ts`.
+**Fix:** Add `preact-iso` (or hash routing) and map `/#/settings`, `/#/discover`, `/#/saved` to the corresponding views.
 
 ---
 
-### 🟠 #5 — "Saved" tab shows all items, identical to the main Feed (feature non-functional)
+### [BUG-R2-5] HIGH — "Saved" tab always empty (no bookmark mechanism)
 
 **Severity:** High
-**File:** `src/app.tsx:41`
+**Screenshot:** `screenshots/08-saved.png`
 
-**Steps to reproduce:**
-1. Open the app with feed items present
-2. Click the "Saved" tab in the bottom nav
+**Symptom:** Saved tab shows "No items yet" regardless of how many feed items exist. There is no save/bookmark button on any card.
 
-**Expected:** "Saved" shows only items that have been explicitly saved/bookmarked by the user.
-**Actual:** "Saved" shows all items — including unread ones — identical to the main Feed view.
+**Root cause:** No `is_saved` field in `feed_items`, no save API endpoint, no UI control to save an item.
 
-**Root cause:**
-In `app.tsx` the Saved view passes:
+**Fix:** Add `is_saved INTEGER NOT NULL DEFAULT 0` to the schema, `PATCH /api/feed/:id/save` endpoint, a bookmark icon button on each card, and filter by `is_saved = 1` in the Saved view.
+
+---
+
+### [BUG-R2-6] MEDIUM — Sync timestamp shows wrong relative time (timezone mismatch)
+
+**Severity:** Medium
+**Screenshot:** `screenshots/01-feed-all.png` ("Synced 11h ago" immediately after seeding)
+
+**Root cause:** SQLite `datetime('now')` stores UTC without timezone indicator (e.g. `"2026-03-31 11:31:41"`). `new Date("2026-03-31 11:31:41")` parses this as **local time** in JavaScript. On UTC+11, a sync at 11:31 UTC appears as "11h ago".
+
+**Fix (server):** Use `strftime('%Y-%m-%dT%H:%M:%SZ', 'now')` in schema defaults.
+**Fix (client):** `new Date(ts.endsWith('Z') ? ts : ts + 'Z')` when parsing timestamps from the API.
+
+---
+
+### [BUG-R2-7] MEDIUM — Source names not capitalised in Settings
+
+**Severity:** Low/Medium
+**Screenshot:** `screenshots/10-settings.png` ("Youtube" instead of "YouTube")
+
+**Root cause:** Source names are stored lowercase in `user_sources.name` and rendered directly with no display-name mapping.
+
+**Fix:**
 ```ts
-unread_only: view === 'saved' ? false : undefined,
-```
-`unread_only: false` is treated identically to `undefined` by the API (it just omits the `is_read = 0` filter), so the full item list is returned. There is no `read_only: true` parameter and no bookmark/save mechanism separate from `is_read`. The "Saved" concept is architecturally undefined — the DB schema has `is_read` but no `is_saved`/`is_bookmarked` column.
-
-**Screenshot:** `screenshots/10-saved-view.png` shows all 6 items including unread ones.
-
----
-
-### 🟡 #6 — CORS `methods` missing `PATCH` (blocks cross-origin mark-read and source updates)
-
-**Severity:** Medium
-**File:** `server/index.ts:82`
-
-**Observed:**
-```ts
-methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+const SOURCE_LABELS: Record<string, string> = { youtube: 'YouTube', x: 'X', news: 'News' };
 ```
 
-**Expected:** `PATCH` is included, since the API exposes:
-- `PATCH /api/feed/:id/read`
-- `PATCH /api/feed/:id/unread`
-- `PATCH /api/sources/:name`
-
-**Actual:** In the split-hosting deployment (PWA on Vercel, API on Render — the recommended setup per `docs/DEPLOYMENT.md`), all three PATCH endpoints will fail CORS preflight. Items cannot be marked as read, and sources cannot be updated from the deployed frontend.
-
-**Fix direction:** Add `'PATCH'` to the `methods` array.
-
 ---
 
-### 🟡 #7 — Agent token management is absent from Settings UI
-
-**Severity:** Medium
-**File:** `src/settings.tsx`
-
-**Steps to reproduce:**
-1. Open Settings
-
-**Expected (per `docs/ARCHITECTURE.md`):**
-> `AgentTokens — View/create/revoke agent tokens`
-
-**Actual:** The Settings page shows a static "AGENT TOKEN" card with instructions to run `npm run generate-token` and manually edit `config.json`. There is no UI to create, view, copy, or revoke tokens. A non-technical user (or any user on a hosted deployment) cannot set up their agent without CLI access.
-
-**Screenshot:** `screenshots/03-settings-empty.png` and `screenshots/11-settings-view.png`
-
----
-
-### 🟡 #8 — Source filter tab counts don't account for discovery flag (misleading in Discover view)
-
-**Severity:** Medium
-**File:** `src/app.tsx`, `server/api-routes.ts` (`/api/stats`)
-
-**Steps to reproduce:**
-1. Have feed items present (none with `is_discovery: true`)
-2. Click the "Discover" tab in the bottom nav
-
-**Expected:** Source filter tab badges (YouTube 3, X 1, News 2) reflect the count of discovery items for each source.
-**Actual:** Tab badges show total item counts regardless of the discovery flag. The Discover feed shows "No items yet" while the tabs show non-zero counts — implying items exist but none are visible. This is confusing.
-
-**Root cause:** `getStats()` / `GET /api/stats` counts all items and doesn't segment by `is_discovery`. The `SourceFilter` component receives these undifferentiated counts and displays them in both the Feed and Discover contexts.
-
-**Screenshot:** `screenshots/09-discover-view.png` — tabs show "All 6" but feed area shows "No items yet".
-
----
-
-### 🟢 #9 — Notification prompt suppressed in headless / non-HTTPS context
-
-**Severity:** Low (expected browser behaviour; document for awareness)
-
-**Observed:** On `http://localhost:3333` (HTTP, not HTTPS), the Push API notification prompt in `NotificationPrompt` is not rendered.
-**Expected in production:** The prompt should appear on the first visit over HTTPS and disappear after dismissal.
-**Note:** This is expected — browsers gate the Push API on a secure origin. The component may need a guard so it doesn't silently fail on HTTP; currently it just renders nothing.
-
----
-
-### 🟢 #10 — `SyncStatus` shows stale/inaccurate "Synced X ago" when API is rate-limited
+### [BUG-R2-8] LOW — Add Source form shows validation error on initial render
 
 **Severity:** Low
-**File:** `src/components/sync-status.tsx`
+**Screenshot:** `screenshots/11-add-source-form.png` ("Source name is required" shown before any interaction)
 
-**Steps to reproduce:**
-1. Trigger the rate limit (#2 above)
-2. Observe the header sync timestamp
+**Root cause:** Validation runs eagerly on mount rather than after first submit or field blur.
 
-**Expected:** Component shows an error state or hides when `GET /api/sync/status` returns 429.
-**Actual:** Component continues to display the last cached sync time, which becomes increasingly stale (observed: "Synced 11h ago" when items were submitted seconds prior). No error indicator is shown.
+**Fix:** Only show errors after `submitted` state is true, or after the field's `onBlur` fires.
 
 ---
 
-## Summary Table
+## Round 1 Issues (resolved in PR #11)
 
-| # | Severity | Area | Short description |
-|---|----------|------|-------------------|
-| 1 | 🔴 Critical | `vite.config.ts` | Dev server blank — proxy intercepts `api.ts` module |
-| 2 | 🔴 Critical | `server/index.ts` | Rate limiter is global, kills PWA after 60 requests/hour |
-| 3 | 🟠 High | `server/db.ts` | Default sources not seeded — sync context empty on fresh install |
-| 4 | 🟠 High | `server/db.ts` | `blocked_sources` still seeded as preference (violates CLAUDE.md) |
-| 5 | 🟠 High | `src/app.tsx` | "Saved" tab shows all items — no bookmark mechanism |
-| 6 | 🟡 Medium | `server/index.ts` | CORS missing `PATCH` — breaks mark-read/source update on split deploy |
-| 7 | 🟡 Medium | `src/settings.tsx` | Agent token management missing from UI |
-| 8 | 🟡 Medium | `src/app.tsx`, `/api/stats` | Source tab counts don't reflect discovery filter (misleading) |
-| 9 | 🟢 Low | `src/components/notification-prompt.tsx` | Notification prompt suppressed on HTTP |
-| 10 | 🟢 Low | `src/components/sync-status.tsx` | Stale sync timestamp when rate limited |
+| ID | Severity | Summary | Status |
+|----|----------|---------|--------|
+| R1-1 | Critical | Dev server blank — Vite proxy `/api` matched `src/api.ts` | ⚠️ Attempted fix (trailing slash) — see BUG-R2-2 for regression |
+| R1-2 | Critical | Global rate limit broke PWA routes | ⚠️ Attempted fix (skipIf) — see BUG-R2-1 for regression |
+| R1-3 | High | Default sources not seeded | ✅ Fixed |
+| R1-4 | High | `blocked_sources` still seeded as preference key | ✅ Fixed |
+| R1-5 | High | "Saved" tab non-functional | ⚠️ Carried over as BUG-R2-5 |
+| R1-6 | Medium | Sync status endpoint missing | ✅ Fixed |
+| R1-7 | Medium | Agent token management missing from Settings | ✅ Fixed |
+| R1-8 | Medium | `tags` returned as string not parsed array | ✅ Fixed |
+| R1-9 | Low | No confirmation on mark-all-read | ✅ Fixed |
+| R1-10 | Low | Service worker not registered in dev | ✅ Fixed |
 
 ---
 
-## What Works
+## Summary — Round 2
 
-- ✅ Production build (`npm run build && npm start`) serves the PWA and API correctly
-- ✅ `POST /agent/feed-items` inserts items and deduplicates by URL hash
-- ✅ Feed renders with correct source filter tabs (All / YouTube / X / News) with item counts
-- ✅ Source filter tabs correctly filter the feed list
-- ✅ Dark theme design system renders correctly
-- ✅ Bottom navigation (Feed / Discover / Saved / Settings) switching works
-- ✅ Settings page renders with "Add Source" form
-- ✅ MCP endpoint responds correctly (`initialize`, verified with Accept header)
-- ✅ OAuth `.well-known` metadata endpoint is present
-- ✅ URL normalisation and deduplication logic functions correctly
-- ✅ Sync log correctly records agent POST events
-- ✅ `GET /agent/sync-context` returns correct structure (empty until sources are configured)
-- ✅ Push VAPID public key served via `/api/push/vapid-key`
-- ✅ Service worker built to `dist/client/sw.js` (non-content-hashed)
+| ID | Severity | Title |
+|----|----------|-------|
+| BUG-R2-1 | 🔴 Critical | `skipIf` silently ignored — rate limit hits all routes |
+| BUG-R2-2 | 🔴 Critical | Vite proxy `/api/` still intercepts `src/api.ts` — dev mode broken |
+| BUG-R2-3 | 🟠 High | Discovery items leak into main Feed tab |
+| BUG-R2-4 | 🟠 High | No URL routing — views not reachable by direct URL |
+| BUG-R2-5 | 🟠 High | Saved tab empty — no bookmark mechanism |
+| BUG-R2-6 | 🟡 Medium | Sync timestamps wrong on non-UTC machines |
+| BUG-R2-7 | 🟡 Medium | Source names not capitalised ("Youtube" not "YouTube") |
+| BUG-R2-8 | 🔵 Low | Add Source form shows validation error before interaction |
