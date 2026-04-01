@@ -319,6 +319,22 @@ img { display: block; max-width: 100%; }
   flex-wrap: wrap;
 }
 
+.card__save {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  transition: opacity 0.15s, color 0.15s;
+}
+.card__save:hover,
+.card__save--active {
+  opacity: 1;
+  color: var(--primary);
+}
+
 .card__author {
   font-size: 0.6875rem;
   font-weight: 600;

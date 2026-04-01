@@ -223,7 +223,6 @@ export function registerAgentRoutes(
     };
 
     const prefs: AgentPreferences = {
-      blocked_sources: JSON.parse(getVal('blocked_sources') ?? '[]'),
       blocked_keywords: JSON.parse(getVal('blocked_keywords') ?? '[]'),
       max_items_per_source: parseInt(JSON.parse(getVal('max_items_per_source') ?? '50'), 10),
     };
@@ -243,18 +242,18 @@ export function cleanupOldItems(
   `).run(userId, retentionDays);
 
   const logResult = db.prepare(`
-    DELETE FROM sync_log WHERE synced_at < datetime('now', '-30 days')
-  `).run();
+    DELETE FROM sync_log WHERE user_id = ? AND synced_at < datetime('now', '-30 days')
+  `).run(userId);
 
   // Clean up expired OAuth auth codes
   const authCodesResult = db.prepare(
-    `DELETE FROM oauth_auth_codes WHERE expires_at < datetime('now')`
-  ).run();
+    `DELETE FROM oauth_auth_codes WHERE user_id = ? AND expires_at < datetime('now')`
+  ).run(userId);
 
   // Clean up expired OAuth tokens (access expired AND no valid refresh)
   const oauthTokensResult = db.prepare(
-    `DELETE FROM oauth_tokens WHERE access_expires < datetime('now') AND (refresh_expires IS NULL OR refresh_expires < datetime('now'))`
-  ).run();
+    `DELETE FROM oauth_tokens WHERE user_id = ? AND access_expires < datetime('now') AND (refresh_expires IS NULL OR refresh_expires < datetime('now'))`
+  ).run(userId);
 
   const deletedItems = itemResult.changes;
   const deletedLogs = logResult.changes;

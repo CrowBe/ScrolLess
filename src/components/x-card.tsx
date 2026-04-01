@@ -1,13 +1,15 @@
 import { useExpandable } from '../hooks/use-expandable';
 import type { FeedItemResponse } from '../types';
 import { relativeTime } from '../utils';
+import { SaveButton } from './save-button';
 
 interface Props {
   item: FeedItemResponse;
   onMarkRead: (id: string) => void;
+  onToggleSave: (id: string, currentlySaved: boolean) => void;
 }
 
-export function XCard({ item, onMarkRead }: Props) {
+export function XCard({ item, onMarkRead, onToggleSave }: Props) {
   const { expanded, toggle } = useExpandable(item.id, item.is_read, onMarkRead);
 
   const handle = item.author ?? 'Unknown';
@@ -30,6 +32,7 @@ export function XCard({ item, onMarkRead }: Props) {
           <span class="card__author">{handle}</span>
           <span class="card__time">{relativeTime(item.published_at)}</span>
         </div>
+        <SaveButton saved={item.is_saved} onToggle={() => onToggleSave(item.id, item.is_saved)} />
         <div class="card__source-badge card__source-badge--x">𝕏</div>
       </div>
       <div class="card__body">

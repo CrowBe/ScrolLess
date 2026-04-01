@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS feed_items (
     tags            TEXT,                      -- JSON array: '["tech","ai"]'
     is_discovery    INTEGER NOT NULL DEFAULT 0,
     published_at    TEXT NOT NULL,             -- ISO 8601
-    fetched_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    fetched_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     is_read         INTEGER NOT NULL DEFAULT 0,
     raw_json        TEXT
 );
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS agent_tokens (
     token_hash  TEXT PRIMARY KEY,
     user_id     TEXT NOT NULL DEFAULT 'local',
     label       TEXT,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     last_used   TEXT
 );
 
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS sync_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     TEXT NOT NULL DEFAULT 'local',
     source      TEXT NOT NULL,
-    synced_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    synced_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     items_added INTEGER NOT NULL DEFAULT 0,
     items_duped INTEGER NOT NULL DEFAULT 0,
     error       TEXT
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
     endpoint    TEXT NOT NULL UNIQUE,
     keys_p256dh TEXT NOT NULL,
     keys_auth   TEXT NOT NULL,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- Key-value preferences (agent-readable, UI-editable in production)
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS user_sources (
     urls            TEXT,                         -- JSON array of URLs
     max_items       INTEGER,                      -- per-source override
     scraping_notes  TEXT,                         -- freeform notes appended to platform resource
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     PRIMARY KEY (user_id, name)
 );
 
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
     redirect_uris   TEXT NOT NULL,            -- JSON array
     label           TEXT,
     is_active       INTEGER NOT NULL DEFAULT 1,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- OAuth 2.0 authorization codes (short-lived, 10-min expiry)
@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS oauth_auth_codes (
     redirect_uri    TEXT NOT NULL,
     code_challenge  TEXT NOT NULL,            -- PKCE S256 challenge
     expires_at      TEXT NOT NULL,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- OAuth 2.0 access + refresh tokens
@@ -106,5 +106,5 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
     user_id         TEXT NOT NULL,
     access_expires  TEXT NOT NULL,
     refresh_expires TEXT,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );

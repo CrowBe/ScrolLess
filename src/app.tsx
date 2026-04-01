@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
-import { getFeed, getStats, markRead } from './api';
+import { getFeed, getStats, markRead, saveItem, unsaveItem } from './api';
 import type { FeedItemResponse, Stats } from './types';
 import { SourceFilter } from './components/source-filter';
 import { FeedList } from './components/feed-list';
@@ -11,10 +11,53 @@ type View = 'feed' | 'discover' | 'saved' | 'settings';
 
 const LIMIT = 50;
 
+const HASH_TO_VIEW: Record<string, View> = {
+  '#/feed': 'feed',
+  '#/discover': 'discover',
+  '#/saved': 'saved',
+  '#/settings': 'settings',
+};
+const VIEW_TO_HASH: Record<View, string> = {
+  feed: '#/feed',
+  discover: '#/discover',
+  saved: '#/saved',
+  settings: '#/settings',
+};
+
+function viewFromHash(): View {
+  return HASH_TO_VIEW[location.hash] ?? 'feed';
+}
+
+const NAV_ITEMS: Array<{ id: View; icon: string; label: string }> = [
+  { id: 'feed', icon: 'feed', label: 'Feed' },
+  { id: 'discover', icon: 'explore', label: 'Discover' },
+  { id: 'saved', icon: 'bookmark', label: 'Saved' },
+  { id: 'settings', icon: 'settings', label: 'Settings' },
+];
+
 export function App() {
-  const [view, setView] = useState<View>('feed');
+  const [view, setViewState] = useState<View>(viewFromHash);
+
+  function setView(v: View) {
+    setViewState(v);
+    const target = VIEW_TO_HASH[v];
+    if (location.hash !== target) {
+      location.hash = target;
+    }
+  }
+
+  useEffect(() => {
+    function onHashChange() {
+      setViewState(viewFromHash());
+    }
+    window.addEventListener('hashchange', onHashChange);
+    // Set initial hash if empty
+    if (!location.hash) {
+      location.hash = VIEW_TO_HASH.feed;
+    }
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
   const [source, setSource] = useState('');
-  const [discovery, setDiscovery] = useState(false);
   const [items, setItems] = useState<FeedItemResponse[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -38,7 +81,7 @@ export function App() {
         limit: LIMIT,
         offset: currentOffset,
         source: source || undefined,
-        discovery: view === 'discover' ? true : (discovery ? true : undefined),
+        discovery: view === 'discover' ? true : view === 'feed' ? false : undefined,
         saved: view === 'saved' ? true : undefined,
       });
       setTotal(res.total);
@@ -49,7 +92,7 @@ export function App() {
     } finally {
       setLoading(false);
     }
-  }, [source, discovery, view, offset]);
+  }, [source, view, offset]);
 
   // Reload on filter changes
   useEffect(() => {
@@ -58,7 +101,7 @@ export function App() {
     loadFeed(true);
     loadStats();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, discovery, view]);
+  }, [source, view]);
 
   function handleMarkRead(id: string) {
     markRead(id).catch(console.error);
@@ -73,12 +116,12 @@ export function App() {
     loadStats();
   }
 
-  const navItems: Array<{ id: View; icon: string; label: string }> = [
-    { id: 'feed', icon: 'feed', label: 'Feed' },
-    { id: 'discover', icon: 'explore', label: 'Discover' },
-    { id: 'saved', icon: 'bookmark', label: 'Saved' },
-    { id: 'settings', icon: 'settings', label: 'Settings' },
-  ];
+  function handleToggleSave(id: string, saved: boolean) {
+    (saved ? unsaveItem(id) : saveItem(id)).catch(console.error);
+    setItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, is_saved: !saved } : item))
+    );
+  }
 
   return (
     <div class="app">
@@ -128,13 +171,14 @@ export function App() {
             hasMore={items.length < total}
             onLoadMore={() => loadFeed(false)}
             onMarkRead={handleMarkRead}
+            onToggleSave={handleToggleSave}
           />
         )}
       </main>
 
       {/* Bottom navigation */}
       <nav class="bottom-nav glass">
-        {navItems.map(({ id, icon, label }) => (
+        {NAV_ITEMS.map(({ id, icon, label }) => (
           <button
             key={id}
             class={`bottom-nav__item${view === id ? ' bottom-nav__item--active' : ''}`}

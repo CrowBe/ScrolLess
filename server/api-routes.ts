@@ -28,8 +28,8 @@ export function registerApiRoutes(
   fastify.get('/api/feed', async (req: FastifyRequest, reply: FastifyReply) => {
     const q = req.query as FeedQuery;
     const userId = 'local';
-    const limit = Math.min(parseInt(q.limit ?? '50', 10), 200);
-    const offset = parseInt(q.offset ?? '0', 10);
+    const limit = Math.min(Math.max(1, parseInt(q.limit ?? '50', 10) || 50), 200);
+    const offset = Math.max(0, parseInt(q.offset ?? '0', 10) || 0);
 
     let where = 'WHERE user_id = ?';
     const params: unknown[] = [userId];

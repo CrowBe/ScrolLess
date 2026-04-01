@@ -22,7 +22,7 @@ export function verifyAgentToken(
 
   if (agentRow) {
     db.prepare(
-      `UPDATE agent_tokens SET last_used = datetime('now') WHERE token_hash = ?`
+      `UPDATE agent_tokens SET last_used = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE token_hash = ?`
     ).run(hash);
     return { valid: true, userId: agentRow.user_id };
   }

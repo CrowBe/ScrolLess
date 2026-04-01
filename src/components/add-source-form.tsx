@@ -10,10 +10,12 @@ export function AddSourceForm({ onAdded }: Props) {
   const [urls, setUrls] = useState('');
   const [maxItems, setMaxItems] = useState('');
   const [error, setError] = useState('');
+  const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function handleSubmit(e: Event) {
     e.preventDefault();
+    setSubmitted(true);
     setError('');
 
     const trimmedName = name.trim();
@@ -48,6 +50,8 @@ export function AddSourceForm({ onAdded }: Props) {
       setName('');
       setUrls('');
       setMaxItems('');
+      setSubmitted(false);
+      setError('');
       onAdded();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add source');
@@ -91,7 +95,7 @@ export function AddSourceForm({ onAdded }: Props) {
         placeholder="Default"
       />
 
-      {error && <p class="form-error">{error}</p>}
+      {submitted && error && <p class="form-error">{error}</p>}
 
       <button class="btn btn--primary" type="submit" disabled={busy}>
         {busy ? 'Adding...' : 'Add Source'}

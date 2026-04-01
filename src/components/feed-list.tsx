@@ -9,9 +9,10 @@ interface Props {
   hasMore: boolean;
   onLoadMore: () => void;
   onMarkRead: (id: string) => void;
+  onToggleSave: (id: string, currentlySaved: boolean) => void;
 }
 
-export function FeedList({ items, loading, hasMore, onLoadMore, onMarkRead }: Props) {
+export function FeedList({ items, loading, hasMore, onLoadMore, onMarkRead, onToggleSave }: Props) {
   if (loading && items.length === 0) {
     return (
       <div class="feed-empty">
@@ -36,11 +37,11 @@ export function FeedList({ items, loading, hasMore, onLoadMore, onMarkRead }: Pr
       {items.map((item) => {
         switch (item.source) {
           case 'youtube':
-            return <YouTubeCard key={item.id} item={item} onMarkRead={onMarkRead} />;
+            return <YouTubeCard key={item.id} item={item} onMarkRead={onMarkRead} onToggleSave={onToggleSave} />;
           case 'x':
-            return <XCard key={item.id} item={item} onMarkRead={onMarkRead} />;
+            return <XCard key={item.id} item={item} onMarkRead={onMarkRead} onToggleSave={onToggleSave} />;
           default:
-            return <NewsCard key={item.id} item={item} onMarkRead={onMarkRead} />;
+            return <NewsCard key={item.id} item={item} onMarkRead={onMarkRead} onToggleSave={onToggleSave} />;
         }
       })}
 
