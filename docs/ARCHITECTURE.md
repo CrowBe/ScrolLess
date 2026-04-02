@@ -253,9 +253,11 @@ Implements Authorization Code flow with PKCE (RFC 7636). Required for Claude con
 | `POST` | `/oauth/revoke` | Revoke an access or refresh token |
 | `GET` | `/oauth/.well-known/oauth-authorization-server` | Server metadata (for auto-discovery) |
 
-### Client Registration
+### Client Registration (required before production)
 
-In the PoC and small-scale deployment, clients are registered manually via `config.json`:
+In the PoC, OAuth clients are registered manually by editing `config.json` and restarting the server. This is not acceptable for production — it requires server access to onboard any new MCP client and provides no way for users to revoke clients without operator intervention.
+
+The `config.json` bootstrap is only appropriate for the initial first-party client (e.g. the Claude connector). All subsequent client management must go through the UI.
 
 ```json
 {
@@ -273,7 +275,12 @@ In the PoC and small-scale deployment, clients are registered manually via `conf
 }
 ```
 
-In production, a dashboard UI allows users to register and revoke clients.
+**Implementation checklist:**
+1. Add `GET /api/oauth/clients` — list clients registered by the current user
+2. Add `POST /api/oauth/clients` — register a new client (name, redirect URIs, public/confidential)
+3. Add `DELETE /api/oauth/clients/:client_id` — revoke a client and all its active tokens
+4. Expose these in the Settings UI under an "OAuth Clients" or "Connected Apps" section
+5. Seed the `config.json` bootstrap clients once at startup (`INSERT OR IGNORE`) then ignore the file for ongoing management
 
 ---
 
@@ -595,25 +602,54 @@ Applied on MCP and REST agent endpoints:
 
 ## Production Notes
 
-### Database
+### Database (required before production)
 
-**Current**: SQLite, single file.
-**Production**: Migrate to Postgres (or Turso for edge SQLite). The schema uses standard SQL — the only SQLite-specific construct is `datetime('now')` which becomes `NOW()` in Postgres.
+The PoC uses SQLite (single file at `~/.feed-aggregator/feed.db`). SQLite is not suitable for production — it has no concurrent write support and no access controls. Migration to Postgres (or Turso for edge SQLite) is required before going live.
+
+**Implementation checklist:**
+1. Provision a Postgres instance (e.g. Render Postgres, Supabase, or Neon)
+2. Replace `better-sqlite3` with `postgres` or `pg`; update `server/db.ts`
+3. Replace all `datetime('now')` with `NOW()` in queries — the only SQLite-specific construct in the schema
+4. Replace `INSERT OR IGNORE` with `INSERT ... ON CONFLICT DO NOTHING`
+5. Set `DATABASE_URL` environment variable; remove the SQLite file path config
+6. Run schema migrations on first deploy; confirm all indexes are created
 
 Use parameterised queries everywhere. No string concatenation in SQL.
 
-### User Identity
+### User Identity (required before production)
 
-User auth is handled by Clerk. Clerk session cookie authenticates `/api/*` routes and resolves `user_id`. The MCP and `/agent/*` routes use token-based auth (Bearer or OAuth) which also resolves to a `user_id`. All queries are already scoped with `WHERE user_id = ?`.
+In the PoC, every query is hardcoded to `user_id = 'local'`. In production, `user_id` must be resolved from the authenticated session for every request.
 
-### Client-Side Encryption (optional)
+User auth is handled by Clerk. Clerk session cookie authenticates `/api/*` routes and resolves a real `user_id`. The MCP and `/agent/*` routes use token-based auth (Bearer or OAuth) which also resolves to a `user_id`. All queries are already scoped with `WHERE user_id = ?` — the seam is only in the defaulting logic.
 
-For private deployments, content fields can be encrypted by the agent before submission and decrypted in the browser. The server stores ciphertext in the same `TEXT` columns — no schema changes needed.
+**Implementation checklist:**
+1. Integrate Clerk SDK; verify session middleware resolves `user_id` from the Clerk session on all `/api/*` routes
+2. Gate the `'local'` fallback behind `NODE_ENV !== 'production'` — in production a missing `user_id` must be a 401, not a silent fallback; the fallback can remain for local development convenience
+3. On first login, seed default `user_preferences` and `user_sources` rows for the new `user_id` (currently done at DB init for `'local'`)
+4. Ensure agent token creation and OAuth token issuance bind to the authenticated `user_id`, not a hardcoded value
 
+### Client-Side Encryption (required before production)
+
+Feed content is stored in plaintext SQLite. Before any production deployment, content fields must be encrypted by the agent prior to submission and decrypted in the browser. The server only ever sees and stores ciphertext — no schema changes are needed.
+
+**Scheme:**
 - Algorithm: AES-256-GCM
-- Key derivation: PBKDF2(passphrase, user-specific salt, 100000 iterations)
-- Salt stored server-side; passphrase never sent to server
-- Metadata fields (`source`, `published_at`, `tags`, `is_discovery`, `is_read`) remain plaintext for querying
+- Key derivation: PBKDF2(passphrase, user-specific salt, 100 000 iterations, SHA-256)
+- Salt is generated once per user and stored server-side (in `user_preferences`)
+- The passphrase is entered by the user and never sent to the server
+- Each encrypted value is stored as `base64(iv || ciphertext || authTag)`
+
+**Fields to encrypt** (content columns in `feed_items`):
+- `title`, `author`, `content_preview`, `thumbnail_url`, `raw_json`
+
+**Fields that must stay plaintext** (used for server-side filtering and querying):
+- `source`, `published_at`, `tags`, `is_discovery`, `is_read`, `url`, `url_hash`
+
+**Implementation checklist:**
+1. Agent: derive key from user passphrase + salt before each run; encrypt the content fields before calling `submit_items` / `POST /agent/feed-items`
+2. PWA: prompt for passphrase on first load; derive the same key in the browser using the Web Crypto API (`SubtleCrypto.deriveKey`); decrypt fields before rendering
+3. Server: add a `GET /api/encryption/salt` endpoint and a one-time `POST /api/encryption/salt` endpoint to seed the salt; no other server changes required
+4. Do not encrypt `url` — it must remain readable for dedup and push notification links
 
 ### Hosting
 
