@@ -624,7 +624,7 @@ User auth is handled by Clerk. Clerk session cookie authenticates `/api/*` route
 
 **Implementation checklist:**
 1. Integrate Clerk SDK; verify session middleware resolves `user_id` from the Clerk session on all `/api/*` routes
-2. Remove all `?? 'local'` fallbacks in route handlers — a missing `user_id` must be a 401, not a silent fallback
+2. Gate the `'local'` fallback behind `NODE_ENV !== 'production'` — in production a missing `user_id` must be a 401, not a silent fallback; the fallback can remain for local development convenience
 3. On first login, seed default `user_preferences` and `user_sources` rows for the new `user_id` (currently done at DB init for `'local'`)
 4. Ensure agent token creation and OAuth token issuance bind to the authenticated `user_id`, not a hardcoded value
 
