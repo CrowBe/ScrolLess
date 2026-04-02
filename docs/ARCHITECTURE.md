@@ -606,14 +606,28 @@ Use parameterised queries everywhere. No string concatenation in SQL.
 
 User auth is handled by Clerk. Clerk session cookie authenticates `/api/*` routes and resolves `user_id`. The MCP and `/agent/*` routes use token-based auth (Bearer or OAuth) which also resolves to a `user_id`. All queries are already scoped with `WHERE user_id = ?`.
 
-### Client-Side Encryption (optional)
+### Client-Side Encryption (required before production)
 
-For private deployments, content fields can be encrypted by the agent before submission and decrypted in the browser. The server stores ciphertext in the same `TEXT` columns — no schema changes needed.
+Feed content is stored in plaintext SQLite. Before any production deployment, content fields must be encrypted by the agent prior to submission and decrypted in the browser. The server only ever sees and stores ciphertext — no schema changes are needed.
 
+**Scheme:**
 - Algorithm: AES-256-GCM
-- Key derivation: PBKDF2(passphrase, user-specific salt, 100000 iterations)
-- Salt stored server-side; passphrase never sent to server
-- Metadata fields (`source`, `published_at`, `tags`, `is_discovery`, `is_read`) remain plaintext for querying
+- Key derivation: PBKDF2(passphrase, user-specific salt, 100 000 iterations, SHA-256)
+- Salt is generated once per user and stored server-side (in `user_preferences`)
+- The passphrase is entered by the user and never sent to the server
+- Each encrypted value is stored as `base64(iv || ciphertext || authTag)`
+
+**Fields to encrypt** (content columns in `feed_items`):
+- `title`, `author`, `content_preview`, `thumbnail_url`, `raw_json`
+
+**Fields that must stay plaintext** (used for server-side filtering and querying):
+- `source`, `published_at`, `tags`, `is_discovery`, `is_read`, `url`, `url_hash`
+
+**Implementation checklist:**
+1. Agent: derive key from user passphrase + salt before each run; encrypt the content fields before calling `submit_items` / `POST /agent/feed-items`
+2. PWA: prompt for passphrase on first load; derive the same key in the browser using the Web Crypto API (`SubtleCrypto.deriveKey`); decrypt fields before rendering
+3. Server: add a `GET /api/encryption/salt` endpoint and a one-time `POST /api/encryption/salt` endpoint to seed the salt; no other server changes required
+4. Do not encrypt `url` — it must remain readable for dedup and push notification links
 
 ### Hosting
 
