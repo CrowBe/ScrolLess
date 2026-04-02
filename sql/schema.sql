@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS feed_items (
     published_at    TEXT NOT NULL,             -- ISO 8601
     fetched_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     is_read         INTEGER NOT NULL DEFAULT 0,
+    is_saved        INTEGER NOT NULL DEFAULT 0,
     raw_json        TEXT
 );
 
@@ -24,6 +25,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_url_hash ON feed_items(user_id, url_h
 CREATE INDEX IF NOT EXISTS idx_feed_published ON feed_items(published_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feed_source ON feed_items(source);
 CREATE INDEX IF NOT EXISTS idx_feed_read ON feed_items(is_read);
+CREATE INDEX IF NOT EXISTS idx_feed_saved ON feed_items(is_saved);
 CREATE INDEX IF NOT EXISTS idx_feed_user ON feed_items(user_id);
 CREATE INDEX IF NOT EXISTS idx_feed_discovery ON feed_items(is_discovery);
 
