@@ -10,6 +10,8 @@
     "start": "NODE_ENV=production tsx server/index.ts",
     "generate-token": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
     "test": "vitest run",
+    "test:server": "vitest run --config vitest.server.config.ts",
+    "test:all": "vitest run && vitest run --config vitest.server.config.ts",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:update": "playwright test --update-snapshots"
