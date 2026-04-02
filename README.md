@@ -1,31 +1,33 @@
 # ScrolLess
 
-A personal feed aggregator where an AI agent scrapes content from your platforms, posts it to your server, and a PWA serves it as a unified feed with push notifications. The server never talks to YouTube, X, or any content platform — your agent does, using your own browser sessions.
+A feed aggregator where an AI agent scrapes content from your platforms, posts it to a server, and a PWA displays a unified feed with push notifications. The server never talks to YouTube, X, or any content platform — the agent does, using logged-in browser sessions.
+
+Available as a **hosted product** (multi-user, Postgres + Clerk) and as an **open-source self-hosted app** (single-user, SQLite, no auth overhead).
 
 ## How It Works
 
 ```
- Your Desktop                                          Your Server
+ Any Machine                                          Server
 ┌──────────────────────┐                           ┌────────────────────┐
 │  Claude Code / Claude │                           │                    │
 │  in Chrome            │──── POST /agent/* ───────▶│  Fastify API :3333 │
-│                       │    (Bearer token)         │  SQLite storage    │
+│                       │    (Bearer token)         │  SQLite / Postgres │
 │  Scrapes YouTube, X,  │                           │  MCP server /mcp   │
-│  news using YOUR      │◀─── MCP tools/resources ──│  Push sender       │
-│  logged-in sessions   │                           │                    │
+│  news using logged-in │◀─── MCP tools/resources ──│  Push sender       │
+│  browser sessions     │                           │                    │
 └──────────────────────┘                           └────────┬───────────┘
                                                             │ Web Push
                                                    ┌────────▼───────────┐
-                                                   │  PWA on your phone │
+                                                   │  PWA (any device)  │
                                                    │  Installable       │
                                                    │  Push notifications│
                                                    └────────────────────┘
 ```
 
-1. **Agent scrapes**: Claude (via MCP or direct API calls) opens your browser, visits your YouTube subscriptions, X timeline, and news sites, and extracts feed items.
-2. **Agent posts**: The agent sends structured feed items to `POST /agent/feed-items`, authenticated with a personal Bearer token, or via the `submit_items` MCP tool.
-3. **Server stores + notifies**: The server inserts items (deduplicating by URL hash), then sends a Web Push notification to your phone.
-4. **PWA renders**: You open the app, it fetches the feed from `/api/feed`, and displays it sorted by recency with source filtering and read/unread tracking.
+1. **Agent scrapes**: Claude (via MCP or direct API calls) opens a browser, visits YouTube subscriptions, X timeline, and news sites, and extracts feed items.
+2. **Agent posts**: The agent sends structured feed items to `POST /agent/feed-items` (Bearer token auth) or via the `submit_items` MCP tool.
+3. **Server stores + notifies**: The server inserts items (deduplicating by URL hash), then sends a Web Push notification to subscribed devices.
+4. **PWA renders**: The app fetches from `/api/feed` and displays items sorted by recency with source filtering and read/unread tracking.
 
 The server is deliberately dumb — it stores data, serves it, and sends push notifications. All platform interaction happens on the agent side.
 
@@ -33,8 +35,8 @@ The server is deliberately dumb — it stores data, serves it, and sends push no
 
 | Layer | Technology | Rationale |
 |---|---|---|
-| **Runtime** | Node.js 20+ | Available on target machine (Fedora Linux) |
-| **Database** | SQLite via `better-sqlite3` | Zero-config, single-file, on-device storage |
+| **Runtime** | Node.js 20+ | |
+| **Database** | SQLite (self-hosted) / Postgres (hosted) | SQLite: zero-config, single-file; Postgres: multi-user |
 | **Backend API** | Fastify | Lightweight HTTP server |
 | **MCP server** | `@modelcontextprotocol/sdk` | Exposes tools + resources to Claude |
 | **Push** | `web-push` (VAPID) | Server-initiated notifications to the PWA |
@@ -209,14 +211,13 @@ For a stable named tunnel tied to a domain you control, follow the [Cloudflare T
 
 ---
 
-## Production Path
+## Deployment Modes
 
-This PoC is designed to be promotable to a multi-user hosted product. See the "Production Seams" section in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for what changes:
-- Clerk for user authentication
-- Per-user agent tokens (multiple agents per user)
-- Client-side encryption (server stores ciphertext, PWA decrypts)
-- Postgres instead of SQLite
-- Published skill as GitHub repo + MCP server
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full deployment instructions.
+
+**Self-hosted**: SQLite, no auth middleware, single user. Run with `npm run build && npm start`, expose via Cloudflare Tunnel or keep local.
+
+**Hosted product**: Requires Clerk (user auth), Postgres (multi-user DB), and client-side encryption (operator-blind feed content). See the Production Notes section in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the remaining work in [docs/pre-release-tasks.md](docs/pre-release-tasks.md).
 
 ## Licence
 

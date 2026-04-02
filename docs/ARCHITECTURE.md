@@ -602,11 +602,17 @@ Applied on MCP and REST agent endpoints:
 
 ## Production Notes
 
-### Database (required before production)
+### Database
 
-The PoC uses SQLite (single file at `~/.feed-aggregator/feed.db`). SQLite is not suitable for production — it has no concurrent write support and no access controls. Migration to Postgres (or Turso for edge SQLite) is required before going live.
+Two supported configurations:
 
-**Implementation checklist:**
+**Self-hosted (SQLite):** Single-user, owner-operated deployments use SQLite. Single file, zero configuration, trivially backed up. No migration needed.
+
+**Hosted (Postgres):** Multi-user deployments require Postgres. SQLite has no concurrent write support and no access controls suitable for serving multiple users.
+
+Migration from self-hosted SQLite to hosted Postgres:
+
+**Checklist:**
 1. Provision a Postgres instance (e.g. Render Postgres, Supabase, or Neon)
 2. Replace `better-sqlite3` with `postgres` or `pg`; update `server/db.ts`
 3. Replace all `datetime('now')` with `NOW()` in queries — the only SQLite-specific construct in the schema
@@ -616,21 +622,23 @@ The PoC uses SQLite (single file at `~/.feed-aggregator/feed.db`). SQLite is not
 
 Use parameterised queries everywhere. No string concatenation in SQL.
 
-### User Identity (required before production)
+### User Identity
 
-In the PoC, every query is hardcoded to `user_id = 'local'`. In production, `user_id` must be resolved from the authenticated session for every request.
+In self-hosted mode, every query defaults to `user_id = 'local'`. In hosted mode, `user_id` must be resolved from the authenticated Clerk session for every request.
 
 User auth is handled by Clerk. Clerk session cookie authenticates `/api/*` routes and resolves a real `user_id`. The MCP and `/agent/*` routes use token-based auth (Bearer or OAuth) which also resolves to a `user_id`. All queries are already scoped with `WHERE user_id = ?` — the seam is only in the defaulting logic.
 
-**Implementation checklist:**
+**Checklist:**
 1. Integrate Clerk SDK; verify session middleware resolves `user_id` from the Clerk session on all `/api/*` routes
-2. Gate the `'local'` fallback behind `NODE_ENV !== 'production'` — in production a missing `user_id` must be a 401, not a silent fallback; the fallback can remain for local development convenience
+2. Gate the `'local'` fallback behind `NODE_ENV !== 'production'` — in hosted mode a missing `user_id` must be a 401, not a silent fallback; the fallback remains for local development and self-hosted deployments
 3. On first login, seed default `user_preferences` and `user_sources` rows for the new `user_id` (currently done at DB init for `'local'`)
 4. Ensure agent token creation and OAuth token issuance bind to the authenticated `user_id`, not a hardcoded value
 
-### Client-Side Encryption (required before production)
+### Client-Side Encryption
 
-Feed content is stored in plaintext SQLite. Before any production deployment, content fields must be encrypted by the agent prior to submission and decrypted in the browser. The server only ever sees and stores ciphertext — no schema changes are needed.
+Required for hosted deployments. Feed content fields must be encrypted by the agent prior to submission and decrypted in the browser. The server stores only ciphertext — the operator cannot read user feed content. No schema changes are needed; only the agent and PWA change.
+
+Self-hosted deployments may skip this (the owner operates the server and controls the data).
 
 **Scheme:**
 - Algorithm: AES-256-GCM

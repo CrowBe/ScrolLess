@@ -1,12 +1,16 @@
 # ScrolLess
 
-Personal feed aggregator. External AI agent scrapes platforms → POSTs to this server → PWA displays unified feed with push notifications. Server never talks to content platforms.
+Feed aggregator — hosted product with self-hosting option. External AI agent scrapes platforms → POSTs to this server → PWA displays unified feed with push notifications. Server never talks to content platforms.
+
+**Deployment modes:**
+- **Hosted**: Postgres + Clerk auth + client-side encryption (multi-user, operator-blind)
+- **Self-hosted**: SQLite + no auth middleware (single-user, owner-operated)
 
 ## Stack
 
-- **Backend**: Node.js 20+, TypeScript, Fastify, better-sqlite3, web-push, @modelcontextprotocol/sdk
+- **Backend**: Node.js 20+, TypeScript, Fastify, better-sqlite3 (self-hosted) / pg (hosted), web-push, @modelcontextprotocol/sdk
 - **Frontend**: Vite, **Preact** (not React, not preact/compat), TypeScript, plain CSS
-- **DB**: SQLite via `sql/schema.sql`
+- **DB**: SQLite (`sql/schema.sql`) for self-hosted; Postgres for hosted deployment
 
 ## Docs
 
@@ -28,7 +32,7 @@ Personal feed aggregator. External AI agent scrapes platforms → POSTs to this 
 
 ## Non-Obvious Rules (common mistakes)
 
-- Every DB query needs `WHERE user_id = ?` (always `'local'` in PoC — production seam)
+- Every DB query needs `WHERE user_id = ?` (`'local'` in self-hosted/dev; Clerk `userId` in hosted — seam in `server/api-routes.ts`)
 - URL dedup: normalise → SHA-256 → unique index on `(user_id, url_hash)` → `INSERT OR IGNORE`
 - Agent auth: two valid paths — Bearer token (hash with SHA-256, compare to `agent_tokens.token_hash`) or OAuth access token (validate against `oauth_tokens` table). Both resolve to a `userId`; route handlers never care which was used.
 - `blocked_sources` is gone — use `user_sources.enabled = 0` instead. Never add `blocked_sources` back as a preference key.
