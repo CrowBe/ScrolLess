@@ -88,6 +88,9 @@ export function normaliseUrl(raw: string): string {
     // Sort remaining query params alphabetically
     url.searchParams.sort();
 
+    // Strip fragment identifiers (same resource, different in-page anchor)
+    url.hash = '';
+
     // Strip trailing slash from pathname (but keep root /)
     if (url.pathname.length > 1 && url.pathname.endsWith('/')) {
       url.pathname = url.pathname.slice(0, -1);
