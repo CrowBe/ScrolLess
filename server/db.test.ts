@@ -35,6 +35,10 @@ describe('normaliseUrl', () => {
     expect(normaliseUrl('https://example.com/path/')).toBe('https://example.com/path');
   });
 
+  it('removes fragment identifiers', () => {
+    expect(normaliseUrl('https://example.com/article#comments')).toBe('https://example.com/article');
+  });
+
   it('keeps root slash', () => {
     expect(normaliseUrl('https://example.com/')).toBe('https://example.com/');
   });
