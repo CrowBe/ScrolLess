@@ -5,9 +5,15 @@ export interface AgentFeedItem {
   title: string;
   url: string;
   published_at: string; // ISO 8601
+  source_type?: string;
+  content_type?: string;
+  card_type?: string;
   author?: string;
   content_preview?: string;
   thumbnail_url?: string;
+  action_label?: string;
+  action_icon?: string;
+  metadata?: Record<string, string | number | boolean | null>;
   tags?: string[];
   is_discovery?: boolean;
 }

@@ -6,6 +6,9 @@ CREATE TABLE IF NOT EXISTS feed_items (
     id              TEXT PRIMARY KEY,          -- "source:source_id"
     user_id         TEXT NOT NULL DEFAULT 'local',
     source          TEXT NOT NULL,             -- "youtube" | "x" | "news" | custom
+    source_type     TEXT,                      -- broad taxonomy: "video" | "social" | "news" | custom
+    content_type    TEXT,                      -- specific content: "video" | "article" | "post" | custom
+    card_type       TEXT,                      -- optional UI rendering hint
     title           TEXT,
     author          TEXT,
     url             TEXT NOT NULL,
@@ -18,6 +21,9 @@ CREATE TABLE IF NOT EXISTS feed_items (
     fetched_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     is_read         INTEGER NOT NULL DEFAULT 0,
     is_saved        INTEGER NOT NULL DEFAULT 0,
+    action_label    TEXT,
+    action_icon     TEXT,
+    metadata_json   TEXT,
     raw_json        TEXT
 );
 

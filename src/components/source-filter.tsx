@@ -1,5 +1,6 @@
 import type { Stats } from '../types';
 import { markAllRead } from '../api';
+import { displayName } from '../source-labels';
 
 interface Props {
   stats: Stats | null;
@@ -10,12 +11,7 @@ interface Props {
   onMarkedAllRead: () => void;
 }
 
-const SOURCES = [
-  { id: '', label: 'All' },
-  { id: 'youtube', label: 'YouTube' },
-  { id: 'x', label: 'X' },
-  { id: 'news', label: 'News' },
-];
+const SOURCE_ORDER = ['youtube', 'x', 'news'];
 
 function unreadFor(stats: Stats | null, source: string): number {
   if (!stats) return 0;
@@ -31,6 +27,13 @@ export function SourceFilter({
   onDiscoveryChange,
   onMarkedAllRead,
 }: Props) {
+  const dynamicSources = Array.from(new Set([
+    ...SOURCE_ORDER,
+    ...(stats?.by_source.map((s) => s.source) ?? []),
+    ...(source ? [source] : []),
+  ]));
+  const sources = [{ id: '', label: 'All' }, ...dynamicSources.map((id) => ({ id, label: displayName(id) }))];
+
   async function handleMarkAllRead() {
     await markAllRead(source || undefined);
     onMarkedAllRead();
@@ -39,7 +42,7 @@ export function SourceFilter({
   return (
     <div class="source-filter">
       <div class="source-filter__chips">
-        {SOURCES.map((s) => {
+        {sources.map((s) => {
           const unread = unreadFor(stats, s.id);
           return (
             <button

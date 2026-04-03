@@ -2,6 +2,7 @@ import type { FeedItemResponse } from '../types';
 import { YouTubeCard } from './youtube-card';
 import { XCard } from './x-card';
 import { NewsCard } from './news-card';
+import { ContentCard } from './content-card';
 
 interface Props {
   items: FeedItemResponse[];
@@ -35,13 +36,19 @@ export function FeedList({ items, loading, hasMore, onLoadMore, onMarkRead, onTo
   return (
     <div class="feed-list">
       {items.map((item) => {
-        switch (item.source) {
+        const cardType = item.card_type ?? item.content_type;
+        switch (cardType ?? item.source) {
           case 'youtube':
+          case 'video':
             return <YouTubeCard key={item.id} item={item} onMarkRead={onMarkRead} onToggleSave={onToggleSave} />;
           case 'x':
+          case 'post':
             return <XCard key={item.id} item={item} onMarkRead={onMarkRead} onToggleSave={onToggleSave} />;
-          default:
+          case 'news':
+          case 'article':
             return <NewsCard key={item.id} item={item} onMarkRead={onMarkRead} onToggleSave={onToggleSave} />;
+          default:
+            return <ContentCard key={item.id} item={item} onMarkRead={onMarkRead} onToggleSave={onToggleSave} />;
         }
       })}
 

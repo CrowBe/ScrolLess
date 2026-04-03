@@ -3,19 +3,31 @@
   "title": "AgentFeedPayload",
   "description": "Payload for POST /agent/feed-items. Submit a batch of scraped feed items from a single source.",
   "type": "object",
-  "required": ["source", "items"],
+  "required": [
+    "source",
+    "items"
+  ],
   "properties": {
     "source": {
       "type": "string",
       "description": "Platform identifier. Use: 'youtube', 'x', 'news', or a custom string.",
-      "examples": ["youtube", "x", "news"]
+      "examples": [
+        "youtube",
+        "x",
+        "news"
+      ]
     },
     "items": {
       "type": "array",
       "description": "Array of feed items to insert. Server deduplicates by URL.",
       "items": {
         "type": "object",
-        "required": ["source_id", "title", "url", "published_at"],
+        "required": [
+          "source_id",
+          "title",
+          "url",
+          "published_at"
+        ],
         "properties": {
           "source_id": {
             "type": "string",
@@ -50,13 +62,47 @@
           },
           "tags": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Tags for categorisation and filtering. Agent-assigned or derived from source."
           },
           "is_discovery": {
             "type": "boolean",
             "default": false,
             "description": "false = from subscriptions/follows (main feed). true = from recommendations/trending (discovery feed)."
+          },
+          "source_type": {
+            "type": "string",
+            "description": "Broad taxonomy for the source (e.g. social, video, news)."
+          },
+          "content_type": {
+            "type": "string",
+            "description": "Content category such as video, article, or post."
+          },
+          "card_type": {
+            "type": "string",
+            "description": "Optional UI rendering hint for the client card renderer."
+          },
+          "action_label": {
+            "type": "string",
+            "description": "Optional CTA text override for the card action button."
+          },
+          "action_icon": {
+            "type": "string",
+            "description": "Optional Material icon name for the card action."
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            "description": "Optional structured metadata for custom cards and future UI use."
           }
         }
       }

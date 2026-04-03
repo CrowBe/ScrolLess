@@ -11,6 +11,8 @@ interface Props {
 
 export function NewsCard({ item, onMarkRead, onToggleSave }: Props) {
   const { expanded, toggle } = useExpandable(item.id, item.is_read, onMarkRead);
+  const ctaLabel = item.action_label ?? (item.source === 'news' ? 'Read article' : 'Open item');
+  const ctaIcon = item.action_icon ?? 'open_in_new';
 
   return (
     <article
@@ -47,8 +49,8 @@ export function NewsCard({ item, onMarkRead, onToggleSave }: Props) {
               class="btn btn--primary"
               onClick={(e) => e.stopPropagation()}
             >
-              <span class="material-symbols-outlined">open_in_new</span>
-              Read article
+              <span class="material-symbols-outlined">{ctaIcon}</span>
+              {ctaLabel}
             </a>
           </div>
         )}

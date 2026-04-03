@@ -74,9 +74,9 @@ export function insertFeedItems(
 
   const insertStmt = db.prepare(`
     INSERT OR IGNORE INTO feed_items
-      (id, user_id, source, title, author, url, url_hash, content_preview, thumbnail_url, tags, is_discovery, published_at, raw_json)
+      (id, user_id, source, source_type, content_type, card_type, title, author, url, url_hash, content_preview, thumbnail_url, tags, is_discovery, published_at, action_label, action_icon, metadata_json, raw_json)
     VALUES
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertAll = db.transaction((items: AgentFeedPayload['items']) => {
@@ -101,16 +101,23 @@ export function insertFeedItems(
       if (item.tags !== undefined && !Array.isArray(item.tags)) {
         throw new Error(`items[${i}].tags must be an array of strings if provided`);
       }
+      if (item.metadata !== undefined && (typeof item.metadata !== 'object' || item.metadata === null || Array.isArray(item.metadata))) {
+        throw new Error(`items[${i}].metadata must be an object if provided`);
+      }
 
       const id = `${source}:${item.source_id}`;
       const normUrl = normaliseUrl(item.url);
       const urlHash = hashUrl(normUrl);
       const tagsJson = item.tags ? JSON.stringify(item.tags) : null;
+      const metadataJson = item.metadata ? JSON.stringify(item.metadata) : null;
 
       const result = insertStmt.run(
         id,
         userId,
         source,
+        item.source_type ?? null,
+        item.content_type ?? null,
+        item.card_type ?? null,
         item.title,
         item.author ?? null,
         normUrl,
@@ -120,6 +127,9 @@ export function insertFeedItems(
         tagsJson,
         item.is_discovery ? 1 : 0,
         item.published_at,
+        item.action_label ?? null,
+        item.action_icon ?? null,
+        metadataJson,
         JSON.stringify(item)
       );
 

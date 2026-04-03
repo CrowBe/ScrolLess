@@ -20,6 +20,15 @@ function parseTags(raw: string | null): string[] {
   }
 }
 
+function parseMetadata(raw: string | null): Record<string, string | number | boolean | null> | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
 export function registerApiRoutes(
   fastify: FastifyInstance,
   db: Database.Database
@@ -55,8 +64,8 @@ export function registerApiRoutes(
     ).get(...params) as { total: number };
 
     const rows = db.prepare(`
-      SELECT id, user_id, source, title, author, url, content_preview,
-             thumbnail_url, tags, is_discovery, published_at, fetched_at, is_read, is_saved
+      SELECT id, user_id, source, source_type, content_type, card_type, title, author, url, content_preview,
+             thumbnail_url, tags, is_discovery, published_at, fetched_at, is_read, is_saved, action_label, action_icon, metadata_json
       FROM feed_items
       ${where}
       ORDER BY published_at DESC
@@ -64,6 +73,9 @@ export function registerApiRoutes(
     `).all(...params, limit, offset) as Array<{
       id: string;
       source: string;
+      source_type: string | null;
+      content_type: string | null;
+      card_type: string | null;
       title: string;
       author: string | null;
       url: string;
@@ -75,6 +87,9 @@ export function registerApiRoutes(
       fetched_at: string;
       is_read: number;
       is_saved: number;
+      action_label: string | null;
+      action_icon: string | null;
+      metadata_json: string | null;
     }>;
 
     const items = rows.map((row) => ({
@@ -83,6 +98,7 @@ export function registerApiRoutes(
       is_discovery: row.is_discovery === 1,
       is_read: row.is_read === 1,
       is_saved: row.is_saved === 1,
+      metadata: parseMetadata(row.metadata_json),
     }));
 
     return reply.send({ items, total: countRow.total, limit, offset });

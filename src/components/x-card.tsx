@@ -11,6 +11,7 @@ interface Props {
 
 export function XCard({ item, onMarkRead, onToggleSave }: Props) {
   const { expanded, toggle } = useExpandable(item.id, item.is_read, onMarkRead);
+  const ctaLabel = item.action_label ?? (item.source === 'x' ? 'View on X' : 'View post');
 
   const handle = item.author ?? 'Unknown';
   const preview = item.content_preview ?? item.title;
@@ -46,7 +47,7 @@ export function XCard({ item, onMarkRead, onToggleSave }: Props) {
               class="btn btn--ghost"
               onClick={(e) => e.stopPropagation()}
             >
-              View on X
+              {ctaLabel}
             </a>
           </div>
         )}

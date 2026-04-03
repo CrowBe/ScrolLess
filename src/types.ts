@@ -3,11 +3,17 @@
 export interface FeedItemResponse {
   id: string;           // "source:source_id"
   source: string;       // "youtube" | "x" | "news" | custom
+  source_type?: string; // platform taxonomy (e.g. "social", "video", "news")
+  content_type?: string; // e.g. "video" | "article" | "post" | custom
+  card_type?: string; // UI hint for card renderer
   title: string;
   author?: string;
   url: string;
   content_preview?: string;
   thumbnail_url?: string;
+  action_label?: string;
+  action_icon?: string;
+  metadata?: Record<string, string | number | boolean | null>;
   tags: string[];
   is_discovery: boolean;
   published_at: string; // ISO 8601
