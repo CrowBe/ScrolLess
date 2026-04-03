@@ -39,6 +39,21 @@ export function initDb(dbPath?: string): Database.Database {
   } catch {
     // Column already exists — safe to ignore
   }
+  const feedColumns = [
+    'source_type TEXT',
+    'content_type TEXT',
+    'card_type TEXT',
+    'action_label TEXT',
+    'action_icon TEXT',
+    'metadata_json TEXT',
+  ];
+  for (const column of feedColumns) {
+    try {
+      db.exec(`ALTER TABLE feed_items ADD COLUMN ${column}`);
+    } catch {
+      // Column already exists — safe to ignore
+    }
+  }
 
   // Seed default user_preferences if not present
   const seedPref = db.prepare(
