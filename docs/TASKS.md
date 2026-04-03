@@ -1,6 +1,6 @@
 # Implementation Tasks
 
-This document breaks the feed aggregator build into discrete stages. Each stage is self-contained: a coding agent should be able to complete any stage given only this document, `ARCHITECTURE.md`, `DESIGN_SYSTEM.md`, and the code produced by prior stages.
+This document breaks the ScrolLess edge-first build into discrete stages. Each stage is self-contained: a coding agent should be able to complete any stage given only this document, `ARCHITECTURE.md`, `DESIGN_SYSTEM.md`, and the code produced by prior stages.
 
 Stages are ordered by dependency. Complete them sequentially.
 
@@ -19,10 +19,13 @@ Create `package.json` with the following dependencies:
 - `fastify` — HTTP server
 - `@fastify/static` — serve built frontend in production
 - `@fastify/cors` — CORS for dev (Vite on different port)
-- `@fastify/rate-limit` — rate limiting on agent endpoints
+- `@fastify/rate-limit` — rate limiting on agent/MCP routes only
 - `web-push` — Web Push notifications (VAPID)
 - `preact` — UI framework
+- `preact-iso` — hash router for PWA views
 - `tsx` — run TypeScript backend directly
+- `idb` — IndexedDB wrapper (typed, promise-based)
+- `@modelcontextprotocol/sdk` — MCP server
 
 **Dev dependencies**:
 - `typescript`
@@ -30,956 +33,1045 @@ Create `package.json` with the following dependencies:
 - `@types/node`
 - `vite`
 - `@preact/preset-vite`
-- `concurrently` — run backend + frontend dev servers together
+- `concurrently`
+- `vitest` — unit tests
 
 Configure `package.json` scripts:
-- `dev:server` — run `server/index.ts` via `tsx --watch`
-- `dev:client` — run `vite` dev server
-- `dev` — run both via `concurrently`
+- `dev:server` — `tsx --watch server/index.ts`
+- `dev:client` — `vite`
+- `dev` — both via `concurrently`
 - `build` — `vite build`
 - `start` — `NODE_ENV=production tsx server/index.ts`
 - `generate-token` — `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+- `test` — `vitest run`
 
 Set `"type": "module"` in `package.json`.
 
 ### Task 1.2: TypeScript configuration
 
-Create `tsconfig.json` for the backend (Node.js target, ESM modules, strict mode).
+Create `tsconfig.json` for the backend (Node.js target, ESM, strict):
+- `"target": "ES2022"`, `"module": "ESNext"`, `"moduleResolution": "bundler"`, `"strict": true`
 
-Create `tsconfig.app.json` that extends the base config for the frontend (Preact JSX pragma, DOM lib).
+Create `tsconfig.app.json` extending base config for the frontend:
+- Add `"jsxImportSource": "preact"` and `"lib": ["ES2022", "DOM", "DOM.Iterable"]`
 
-Key settings:
-- `"target": "ES2022"`
-- `"module": "ESNext"`, `"moduleResolution": "bundler"`
-- `"strict": true`
-- `"jsxImportSource": "preact"` (in the frontend config)
+Create `tsconfig.sw.json` for the service worker (same as app but no JSX).
 
 ### Task 1.3: Vite configuration
 
 Create `vite.config.ts`:
-- Use `@preact/preset-vite` plugin
-- Set `root` to `./src` (frontend source)
-- Configure dev server proxy: `/api/*` → `http://localhost:3333`
-- Build output to `./dist/client`
+- Use `@preact/preset-vite`
+- Dev proxy using **regex keys** to avoid matching TypeScript source files:
+  ```ts
+  proxy: {
+    '^/api/': 'http://localhost:3333',
+    '^/agent/': 'http://localhost:3333',
+    '^/mcp': 'http://localhost:3333',
+    '^/oauth/': 'http://localhost:3333',
+  }
+  ```
+- Service worker output at `sw.js` (not content-hashed): configure `rollupOptions` to output `sw.js` with no hash.
 
-### Task 1.4: Create directory structure
+### Task 1.4: Build script for service worker
 
-Populate with placeholder files:
-- `server/index.ts` — `console.log('server starting')`
-- `src/index.html` — basic HTML shell with `<div id="app">`
-- `src/main.tsx` — render a "hello world" Preact component
-- `src/manifest.json` — minimal valid PWA manifest
-- `sql/schema.sql` — empty placeholder
-- `config.example.json` — see ARCHITECTURE.md for structure
+Create `build-sw.mjs` that compiles `src/sw.ts` to `public/sw.js` using `esbuild` (or `tsc --outFile`). Run as part of `build` script.
 
-### Acceptance criteria
-- `npm run dev:server` starts without errors and logs a message
-- `npm run dev:client` opens a browser with the hello world component
-- `npm run dev` runs both concurrently
-- TypeScript compilation has no errors
+### Task 1.5: Verify
+
+Run `npm run dev` and confirm:
+- Backend starts on :3333
+- Vite starts on :5173
+- No TypeScript errors
+- `http://localhost:5173` serves the Vite default page (HTML shell)
 
 ---
 
 ## Stage 2: Database Layer
 
-**Goal**: Implement SQLite initialisation, schema, and helper functions.
+**Goal**: Create the SQLite schema and a typed database module.
 
-### Task 2.1: Schema file
+### Task 2.1: Write the schema
 
-Create `sql/schema.sql` with all tables as specified in ARCHITECTURE.md:
-- `feed_items` (with all indexes, including composite unique on `user_id, url_hash`)
-- `user_sources` — user-configured scraping sources (name, enabled, urls JSON, max_items, scraping_notes)
-- `agent_tokens`
-- `sync_log`
-- `push_subscriptions`
-- `user_preferences`
-- `oauth_clients`, `oauth_auth_codes`, `oauth_tokens` — OAuth 2.0 tables
+Create `sql/schema.sql` with the following tables:
 
-Use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` throughout.
+```sql
+-- Device registrations (free tier)
+CREATE TABLE IF NOT EXISTS device_registrations (
+    user_id     TEXT PRIMARY KEY,
+    public_key  TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    last_seen   TEXT
+);
+
+-- User-configured scraping sources
+CREATE TABLE IF NOT EXISTS user_sources (
+    user_id         TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    urls            TEXT NOT NULL DEFAULT '[]',
+    max_items       INTEGER,
+    last_sync_at    TEXT,
+    scraping_notes  TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    PRIMARY KEY (user_id, name)
+);
+
+-- Append-only agent sync attempt log (metadata only — no content)
+CREATE TABLE IF NOT EXISTS sync_attempts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      TEXT NOT NULL,
+    source       TEXT NOT NULL,
+    attempted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    item_count   INTEGER NOT NULL DEFAULT 0,
+    status       TEXT NOT NULL,  -- 'relayed' | 'device_offline' | 'error'
+    error        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sync_attempts_user ON sync_attempts(user_id, attempted_at DESC);
+
+-- Web Push subscriptions
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    endpoint    TEXT NOT NULL UNIQUE,
+    keys_p256dh TEXT NOT NULL,
+    keys_auth   TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- Agent API tokens
+CREATE TABLE IF NOT EXISTS agent_tokens (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash  TEXT NOT NULL UNIQUE,
+    user_id     TEXT NOT NULL,
+    label       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    last_used   TEXT
+);
+
+-- OAuth 2.0 tables
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    client_id       TEXT PRIMARY KEY,
+    client_secret   TEXT,
+    redirect_uris   TEXT NOT NULL,
+    label           TEXT,
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS oauth_auth_codes (
+    code            TEXT PRIMARY KEY,
+    client_id       TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    redirect_uri    TEXT NOT NULL,
+    code_challenge  TEXT NOT NULL,
+    expires_at      TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    access_token    TEXT PRIMARY KEY,
+    refresh_token   TEXT UNIQUE,
+    client_id       TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    access_expires  TEXT NOT NULL,
+    refresh_expires TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+```
 
 ### Task 2.2: Database module
 
 Create `server/db.ts`:
+- Open SQLite at `data/scrolless.db` (create directory if missing)
+- Execute `schema.sql` on startup
+- Export a typed `db` instance
+- Seed default sources (`youtube`, `x`, `news`) for `user_id = 'local'` with `enabled = 0`
+- Seed OAuth clients from `config.json` if present
 
-**`initDb(dbPath?: string): Database`**
-- Default path: `~/.feed-aggregator/feed.db`
-- Create parent directory if missing
-- Open with `better-sqlite3`
-- Set pragmas: `journal_mode = WAL`, `synchronous = NORMAL`, `foreign_keys = ON`
-- Execute `sql/schema.sql`
-- Seed default `user_preferences` if not present (for `user_id = 'local'`):
-  - `blocked_keywords`: `[]`
-  - `max_items_per_source`: `50`
-  - `retention_days`: `7`
-  - Note: do **not** seed `blocked_sources` — per-source enable/disable lives in `user_sources.enabled`
-- Seed default `user_sources` rows if not present (for `user_id = 'local'`):
-  - `youtube` — `enabled = 0`, `urls = '["https://www.youtube.com/feed/subscriptions"]'`
-  - `x` — `enabled = 0`, `urls = '["https://x.com/home"]'`
-  - `news` — `enabled = 0`, `urls = '["https://news.ycombinator.com","https://arstechnica.com"]'`
-- Return database instance
+### Task 2.3: Config loader
 
-**`normaliseUrl(raw: string): string`**
-- Lowercase hostname
-- Remove tracking params: `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `s`, `ref`, `feature`
-- Normalise `youtu.be/X` → `https://www.youtube.com/watch?v=X`
-- Sort remaining query parameters alphabetically
-- Strip trailing slashes
-- On parse failure, return input unchanged
-
-**`hashUrl(url: string): string`**
-- SHA-256 hash, returned as hex
-
-### Task 2.3: Shared types
-
-Create `server/types.ts`:
-- `AgentFeedPayload` — `{ source, items: AgentFeedItem[] }`
-- `AgentFeedItem` — as specified in ARCHITECTURE.md
-- `AgentFeedResponse` — `{ inserted, duplicates }`
-- `AgentSyncContext` — full response shape of `GET /agent/sync-context` (see ARCHITECTURE.md for exact fields)
-- `AppConfig` — typed `config.json` structure
-
-Create `src/types.ts` for frontend:
-- `FeedItemResponse` — shape returned by `GET /api/feed` per item
-- `FeedResponse` — `{ items, total, limit, offset }`
-- `Stats` — `{ total, unread, by_source }`
-- `SyncLogEntry` — `{ source, synced_at, items_added, error }`
-- `PushPayload` — `{ title, body, source, count, url }`
-
-### Acceptance criteria
-- `initDb()` creates `~/.feed-aggregator/feed.db` with all tables including `user_sources` and OAuth tables
-- Default preferences are seeded (no `blocked_sources` key)
-- Default `user_sources` rows seeded for youtube, x, news — all with `enabled = 0`
-- `normaliseUrl('https://youtu.be/abc?utm_source=twitter')` returns `'https://www.youtube.com/watch?v=abc'`
-- `hashUrl` returns a consistent 64-character hex string
+Create `server/config.ts`:
+- Load `config.json` if present, fall back to environment variables
+- Export typed config: `vapidPublicKey`, `vapidPrivateKey`, `vapidEmail`, `agentRateLimit`, `cors`, `oauth.clients`
 
 ---
 
-## Stage 3: Agent Authentication
+## Stage 3: Client-Side Crypto Module
 
-**Goal**: Implement agent token verification and setup.
+**Goal**: Implement ECIES-P256-AES256GCM decryption in the browser using Web Crypto API. No external crypto libraries.
 
-### Task 3.1: Auth module
+### Task 3.1: Key generation
 
-Create `server/auth.ts`:
+Create `src/crypto.ts`:
 
-**`hashToken(token: string): string`**
-- SHA-256 hash of the token, hex-encoded
+```typescript
+// Generate a new P-256 keypair
+export async function generateKeypair(): Promise<{ publicKey: CryptoKey; privateKey: CryptoKey }>;
 
-**`verifyAgentToken(db: Database, token: string): { valid: boolean, userId: string | null }`**
-- Hash the incoming token
-- Look up in `agent_tokens` table
-- If found: update `last_used` timestamp, return `{ valid: true, userId: row.user_id }`
-- If not found: return `{ valid: false, userId: null }`
+// Export public key to base64 uncompressed point
+export async function exportPublicKey(key: CryptoKey): Promise<string>;
 
-**`seedAgentToken(db: Database, tokenHash: string, label?: string): void`**
-- Insert a row into `agent_tokens` with `user_id = 'local'` and the provided hash
-- Used at startup to ensure the configured token is in the database
+// Import a base64 public key (for ECDH with ephemeral key)
+export async function importPublicKey(b64: string): Promise<CryptoKey>;
+```
 
-### Task 3.2: Fastify auth hook
+### Task 3.2: ECIES decryption
 
-Create a Fastify `preHandler` hook for agent routes:
-- Extract `Authorization: Bearer <token>` from the request header
-- Call `verifyAgentToken()`
-- If invalid: reply 401 `{ error: "Invalid agent token" }`
-- If valid: attach `userId` to the request for downstream route handlers
+```typescript
+// Decrypt a single encrypted_fields blob
+// encrypted_fields = base64(iv[12] || ciphertext || authTag[16])
+// ephemeralPublicKeyB64 = base64(P-256 uncompressed point) from agent POST
+export async function decryptFields(
+  encryptedFields: string,
+  ephemeralPublicKeyB64: string,
+  devicePrivateKey: CryptoKey,
+): Promise<{
+  title: string;
+  author?: string;
+  content_preview?: string;
+  thumbnail_url?: string;
+  tags: string[];
+}>;
+```
 
-### Task 3.3: Setup and entry point wiring
+Implementation steps inside `decryptFields`:
+1. Import ephemeral public key with `importKey('raw', ...)` + `{ name: 'ECDH', namedCurve: 'P-256' }`
+2. `sharedSecret = await subtle.deriveBits({ name: 'ECDH', public: ephemeralKey }, devicePrivateKey, 256)`
+3. Import shared secret as HKDF key material
+4. `aesKey = await subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: encoder.encode('scrolless-v1') }, hkdfKey, { name: 'AES-GCM', length: 256 }, false, ['decrypt'])`
+5. Decode base64 → bytes; `iv = bytes[0:12]`, `cipherWithTag = bytes[12:]`
+6. `plaintext = await subtle.decrypt({ name: 'AES-GCM', iv }, aesKey, cipherWithTag)`
+7. Parse and return JSON
 
-Update `server/index.ts`:
-- Read `config.json`
-- On startup: call `seedAgentToken(db, config.agent_token_hash)` to ensure the token is in the database
-- Log a clear message if `agent_token_hash` is not configured
+### Task 3.3: URL normalisation (client-side)
 
-Update `config.example.json`:
-```json
-{
-  "agent_token_hash": "",
-  "db_path": "~/.feed-aggregator/feed.db",
-  "server": { "port": 3333, "host": "127.0.0.1" },
-  "push": { ... },
-  "rate_limit": { "agent_max_per_hour": 60 }
+```typescript
+// Normalise a URL for dedup hashing
+export function normaliseUrl(url: string): string;
+
+// SHA-256 of normalised URL → hex string
+export async function hashUrl(url: string): Promise<string>;
+```
+
+Normalisation steps:
+1. Lowercase hostname
+2. Remove tracking params: `utm_*`, `s`, `ref`, `feature`
+3. Convert YouTube short URLs: `youtu.be/ID` → `https://www.youtube.com/watch?v=ID`
+4. Sort remaining query params alphabetically
+5. Strip trailing slashes
+
+### Task 3.4: Unit tests
+
+Write `src/crypto.test.ts` with a round-trip test:
+1. Generate device keypair
+2. Simulate agent-side encryption (generate ephemeral keypair, ECDH, HKDF, AES-GCM encrypt) using Web Crypto
+3. Call `decryptFields` and assert plaintext matches
+
+Run with `npm test`.
+
+---
+
+## Stage 4: Device Registration
+
+**Goal**: Device generates keypair on first boot and registers with the server. Keypair persists in IndexedDB.
+
+### Task 4.1: IndexedDB schema
+
+Create `src/idb.ts` using the `idb` package. Define stores:
+
+- `device` — singleton record with `user_id`, `public_key` (base64), `private_key` (CryptoKey), `registered_at`
+- `feed_items` — `FeedItem` objects; indexes on `url_hash` (unique), `published_at`, `source`, `is_read`, `is_discovery`, `is_saved`
+- `sync_log` — append-only `SyncLogEntry` records; autoincrement key
+- `preferences` — key-value pairs
+
+Export `openDb(): Promise<IDBPDatabase<ScrolLessDB>>`.
+
+### Task 4.2: Device init hook
+
+Create `src/useDevice.ts`:
+
+```typescript
+export function useDevice(): {
+  userId: string | null;
+  publicKey: string | null;
+  privateKey: CryptoKey | null;
+  ready: boolean;
+};
+```
+
+On mount:
+1. Open IndexedDB
+2. Check for existing `device` record in the `device` store
+3. If none: `generateKeypair()` → create `dev_<crypto.randomUUID()>` → `POST /api/device/register` → store in IndexedDB
+4. If exists: return stored record (skip registration)
+
+### Task 4.3: Server — device registration endpoint
+
+In `server/api-routes.ts`:
+
+```
+POST /api/device/register
+Body: { public_key: string; device_id: string }
+```
+
+- Validate `device_id` starts with `dev_`
+- `INSERT OR IGNORE INTO device_registrations (user_id, public_key) VALUES (?, ?)`
+- Return `{ user_id, ok: true }`
+- No auth required (bootstrap endpoint — no token exists yet)
+
+### Task 4.4: Device auth middleware
+
+Create `server/middleware/device-auth.ts`:
+
+For `/api/*` routes in free tier, accept `X-Device-Id: dev_<uuid>` header and verify it exists in `device_registrations`. Set `request.userId`. Return 401 if not found.
+
+This is separate from agent auth (Stage 5) — used only for PWA endpoints.
+
+---
+
+## Stage 5: Agent Auth Middleware
+
+**Goal**: Shared auth for `/agent/*` and `/mcp` routes that resolves `userId` from Bearer token or OAuth access token.
+
+### Task 5.1: Auth middleware
+
+Create `server/middleware/agent-auth.ts`:
+
+```typescript
+export async function agentAuthMiddleware(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void>;
+```
+
+Two code paths:
+1. Extract Bearer token → `SHA-256(token)` → compare to `agent_tokens.token_hash` → set `request.userId`
+2. Look up `oauth_tokens.access_token` → check `access_expires > now` → set `request.userId`
+
+Return 401 if neither path succeeds. Update `agent_tokens.last_used` after successful auth (non-blocking fire-and-forget).
+
+### Task 5.2: Scoped plugin registration
+
+In `server/index.ts`, register rate-limit and agent auth on a scoped plugin so they **never** affect `/api/*`:
+
+```typescript
+await fastify.register(async (agentScope) => {
+  await agentScope.register(fastifyRateLimit, { max: 60, timeWindow: '1 hour' });
+  agentScope.addHook('onRequest', agentAuthMiddleware);
+  registerAgentRoutes(agentScope, db, sseManager);
+  registerMcpHandler(agentScope, db, sseManager);
+});
+```
+
+---
+
+## Stage 6: SSE Delivery Layer
+
+**Goal**: Server maintains a registry of active SSE connections keyed by `user_id` and can relay payloads to connected devices.
+
+### Task 6.1: SSE manager
+
+Create `server/sse-manager.ts`:
+
+```typescript
+export class SseManager {
+  register(userId: string, reply: FastifyReply): void;
+  remove(userId: string): void;
+  isOnline(userId: string): boolean;
+  send(userId: string, event: string, data: unknown): boolean;
+  keepalive(): void;
 }
 ```
 
-### Acceptance criteria
-- A request to `/agent/state` without a token returns 401
-- A request with an invalid token returns 401
-- A request with the correct token returns 200
-- `last_used` is updated on each successful auth
+Internals:
+- `Map<string, FastifyReply>` for active connections
+- `setInterval` every 30 s calling `keepalive()` which writes `: keepalive\n\n` to all open replies
+
+### Task 6.2: SSE endpoint
+
+In `server/api-routes.ts`:
+
+```
+GET /api/stream
+Auth: X-Device-Id header (device-auth middleware)
+```
+
+- Set response headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`
+- `sseManager.register(userId, reply)`
+- `UPDATE device_registrations SET last_seen = ? WHERE user_id = ?`
+- `request.raw.on('close', () => sseManager.remove(userId))`
+- Do not call `reply.send()` — keep the connection open
 
 ---
 
-## Stage 4: Agent Endpoints
+## Stage 7: Agent Relay Endpoints
 
-**Goal**: Implement the `/agent/*` routes that the scraping agent uses.
+**Goal**: Implement sync-context and feed-item relay endpoints with the correct SSE/503 semantics.
 
-### Task 4.1: POST /agent/feed-items
+### Task 7.1: GET /agent/sync-context
 
-Create `server/agent-routes.ts`:
-
-Accept `AgentFeedPayload` in the request body. For each item:
-1. Construct the internal `id`: `"${payload.source}:${item.source_id}"`
-2. Normalise the URL (using `normaliseUrl`)
-3. Hash the normalised URL
-4. Execute `INSERT OR IGNORE` into `feed_items` with `user_id` from the auth hook
-5. Track inserted vs duplicated counts
-
-After all inserts:
-- Insert a row into `sync_log` with the results
-- If any items were inserted, trigger push notifications (via a callback — push is wired in Stage 6)
-- Return `{ inserted, duplicates }`
-
-**Validation**:
-- `source` is required, non-empty string
-- `items` is required, must be an array
-- Each item must have `source_id`, `title`, `url`, `published_at`
-- `published_at` must be a valid ISO 8601 string
-- `tags` if present must be an array of strings
-- Return 400 with descriptive errors for invalid payloads
-
-**Rate limiting**: Apply `@fastify/rate-limit` to agent routes (default: 60 req/hour per token).
-
-### Task 4.2: GET /agent/sync-context
-
-Replace the old two-call workflow (`GET /agent/state` + `GET /agent/preferences`) with a single endpoint.
-
-Return everything an agent needs to plan a scraping run:
+Response shape:
 
 ```typescript
-// Response shape (see ARCHITECTURE.md for full definition)
 {
-  sources: [
-    {
-      name: "youtube",
-      enabled: true,
-      urls: ["https://www.youtube.com/feed/subscriptions"],
-      last_sync: "2026-03-28T10:00:00Z",  // MAX(published_at) from feed_items for this source
-      max_items: 20,
-      scraping_resource: "scrolless://platforms/youtube"
-    },
-    {
-      name: "x",
-      enabled: false   // no further fields when disabled
-    }
-  ],
+  encryption: {
+    public_key: string;             // base64 P-256 point from device_registrations
+    algorithm: 'ECIES-P256-AES256GCM';
+  };
+  sources: Array<{
+    name: string;
+    enabled: boolean;
+    urls?: string[];
+    last_sync?: string;
+    max_items?: number;
+    scraping_resource?: string;     // "scrolless://platforms/{name}"
+  }>;
   filters: {
-    blocked_keywords: ["sponsored"]   // from user_preferences
-  }
+    blocked_keywords: string[];
+  };
 }
 ```
 
-Implementation:
-- Join `user_sources` with a sub-query on `feed_items` to get `last_sync` per source
-- `max_items` comes from `user_sources.max_items` (falls back to `user_preferences.max_items_per_source` if NULL)
-- `scraping_resource` is always `scrolless://platforms/{name}`
-- Disabled sources appear in the array with only `name` and `enabled: false` — agents must skip them
-- `blocked_keywords` from `user_preferences` (never `blocked_sources` — that concept is gone)
+- Fetch `user_sources` for `userId` from DB
+- Fetch `device_registrations.public_key` for `userId` from DB
+- For disabled sources return only `{ name, enabled: false }`
+- `blocked_keywords` default is `[]`
 
-### Task 4.3: Data retention cleanup
+### Task 7.2: POST /agent/feed-items
 
-Create a function `cleanupOldItems(db, userId, retentionDays)`:
-- `DELETE FROM feed_items WHERE user_id = ? AND fetched_at < datetime('now', '-N days')`
-- `DELETE FROM sync_log WHERE synced_at < datetime('now', '-30 days')`
-- Return deleted counts, log result
+Request body:
 
-Schedule as a daily cron in `server/index.ts` (3:00 AM):
-- Read `retention_days` from `user_preferences` (default 7)
-- Call `cleanupOldItems()`
-
-### Task 4.4: Dedup verification
-
-Write a test or verification script that:
-1. POSTs a feed item with URL `https://www.youtube.com/watch?v=abc`
-2. POSTs another item with URL `https://youtu.be/abc?utm_source=twitter`
-3. Verifies `inserted: 1, duplicates: 1` on the second POST
-4. Verifies only one row in `feed_items`
-
-### Acceptance criteria
-- `POST /agent/feed-items` with valid payload returns `{ inserted: N, duplicates: M }`
-- Duplicate URLs (even with tracking params or short-link variants) are rejected
-- `GET /agent/sync-context` returns enabled sources with URLs, `last_sync`, `max_items`, `scraping_resource`, and a `filters` object with `blocked_keywords`
-- Disabled sources appear in the response with only `name` and `enabled: false`
-- `blocked_sources` does not appear anywhere in the response
-- Invalid payloads return 400 with clear error messages
-- Rate limiting kicks in after 60 requests/hour
-- Daily cleanup removes items older than retention period
-
----
-
-## Stage 5: PWA API Routes
-
-**Goal**: Expose the feed data to the frontend.
-
-### Task 5.1: Feed routes
-
-Create `server/api-routes.ts`:
-
-**`GET /api/feed`**
-- Query params: `limit` (default 50), `offset` (default 0), `source` (optional), `unread_only` (optional boolean), `discovery` (optional boolean)
-- All queries scoped to `user_id = 'local'`
-- Return `{ items, total, limit, offset }`
-- `items` excludes `raw_json` (select specific columns)
-- `tags` is returned as a parsed JSON array, not a raw string
-- Order by `published_at DESC`
-
-**`PATCH /api/feed/:id/read`**
-- URL-decode the `id` (contains colons)
-- Set `is_read = 1`
-- Return `{ ok: true/false }`
-
-**`PATCH /api/feed/:id/unread`**
-- Set `is_read = 0`
-
-**`POST /api/feed/mark-all-read`**
-- Optional query param: `source`
-- Set `is_read = 1` for all matching unread items
-
-**`GET /api/stats`**
-- Return `{ total, unread, by_source: [{ source, count, unread }] }`
-
-**`GET /api/sync/status`**
-- Return the most recent `sync_log` entry per source:
-```sql
-SELECT source, synced_at, items_added, items_duped, error
-FROM sync_log
-WHERE user_id = 'local'
-GROUP BY source
-HAVING synced_at = MAX(synced_at)
-```
-
-### Task 5.2: Source management routes
-
-Add CRUD endpoints for managing `user_sources` in `server/api-routes.ts`:
-
-**`GET /api/sources`**
-- Return all `user_sources` rows for `user_id = 'local'`
-- Parse `urls` from JSON string to array before returning
-
-**`POST /api/sources`**
-- Body: `{ name, urls: string[], max_items?, scraping_notes? }`
-- `name` must be non-empty, URL-safe string; reject duplicates with 409
-- `urls` must be a non-empty array of valid URL strings
-- Insert into `user_sources` with `enabled = 0`
-- Return the created row
-
-**`PATCH /api/sources/:name`**
-- Body may contain any subset of: `enabled`, `urls`, `max_items`, `scraping_notes`
-- Update only the provided fields
-- Return updated row
-
-**`DELETE /api/sources/:name`**
-- Delete the row
-- Return `{ ok: true }`
-
-### Task 5.3: Static file serving and CORS
-
-Register `@fastify/static` to serve `dist/client/` when the directory exists (used in self-hosted deployments and local production testing). Add a catch-all route serving `index.html` for non-`/api/`, non-`/agent/`, non-`/mcp`, and non-`/oauth/` paths (SPA fallback).
-
-Register `@fastify/cors` using the configured frontend origin:
-- Dev: `http://localhost:5173`
-- Split hosting: the `CORS_ORIGIN` environment variable (e.g. `https://yourapp.vercel.app`)
-- Self-hosted (combined): CORS is not required since frontend and backend share the same origin
-
-### Task 5.4: Wire Fastify into entry point
-
-Update `server/index.ts`:
-- Create Fastify instance
-- Register agent routes (with auth hook + rate limiting)
-- Register API routes
-- Register static file serving
-- Listen on `127.0.0.1:3333`
-
-### Acceptance criteria
-- `curl http://localhost:3333/api/feed` returns feed items (after agent has posted some)
-- Source filtering, unread filtering, and discovery filtering work
-- Read/unread toggling works
-- `GET /api/sync/status` returns last sync per source
-- `GET /api/stats` returns correct counts
-- `GET /api/sources` returns the three seeded default sources
-- PATCH can toggle `enabled` and update `urls` on a source
-- DELETE removes a source; subsequent GET does not include it
-
----
-
-## Stage 6: Web Push Notifications
-
-**Goal**: Implement push subscription management and notification sending.
-
-### Task 6.1: Push routes
-
-Add to `server/api-routes.ts`:
-
-**`GET /api/push/vapid-key`**
-- Return `{ key: config.push.vapid_public_key }`
-
-**`POST /api/push/subscribe`**
-- Body: `{ endpoint, keys: { p256dh, auth } }`
-- `INSERT OR REPLACE` into `push_subscriptions` (endpoint is unique)
-- Return `{ ok: true }`
-
-**`POST /api/push/unsubscribe`**
-- Body: `{ endpoint }`
-- Delete matching row
-- Return `{ ok: true }`
-
-### Task 6.2: Push sender module
-
-Create `server/push.ts`:
-
-**`initPush(config): void`**
-- Call `webPush.setVapidDetails(subject, publicKey, privateKey)`
-
-**`notifyNewItems(db, userId, source, count, latestTitle?): Promise<void>`**
-- Load push subscriptions for this user
-- Build payload: `{ title: "${count} new from ${source}", body: "Latest: ${title}", source, count, url: "/" }`
-- For each subscription: `webPush.sendNotification()`
-- On 410 response: delete stale subscription
-- On other errors: log and continue
-
-### Task 6.3: Wire push into agent route
-
-Update `POST /agent/feed-items` in `server/agent-routes.ts`:
-- After inserting items, if `inserted > 0`:
-  - Query the title of the most recently published inserted item
-  - Call `notifyNewItems(db, userId, source, inserted, latestTitle)`
-
-Update `server/index.ts`:
-- Call `initPush(config)` at startup
-
-### Acceptance criteria
-- `GET /api/push/vapid-key` returns the public key
-- Subscribing and unsubscribing works
-- After a successful `POST /agent/feed-items` that inserts items, push notifications are sent
-- Stale subscriptions (410) are cleaned up
-
----
-
-## Stage 7: Frontend — PWA Feed UI
-
-**Goal**: Build the Preact PWA with source filtering, read/unread, and push notification setup.
-
-### Task 7.1: PWA manifest and icons
-
-Create `src/manifest.json` with name, icons (192x192, 512x512), `display: standalone`, theme colour.
-
-Generate placeholder icon PNGs. Update `src/index.html` with manifest link, theme-color meta, viewport meta.
-
-### Task 7.2: API client
-
-Create `src/api.ts` — typed fetch wrappers for all `/api/*` endpoints.
-
-Prefix all request paths with `import.meta.env.VITE_API_BASE_URL` (defaults to `''` so relative paths work in self-hosted mode):
-
-```typescript
-const BASE = import.meta.env.VITE_API_BASE_URL ?? '';
-// e.g. fetch(`${BASE}/api/feed`)
-```
-
-In split hosting, Vercel sets `VITE_API_BASE_URL=https://yourapp.onrender.com` at build time so all API calls go to the Render backend.
-
-### Task 7.3: App shell
-
-Create `src/app.tsx`:
-- Layout: header → notification prompt → source filter → feed list
-- State: source filter, discovery toggle, feed items, loading
-- Fetch on mount and on filter change
-
-### Task 7.4: Source filter tabs
-
-Create `src/components/source-filter.tsx`:
-- Tabs: All | YouTube | X | News (with unread counts from `getStats()`)
-- Toggle or sub-tab: Feed vs Discovery (filters `is_discovery`)
-- "Mark all read" button scoped to current filter
-
-### Task 7.5: Feed list
-
-Create `src/components/feed-list.tsx`:
-- Routes items to source-specific card components based on `item.source`
-- "Load more" button (offset pagination)
-- Loading spinner, empty state
-
-### Task 7.6: Source-specific cards
-
-Create `src/components/youtube-card.tsx`, `x-card.tsx`, `news-card.tsx`:
-
-Each card has expand/collapse state:
-- **YouTube**: Collapsed = thumbnail + title + channel + timestamp. Expanded = larger thumbnail + full title + link.
-- **X**: Collapsed = @handle + text preview + timestamp. Expanded = full text + link.
-- **News**: Collapsed = headline + source + timestamp. Expanded = thumbnail + excerpt + link.
-
-Shared: `useExpandable(id, isRead, markReadFn)` hook. Expanding marks as read.
-
-### Task 7.7: Sync status
-
-Create `src/components/sync-status.tsx`:
-- Polls `GET /api/sync/status` every 60s
-- Shows relative time since last sync
-- Error indicator if any source has an error
-
-### Task 7.8: Notification prompt
-
-Create `src/components/notification-prompt.tsx`:
-- Check push support + current permission state
-- Show banner if not yet asked
-- "Enable" → request permission → subscribe → POST to server
-- "Not now" → dismiss, remember in localStorage
-- If granted: show "Notifications: On" with disable toggle
-
-### Task 7.9: Settings screen
-
-Create `src/settings.tsx` — the `/settings` route:
-
-**`SourceList` component** (`src/components/source-list.tsx`):
-- Fetches `GET /api/sources` on mount
-- Renders a card per source showing: name, enabled toggle, URL list (editable), max_items override
-- Toggle calls `PATCH /api/sources/:name` with `{ enabled: 0|1 }`
-- URL edits call `PATCH /api/sources/:name` with `{ urls: [...] }`
-- Delete button calls `DELETE /api/sources/:name` (with confirmation)
-
-**`AddSourceForm` component** (`src/components/add-source-form.tsx`):
-- Fields: name (text), urls (textarea, one URL per line), optional max_items
-- Submits `POST /api/sources`
-- Validation: name required, at least one valid URL
-
-Refer to `docs/DESIGN_SYSTEM.md` for the Settings screen layout, card patterns, and form styles.
-
-### Task 7.10: Service worker (placeholder)
-
-Create `src/sw.ts` with minimal push handler (will be fleshed out in Stage 8). Register in `src/main.tsx`. Configure Vite to output `sw.js` at the root of `dist/client/`.
-
-### Task 7.11: Styling
-
-Single `src/styles.css`:
-- CSS custom properties for theming
-- Mobile-first responsive layout
-- Dark mode via `prefers-color-scheme`
-- Source-specific accent colours on cards
-- Unread items visually distinct (left border, bold title)
-
-### Acceptance criteria
-- Feed displays with source filtering and discovery toggle
-- Cards expand/collapse with source-appropriate layouts
-- Read/unread toggling works visually and persists
-- "Mark all read" works
-- Notification prompt appears, permission flow works
-- PWA manifest is served correctly
-- Settings screen renders the source list; toggling enabled and editing URLs persists via the API
-- AddSourceForm creates a new source; it appears in the list immediately
-
----
-
-## Stage 8: Service Worker + Offline
-
-**Goal**: Complete the service worker with push event handling and offline app shell caching.
-
-### Task 8.1: Push event handler
-
-In `src/sw.ts`:
-
-```typescript
-self.addEventListener('push', (event) => {
-  const payload = event.data?.json();
-  event.waitUntil(
-    self.registration.showNotification(payload.title, {
-      body: payload.body,
-      icon: '/icons/icon-192.png',
-      tag: `feed-${payload.source}`,
-      data: { url: payload.url }
-    })
-  );
-});
-```
-
-### Task 8.2: Notification click handler
-
-```typescript
-self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
-  event.waitUntil(
-    clients.matchAll({ type: 'window' }).then((windowClients) => {
-      for (const client of windowClients) {
-        if ('focus' in client) return client.focus();
-      }
-      return clients.openWindow(event.notification.data?.url || '/');
-    })
-  );
-});
-```
-
-### Task 8.3: Offline caching
-
-Cache app shell on install. Serve cached shell for navigation requests. Pass `/api/*` and `/agent/*` through to network.
-
-### Task 8.4: Service worker build
-
-Ensure `sw.ts` compiles to `dist/client/sw.js` at the root (not hashed, not nested). Use a Vite plugin or separate esbuild step.
-
-### Acceptance criteria
-- Push notifications display when agent posts new items
-- Tapping notification opens/focuses the PWA
-- App shell loads instantly from cache even on slow connections
-- API requests are not cached (always fetch from network)
-
----
-
-## Stage 9: MCP Server
-
-**Goal**: Expose the agent interface as a Remote MCP server so AI agent runtimes (Claude Code, Claude Desktop, LangChain, etc.) can connect directly.
-
-### Task 9.1: Install MCP SDK
-
-Add `@modelcontextprotocol/sdk` to `package.json` runtime dependencies.
-
-### Task 9.2: MCP server module
-
-Create `server/mcp.ts`. Use `@modelcontextprotocol/sdk` with the Streamable HTTP transport, mounted at `/mcp`.
-
-Apply the same Bearer/OAuth auth middleware as `/agent/*`. Agents authenticate with the same token — the MCP layer is just another interface to the same business logic.
-
-### Task 9.3: Tool — get_sync_context
-
-Register a `get_sync_context` tool (no input arguments).
-
-Implementation: call the same logic as `GET /agent/sync-context` (extract to a shared function so both routes use it). Return the `AgentSyncContext` object.
-
-### Task 9.4: Tool — submit_items
-
-Register a `submit_items` tool with input schema:
 ```typescript
 {
   source: string;
+  ephemeral_public_key: string;
+  items: Array<{
+    source_id: string;
+    url: string;
+    published_at: string;
+    is_discovery?: boolean;
+    encrypted_fields: string;
+  }>;
+}
+```
+
+Relay logic:
+
+**Device online** (`sseManager.isOnline(userId) === true`):
+1. `sseManager.send(userId, 'feed_items', body)` — relay full payload as-is
+2. `INSERT INTO sync_attempts (..., status) VALUES (..., 'relayed')`
+3. `UPDATE user_sources SET last_sync_at = ? WHERE user_id = ? AND name = ?`
+4. Return `200 { relayed: items.length }`
+
+**Device offline**:
+1. `INSERT INTO sync_attempts (..., status) VALUES (..., 'device_offline')`
+2. Call `sendPush(...)` non-blocking (Stage 8)
+3. **Do not** update `last_sync_at`
+4. Return `503 { "error": "device_offline" }`
+
+### Task 7.3: GET /api/sync/status
+
+```typescript
+// Response
+{
+  missed: Array<{
+    source: string;
+    attempted_at: string;
+    status: 'device_offline' | 'error';
+    item_count: number;
+  }>;
+  next_sync_estimate: string | null;
+}
+```
+
+- Query `sync_attempts` for `userId` in the last 24 h where `status != 'relayed'`
+- Estimate next sync by computing the average interval between `relayed` rows, adding it to the most recent `attempted_at`
+
+---
+
+## Stage 8: Web Push
+
+**Goal**: Send a push notification when the agent POSTs and the device is offline.
+
+### Task 8.1: VAPID setup
+
+Load `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_EMAIL` from `config.json` / environment. Generate defaults on first run and persist to `config.json`.
+
+Call `webpush.setVapidDetails(...)` during server startup.
+
+### Task 8.2: Push helper
+
+Create `server/push.ts`:
+
+```typescript
+export async function sendPush(
+  db: Database,
+  userId: string,
+  payload: { title: string; body: string; source: string; count: number },
+): Promise<void>;
+```
+
+- Query all `push_subscriptions` for `userId`
+- Call `webpush.sendNotification()` for each
+- On 410 Gone: delete the subscription
+- Errors are non-fatal — log and continue
+
+One notification per agent POST, grouped by source:
+
+```json
+{
+  "title": "5 new items from YouTube",
+  "body": "Your feed updated while you were away.",
+  "source": "youtube",
+  "count": 5
+}
+```
+
+### Task 8.3: Push API endpoints
+
+```
+GET  /api/push/vapid-key    → { publicKey: config.vapidPublicKey }
+POST /api/push/subscribe    → upsert into push_subscriptions
+POST /api/push/unsubscribe  → delete from push_subscriptions by endpoint
+```
+
+---
+
+## Stage 9: Service Worker + IndexedDB Writes
+
+**Goal**: Service worker handles push events and offline caching. SSE events decrypt and persist to IndexedDB.
+
+### Task 9.1: Service worker (src/sw.ts)
+
+Push event handler:
+
+```typescript
+self.addEventListener('push', (event) => {
+  const data = event.data?.json();
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: '/icons/icon-192.png',
+      data: { url: '/' },
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(clients.openWindow(event.notification.data.url));
+});
+```
+
+App shell caching:
+- Cache `index.html`, CSS, JS chunks on `install`
+- Serve from cache for navigation requests
+- Pass API requests through to network (no caching)
+
+Build output: `public/sw.js` (no content hash). Register in the app:
+
+```typescript
+navigator.serviceWorker.register('/sw.js');
+```
+
+### Task 9.2: SSE → IndexedDB pipeline
+
+Create `src/useFeed.ts`:
+
+```typescript
+export function useFeed(): { items: FeedItem[]; loading: boolean };
+```
+
+On mount:
+1. Load existing items from IndexedDB sorted by `published_at DESC`
+2. Open `EventSource('/api/stream', { withCredentials: true })`
+3. On `feed_items` event:
+   a. Parse JSON
+   b. For each item: `decryptFields(item.encrypted_fields, payload.ephemeral_public_key, devicePrivateKey)`
+   c. `url_hash = await hashUrl(item.url)`
+   d. Check IndexedDB for existing `url_hash` — skip if present
+   e. Build `FeedItem` and `put` into IndexedDB
+   f. Update reactive state
+4. On `close` / `error`: exponential backoff reconnect (cap at 30 s)
+
+### Task 9.3: Retention cleanup
+
+Create `src/retention.ts`:
+
+```typescript
+export async function runRetentionCleanup(retentionDays: number): Promise<void>;
+```
+
+Deletes `feed_items` from IndexedDB where `fetched_at < now - retentionDays`. Call once on app boot.
+
+---
+
+## Stage 10: PWA Data Layer
+
+**Goal**: Typed hooks that expose feed data from IndexedDB. No API calls for content reads.
+
+### Task 10.1: useFeedItems
+
+```typescript
+export function useFeedItems(filter: {
+  source?: string;
+  is_discovery?: boolean;
+  is_saved?: boolean;
+}): FeedItem[];
+```
+
+Reads from IndexedDB using the appropriate index. Returns items sorted by `published_at DESC`.
+
+### Task 10.2: useUnreadCounts
+
+```typescript
+export function useUnreadCounts(): Record<string, number>;
+// { all: 12, youtube: 8, x: 3, news: 1 }
+```
+
+### Task 10.3: Item mutations
+
+```typescript
+export async function markRead(id: string): Promise<void>;
+export async function markUnread(id: string): Promise<void>;
+export async function markAllRead(source?: string): Promise<void>;
+export async function toggleSaved(id: string): Promise<void>;
+```
+
+All mutations write to IndexedDB and trigger reactive re-renders via Preact signals or context.
+
+### Task 10.4: usePreferences
+
+```typescript
+export function usePreferences(): {
+  prefs: Preferences;
+  set: (key: string, value: unknown) => Promise<void>;
+};
+```
+
+Reads/writes the `preferences` store in IndexedDB. Default values:
+
+| Key | Default |
+|---|---|
+| `blocked_keywords` | `[]` |
+| `max_items_per_source` | `50` |
+| `retention_days` | `7` |
+| `notif_prompt_dismissed` | `false` |
+
+### Task 10.5: useSyncStatus
+
+```typescript
+export function useSyncStatus(): {
+  missed: MissedSync[];
+  nextEstimate: string | null;
+};
+```
+
+Fetches `GET /api/sync/status` on mount. Used by the missed-sync banner.
+
+---
+
+## Stage 11: Feed UI
+
+**Goal**: Full feed UI — source filter tabs, feed/discovery sub-tabs, item cards, read/save actions.
+
+### Task 11.1: App shell + router
+
+Create `src/App.tsx` using `preact-iso`:
+
+```typescript
+import { Router, Route } from 'preact-iso';
+
+export function App() {
+  return (
+    <Router>
+      <Route path="/" component={FeedView} />
+      <Route path="/discover" component={FeedView} />
+      <Route path="/saved" component={SavedView} />
+      <Route path="/settings" component={SettingsView} />
+      <Route default component={NotFound} />
+    </Router>
+  );
+}
+```
+
+Use hash-based navigation (`/#/`, `/#/settings`, etc.).
+
+### Task 11.2: DeviceInit gate
+
+Wrap `<App>` in `<DeviceInit>` that renders a loading spinner until `useDevice().ready === true`. Show an error state with a retry button if registration fails.
+
+### Task 11.3: MissedSyncBanner
+
+Renders conditionally when `useSyncStatus().missed.length > 0`.
+
+Example copy: _"Feed tried to refresh at 6:00pm but your device was unreachable. Next refresh at 7:30pm."_
+
+Dismiss button clears local state for the session. Format times in local timezone.
+
+### Task 11.4: SourceFilter tabs
+
+Tabs: `All | YouTube | X | News`. Each shows the unread count badge from `useUnreadCounts`. Selecting a tab filters `useFeedItems`. Sub-tabs `Feed | Discovery` toggle `is_discovery`.
+
+Source display names are mapped via:
+
+```typescript
+const SOURCE_LABELS: Record<string, string> = {
+  youtube: 'YouTube',
+  x: 'X',
+  news: 'News',
+};
+```
+
+### Task 11.5: FeedList + cards
+
+Render the appropriate card per `item.source`:
+- `YouTubeCard` — thumbnail, title, channel name, relative age, read/save actions
+- `XCard` — author, preview text, relative age, read/save actions
+- `NewsCard` — headline, source label, thumbnail, relative age, read/save actions
+
+Cards follow design tokens from `DESIGN_SYSTEM.md`. Read items have reduced opacity. Tapping a card marks it read and calls the platform URL. Bookmark icon calls `toggleSaved(item.id)`.
+
+### Task 11.6: SyncStatus bar
+
+Shows "Last synced N min ago" from the most recent `sync_log` entry in IndexedDB. Shows an error badge if the most recent `sync_attempts` from `useSyncStatus` has `status = 'device_offline'`.
+
+### Task 11.7: NotificationPrompt
+
+One-time in-app banner:
+- Show if `Notification.permission === 'default'` and `notif_prompt_dismissed !== true`
+- On accept: `Notification.requestPermission()` → subscribe → `POST /api/push/subscribe`
+- On dismiss: set `notif_prompt_dismissed = true` in preferences
+
+---
+
+## Stage 12: Settings + Source Management
+
+**Goal**: Settings view with source management, agent tokens, and danger zone.
+
+### Task 12.1: SourceList
+
+One card per `user_source` from `GET /api/sources`. Each card:
+- Source name (via `SOURCE_LABELS`) with enabled/disabled toggle
+- URL list (editable inline, one URL per line)
+- `PATCH /api/sources/:name` on change (debounced 500 ms)
+- Delete button → `DELETE /api/sources/:name` with confirmation
+
+### Task 12.2: AddSourceForm
+
+Fields: `name` (text), `urls` (textarea — one URL per line), `scraping_notes` (optional textarea).
+
+Validation runs only after first submit attempt or on field blur — never on mount. On submit: `POST /api/sources`. On success: close form and refresh `SourceList`.
+
+### Task 12.3: AgentTokens
+
+```
+GET    /api/agent-tokens       → list { id, label, created_at, last_used }
+POST   /api/agent-tokens       → { label } → { token (shown once), id }
+DELETE /api/agent-tokens/:id   → revoke
+```
+
+On create: display the plaintext token in a modal with a "Copy" button and a note that it will not be shown again.
+
+### Task 12.4: DangerZone
+
+"Delete all local data" button:
+1. Clear IndexedDB stores (`feed_items`, `sync_log`, `preferences`)
+2. `DELETE /api/device` — unregister device on server
+3. Reload page (triggers fresh device registration on next boot)
+
+---
+
+## Stage 13: MCP Server
+
+**Goal**: MCP server at `/mcp` wrapping the same relay logic as the REST agent routes.
+
+### Task 13.1: Tool — get_sync_context
+
+Wraps `GET /agent/sync-context` logic. No arguments. Returns sources, encryption key, filters.
+
+### Task 13.2: Tool — submit_items
+
+Arguments:
+
+```typescript
+{
+  source: string;
+  ephemeral_public_key: string;
   items: AgentFeedItem[];
 }
 ```
 
-Implementation: call the same logic as `POST /agent/feed-items`. Return `{ inserted, duplicates }`.
+Response: `{ relayed: number; offline: boolean }`. Wraps the SSE relay / 503 logic from Stage 7.2.
 
-### Task 9.5: Resources — platform scraping instructions
+### Task 13.3: Resources
 
-Register a resource provider for the `scrolless://platforms/{name}` URI scheme.
+Serve `skill/resources/{name}.md` as MCP resources at `scrolless://platforms/{name}`. For custom sources, merge `user_sources.scraping_notes` into the response body.
 
-- Read content from `skill/resources/{name}.md`
-- If the source has `scraping_notes` in `user_sources`, append them to the file content
-- If no file exists for `{name}`, return a generic extraction prompt
-- Return as MIME type `text/markdown`
+### Task 13.4: Prompt — run_feed_sync
 
-This allows agents to fetch per-platform instructions at runtime without any local files.
+Prompt template that instructs the agent to:
+1. Call `get_sync_context`
+2. For each enabled source: fetch `scraping_resource`, scrape, encrypt fields (ECIES), call `submit_items`
+3. Log results
 
-### Task 9.6: Prompt — run_feed_sync
+Include encryption instructions inline in the prompt — the agent must encrypt before calling `submit_items`.
 
-Register a `run_feed_sync` prompt template with no arguments:
+### Task 13.5: Register MCP handler
 
-```
-Call get_sync_context to get your work order.
-For each source where enabled is true:
-  1. Fetch the scraping_resource to get platform-specific instructions
-  2. Navigate to each URL in urls[]
-  3. Extract items published after last_sync
-  4. Skip any item whose title or content contains a blocked_keyword
-  5. Collect up to max_items items
-  6. Call submit_items with the batch
-Log the inserted/duplicates counts. If a source fails, continue to the next.
-```
-
-### Task 9.7: Wire MCP into server
-
-Register the MCP handler in `server/index.ts` at `/mcp`.
-
-### Acceptance criteria
-- An MCP client can connect to `http://localhost:3333/mcp` using a Bearer token
-- `get_sync_context` returns the correct structure
-- `submit_items` inserts items and triggers push notifications (same as REST POST)
-- `scrolless://platforms/youtube` returns the content of `skill/resources/youtube.md`
-- `run_feed_sync` prompt is listed and returns the correct template text
-- Unauthenticated requests return 401
+In `server/mcp.ts`, use `@modelcontextprotocol/sdk` Streamable HTTP transport. Mount at `/mcp`. The scoped Fastify plugin from Stage 5.2 applies rate-limit and agent auth automatically.
 
 ---
 
-## Stage 10: OAuth 2.0
+## Stage 14: OAuth 2.0
 
-**Goal**: Add Authorization Code + PKCE flow so Claude connector and third-party MCP clients can authenticate without a pre-shared token.
+**Goal**: Authorization Code flow with PKCE for Claude connector and third-party MCP clients.
 
-### Task 10.1: OAuth routes module
+### Task 14.1: Endpoints
 
-Create `server/oauth-routes.ts`. These routes are public (no auth middleware on the routes themselves — the endpoints implement the OAuth protocol).
+```
+GET  /oauth/authorize
+POST /oauth/token
+POST /oauth/revoke
+GET  /oauth/.well-known/oauth-authorization-server
+```
 
-**`GET /oauth/.well-known/oauth-authorization-server`**
-- Return server metadata: `issuer`, `authorization_endpoint`, `token_endpoint`, `revocation_endpoint`, `response_types_supported`, `code_challenge_methods_supported`
+### Task 14.2: Authorize endpoint
 
-**`GET /oauth/authorize`**
-- Query params: `client_id`, `redirect_uri`, `response_type=code`, `code_challenge`, `code_challenge_method=S256`, `state`
-- Validate `client_id` against `oauth_clients` in config
-- Validate `redirect_uri` against registered URIs
-- Show a consent screen (can be minimal for PoC — HTML form with "Allow" button)
-- On approval: generate a random auth code, store in `oauth_auth_codes` with 10-minute expiry, redirect to `redirect_uri?code=CODE&state=STATE`
+- Validate `client_id`, `redirect_uri` against `oauth_clients`
+- Show an HTML consent screen
+- On user approval: generate 32-byte hex auth code, store in `oauth_auth_codes` with 10 min expiry
+- Redirect to `redirect_uri?code=CODE&state=STATE`
 
-**`POST /oauth/token`**
-- Body: `grant_type`, `code`, `redirect_uri`, `code_verifier` (for authorization_code) or `refresh_token` (for refresh)
-- For `authorization_code`: verify code exists, not expired, PKCE challenge matches (`SHA-256(code_verifier) == code_challenge`)
-- Issue access token (random 32-byte hex, 1-hour expiry) and refresh token
-- Store in `oauth_tokens`
-- Delete used auth code
-- Return `{ access_token, token_type: "Bearer", expires_in: 3600, refresh_token }`
+### Task 14.3: Token endpoint
 
-**`POST /oauth/revoke`**
-- Body: `token` (access or refresh token)
-- Delete matching row from `oauth_tokens`
-- Return 200 (always, per RFC 7009)
+- `grant_type: 'authorization_code'`: verify code, verify PKCE S256 challenge, issue access + refresh tokens stored in `oauth_tokens`
+- `grant_type: 'refresh_token'`: verify refresh token not expired, issue new access token
+- Access token expiry: 1 h. Refresh token expiry: 30 days.
 
-### Task 10.2: Extend auth middleware
+### Task 14.4: Revoke and cleanup
 
-Update the auth middleware in `server/auth.ts` to accept both token types:
-
-1. Try Bearer token path: hash incoming token, look up in `agent_tokens`
-2. If not found, try OAuth path: look up raw token in `oauth_tokens`, check `access_expires`
-3. Return resolved `userId` from whichever path succeeds
-4. If both fail: return 401
-
-Existing Bearer token agents must continue working unchanged.
-
-### Task 10.3: Client registration
-
-Read OAuth client registrations from `config.json` at startup and seed `oauth_clients` table. See ARCHITECTURE.md for the `config.json` shape.
-
-### Task 10.4: Cleanup
-
-Extend the daily cron to also delete:
-- `oauth_auth_codes` where `expires_at < now`
-- `oauth_tokens` where `access_expires < now` and no valid `refresh_expires`
-
-### Acceptance criteria
-- Claude connector OAuth flow completes end-to-end (authorize → token exchange → MCP request with access token)
-- Refresh token exchange works
-- Revocation invalidates the token immediately
-- Expired tokens return 401 with `WWW-Authenticate: Bearer error="invalid_token"`
-- Bearer token agents are unaffected — existing tokens still work
-- `GET /oauth/.well-known/oauth-authorization-server` returns valid metadata
+- `POST /oauth/revoke`: delete row from `oauth_tokens` by access or refresh token
+- Daily cleanup (schedule on server `ready` hook):
+  - `DELETE FROM oauth_auth_codes WHERE expires_at < datetime('now')`
+  - `DELETE FROM oauth_tokens WHERE access_expires < datetime('now') AND (refresh_expires IS NULL OR refresh_expires < datetime('now'))`
+  - `DELETE FROM sync_attempts WHERE attempted_at < datetime('now', '-30 days')`
 
 ---
 
-## Stage 11: Agent Skill
+## Stage 15: Agent Skill (with Encryption)
 
-**Goal**: Write the scraping skill instructions for Claude Code / Cowork agents.
+**Goal**: Write `skill/SKILL.md` documenting the REST-based workflow for non-MCP agents, including ECIES encryption instructions.
 
-### Task 11.1: Skill main instructions
+### Task 15.1: SKILL.md
 
-Update `skill/SKILL.md` to document the MCP-first workflow:
+Document the complete workflow:
+1. `GET /agent/sync-context` → receive sources and `encryption.public_key`
+2. For each enabled source: navigate to URLs, extract items per `scraping_resource` instructions
+3. For each item, perform ECIES-P256-AES256GCM encryption:
+   - Generate ephemeral P-256 keypair
+   - ECDH with device public key from sync context
+   - HKDF-SHA256(`shared_secret`, salt=`scrolless-v1`) → 256-bit AES key
+   - AES-256-GCM encrypt JSON `{ title, author, content_preview, thumbnail_url, tags }`
+   - `encrypted_fields = base64(iv[12] || ciphertext || authTag[16])`
+4. `POST /agent/feed-items` with encrypted payload
+5. Handle responses:
+   - `200` — items relayed
+   - `503 { "error": "device_offline" }` — device not connected; retry next scheduled run
+   - `401` — invalid token; stop and alert user
+   - `429` — rate limited; stop and wait for next run
 
-1. **Primary path**: Agent connects to the ScrolLess MCP server and invokes the `run_feed_sync` prompt. That prompt contains the full workflow — no other instructions needed.
-2. **Expanded MCP steps** (for agents that need explicit steps): call `get_sync_context`, read each source's `scraping_resource`, scrape, call `submit_items`.
-3. **REST fallback** (non-MCP clients): `GET /agent/sync-context` for context, `POST /agent/feed-items` to submit.
+Include pseudocode for the encryption step. Note: sending plaintext is a protocol violation.
 
-Do **not** include references to local `config.json` for platform settings — sources come from `get_sync_context`. Do **not** include references to `blocked_sources`.
+### Task 15.2: Per-platform resources
 
-### Task 11.2: Platform resource files
-
-Create `skill/resources/youtube.md`, `skill/resources/x.md`, `skill/resources/news.md`.
-
-These files are served as MCP resources at `scrolless://platforms/{name}`. Each file provides:
-1. Target URL(s) to navigate
-2. Extraction guidance (described semantically — not selectors)
+Ensure `skill/resources/youtube.md`, `skill/resources/x.md`, and `skill/resources/news.md` exist and each document:
+1. Target URLs
+2. Extraction guidance (semantic descriptions for AI agents, not CSS selectors)
 3. Pagination instructions
 4. Edge cases to skip
-5. Field mapping to `AgentFeedItem`
-
-**`skill/resources/youtube.md`**:
-- Navigate to `https://www.youtube.com/feed/subscriptions`
-- Requires the user to be logged into YouTube in Chrome
-- Extract: video title, channel name, video URL, publish timestamp, thumbnail URL
-- `source_id` = video ID from the `v=` parameter
-- Skip: YouTube Shorts (`/shorts/` in URL), ads, unaired premieres
-- `is_discovery: false`
-
-**`skill/resources/x.md`**:
-- Navigate to `https://x.com/home` (Following tab, not For You)
-- Requires the user to be logged into X in Chrome
-- Extract: author handle, display name, tweet text, tweet URL, publish timestamp
-- `source_id` = tweet ID from URL
-- Skip: ads/promoted tweets, retweets (unless quote tweets), Spaces
-- `is_discovery: false`
-
-**`skill/resources/news.md`**:
-- Navigate to each URL provided in the source's `urls[]`
-- No login required for public news sites
-- Extract: article title, publication name, article URL, publish timestamp
-- `source_id` = SHA-256 of the article URL
-- Handle different site layouts semantically
-- `is_discovery: false`
-
-### Task 11.3: Payload schema
-
-Create `skill/schema.json` — a JSON Schema document describing the `AgentFeedItem` payload. Agents can reference this to validate output before submitting.
-
-### Acceptance criteria
-- `skill/SKILL.md` clearly describes MCP-first workflow with REST fallback
-- No references to local `config.json` platform settings or `blocked_sources`
-- `skill/resources/` contains files for youtube, x, and news
-- An agent reading the files can execute a full sync run against a live server
+5. Field mapping to encrypted `AgentFeedItem` schema
 
 ---
 
-## Stage 12: Skill Evaluation
+## Stage 16: Skill Evaluation
 
-**Goal**: Validate that the skill reliably populates the feed across platforms and error conditions.
+**Goal**: Automated tests verifying that the agent skill produces valid, correctly encrypted payloads and that the server relay semantics are correct.
 
-### Task 12.1: Dry run mode
+### Task 16.1: Online relay test
 
-Add a `--dry-run` flag to the skill instructions:
-- When enabled, the agent writes extracted items to a local `dry-run-output.json` file instead of submitting
-- Inspect the output: are all fields present? Are timestamps valid ISO 8601? Are URLs valid?
+Create `e2e/eval-skill.ts`:
+1. Start the server on a test port with a test device registered
+2. Open a test SSE connection as the device
+3. Simulate an agent: `GET /agent/sync-context` → construct ECIES-encrypted payload → `POST /agent/feed-items`
+4. Assert server returns `200 { relayed: N }`
+5. Assert SSE event received contains the original payload unmodified (server relayed without decrypting)
+6. Decrypt on the test device private key → assert plaintext matches
 
-### Task 12.2: MCP smoke test
+### Task 16.2: Offline relay test
 
-- Connect an MCP client to `http://localhost:3333/mcp` using a Bearer token
-- Call `get_sync_context` — verify it returns enabled sources with the expected structure
-- Call `submit_items` with a sample YouTube item — verify `inserted: 1`
-- Call `submit_items` again with the same item — verify `duplicates: 1`
-- Fetch resource `scrolless://platforms/youtube` — verify it returns the instruction markdown
-
-### Task 12.3: Single-source end-to-end test
-
-- Enable YouTube in the Settings screen (`PATCH /api/sources/youtube` with `enabled: 1`)
-- Run the `run_feed_sync` prompt via MCP (or REST fallback)
-- Verify: items appear in `GET /api/feed?source=youtube`
-- Run again: verify no duplicates (dedup working)
-- Verify: push notification was received
-
-### Task 12.4: Multi-source test
-
-- Enable YouTube + news
-- Run the skill
-- Verify: both sources appear in the feed
-- Verify: source filter tabs show correct counts
-- Verify: `GET /agent/sync-context` shows both sources with correct `last_sync` timestamps
-
-### Task 12.5: Keyword filter test
-
-- Add a blocked keyword to preferences (e.g. "sponsored")
-- Run the skill
-- Verify: items containing the keyword are not submitted
-
-### Task 12.6: Failure recovery test
-
-- Run the skill targeting a source that requires a login the agent doesn't have
-- Verify: the agent logs the error and continues to the next source
-- Verify: `sync_log` shows the error for that source
-- Verify: other sources still populated correctly
-
-### Task 12.7: Freshness test
-
-- Let the skill run on its scheduled cadence for 24+ hours
-- Verify: new items appear in each sync
-- Verify: no duplicate items accumulate
-- Verify: the 7-day cleanup removes old items
-- Verify: push notifications continue to arrive for new content
-
-### Acceptance criteria
-- MCP tools and resources respond correctly
-- End-to-end sync populates the feed reliably
-- Keyword filtering works
-- Errors are logged, not silent
-- Dedup and cleanup work over time
+Repeat without an active SSE connection:
+- Assert server returns `503 { "error": "device_offline" }`
+- Assert `sync_attempts` row inserted with `status = 'device_offline'`
+- Assert `last_sync_at` on `user_sources` is unchanged
 
 ---
 
-## Stage 13: Production Build & Deployment
+## Stage 17: Production Build
 
-**Goal**: Make the app deployable for daily use.
+**Goal**: Build the production artefact and smoke-test it.
 
-### Task 13.1: Production server
+### Task 17.1: Production build
 
-Two valid production configurations:
-
-**Split hosting (Vercel + Render)**: `npm start` on Render serves only the backend routes. The frontend is built and deployed to Vercel separately. Verify:
-- `/api/*`, `/agent/*`, `/mcp`, `/oauth/*` respond correctly from the Render URL
-- `CORS_ORIGIN` is set to the Vercel app URL so browser requests are accepted
-
-**Self-hosted (combined)**: `npm run build && npm start` serves both frontend and backend from the same process. Verify:
-- All API routes on `/api/*`
-- Agent routes on `/agent/*` (with auth)
-- MCP endpoint at `/mcp` (with auth)
-- OAuth endpoints at `/oauth/*`
-- Built frontend at `/`
-- Service worker at `/sw.js`
-- Manifest at `/manifest.json`
-
-### Task 13.2: Systemd service (self-hosted)
-
-Create `feed-aggregator.service` for systemd user service:
-
-```ini
-[Unit]
-Description=Feed Aggregator
-After=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=/path/to/feed-aggregator
-ExecStart=/usr/bin/node --import tsx server/index.ts
-Environment=NODE_ENV=production
-EnvironmentFile=%h/.config/feed-aggregator/env
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=default.target
-```
-
-With installation instructions in comments:
 ```bash
-# mkdir -p ~/.config/systemd/user
-# cp feed-aggregator.service ~/.config/systemd/user/
-# echo 'FEED_AGG_KEY=your-passphrase' > ~/.config/feed-aggregator/env
-# chmod 600 ~/.config/feed-aggregator/env
-# systemctl --user daemon-reload
-# systemctl --user enable --now feed-aggregator
-# sudo loginctl enable-linger $USER
+npm run build
 ```
 
-### Task 13.3: Deployment options
+- Vite bundles frontend to `dist/`
+- Service worker compiled to `dist/sw.js` (no content hash)
+- No TypeScript errors
 
-Create `docs/DEPLOYMENT.md` covering two deployment paths:
+### Task 17.2: PWA manifest
 
-**Vercel + Render (primary — recommended, free tier)**:
+Create `public/manifest.json`:
 
-*Backend on Render*:
-1. Create a Render Web Service pointing to the repo; set build command `npm install` and start command `npm start`
-2. Add a Render Disk (persistent volume) mounted at `/data`; set `db_path` in config to `/data/feed.db`
-3. Set environment variables: agent token hash, VAPID keys, `CORS_ORIGIN=https://yourapp.vercel.app`, and any other `config.json` values
-4. Note: free tier instances spin down after inactivity — upgrade to a paid instance ($7/mo) if you need always-on push notifications
-
-*Frontend on Vercel*:
-1. Create a Vercel project pointing to the same repo; set framework preset to Vite, build command `npm run build`, output directory `dist/client`
-2. Add environment variable: `VITE_API_BASE_URL=https://yourapp.onrender.com`
-3. Add `vercel.json` at the repo root to configure SPA routing:
 ```json
-{ "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }] }
+{
+  "name": "ScrolLess",
+  "short_name": "ScrolLess",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f0f",
+  "theme_color": "#0f0f0f",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
 ```
-4. Verify: PWA loads from Vercel, API calls reach Render, push subscription flow works end-to-end
 
-**Cloudflare Tunnel (personal/self-hosted — combined)**:
-1. `cloudflared` installation on Fedora
-2. Quick test: `cloudflared tunnel --url http://localhost:3333`
-3. Permanent tunnel with custom domain
-4. Tunnel config YAML
-5. DNS routing
-6. Systemd service for cloudflared
-7. Verification: PWA installs, push works, agent can reach server and MCP endpoint
+### Task 17.3: Static serving
 
-### Task 13.4: Claude Code scheduled task setup
+In `server/index.ts` (production mode):
+- Register `@fastify/static` serving `dist/` at `/`
+- Add a catch-all GET route returning `dist/index.html` for all non-API, non-agent paths (SPA fallback)
 
-Document how to set up the agent as a recurring Claude Code task:
-1. Configure the ScrolLess MCP server in Claude Code (`~/.claude/mcp_servers.json`)
-2. Enable Claude in Chrome connector
-3. Set up a `/loop` or `/schedule` task (e.g. every 30 minutes): `Use the run_feed_sync prompt from the ScrolLess MCP server.`
-4. Verify: feed populates automatically on schedule
+### Task 17.4: Smoke test
 
-### Acceptance criteria
-- Frontend deploys to Vercel; backend deploys to Render (or both run from one process self-hosted)
-- HTTPS access established via Cloudflare Tunnel or platform proxy
-- PWA installs on Android from the public URL
-- Push notifications work end-to-end
-- MCP server is reachable from Claude Code at the public URL
-- OAuth flow completes end-to-end with Claude connector
-- Scheduled Claude Code task populates the feed automatically
-- The app is usable as a daily driver
+```bash
+npm start
+```
+
+Verify:
+- App loads at `http://localhost:3333`
+- Device registration completes (check IndexedDB in DevTools)
+- SSE connection opens (`/api/stream` in Network tab)
+- `http://localhost:3333/settings` renders Settings view (not 404)
+- Agent curl test from `CLAUDE.md` returns 200 or 503, not 404 or 500
+
+---
+
+## Stage 18: Paid Tier — Account Identity
+
+**Goal**: Implement `usr_*` account identity with multi-device key wrapping using Argon2id.
+
+### Task 18.1: Additional dependencies
+
+Add `argon2` (Node.js native binding) or use `@noble/hashes` for a pure-JS Argon2id implementation available in both Node and browser.
+
+### Task 18.2: User account registration
+
+```
+POST /api/account/register
+Body: { user_id: "usr_<uuid>", public_key: string, wrapped_key: string, argon2_params: object }
+```
+
+Client steps:
+1. Generate P-256 keypair
+2. Prompt user for passphrase
+3. `Argon2id(passphrase, random_salt, { m: 65536, t: 3, p: 4 })` → 32-byte wrapping key
+4. `AES-256-GCM(wrapping_key, raw_private_key_bytes)` → `wrapped_key`
+5. POST `{ user_id, public_key, wrapped_key, argon2_params: { salt, m, t, p } }`
+
+Server stores in `device_registrations` and new `user_key_bundles` table (see ARCHITECTURE.md schema).
+
+### Task 18.3: Add device
+
+```
+POST /api/account/add-device
+Body: { user_id: string }
+Response: { wrapped_key: string; argon2_params: object; public_key: string }
+```
+
+Client derives wrapping key from passphrase → decrypts private key → stores keypair in IndexedDB.
+
+### Task 18.4: Offline relay queue
+
+Add `relay_queue` table (schema in ARCHITECTURE.md). For `usr_*` users when device is offline:
+- Insert payload into `relay_queue` with `expires_at = now + 24h` instead of returning 503
+- Return `202 { "queued": true }`
+
+On `GET /api/stream` connect: flush undelivered `relay_queue` entries as `feed_items` SSE events, then mark `delivered = 1`.
+
+---
+
+## Stage 19: Paid Tier — Queue Cleanup & Multi-Device Delivery
+
+**Goal**: TTL cleanup, historical backfill, and per-device delivery tracking for multi-device accounts.
+
+### Task 19.1: Queue TTL cleanup
+
+Add to the daily cron:
+
+```sql
+DELETE FROM relay_queue WHERE expires_at < datetime('now') OR delivered = 1;
+```
+
+### Task 19.2: Historical backfill endpoint
+
+```
+GET /api/relay/backfill?since=ISO8601
+```
+
+Returns up to 100 undelivered `relay_queue` entries for `userId` created after `since`. Paginated with a cursor. New devices call this on first login to catch up on recent items.
+
+### Task 19.3: Per-device delivery tracking
+
+Extend `relay_queue` with a `relay_deliveries` join table that tracks which registered devices have received each payload. A queue entry is only considered fully delivered once all active devices have confirmed receipt (or their TTL expires). On delivery, insert a row into `relay_deliveries`; the cleanup job uses this to determine what to prune.
+
+---
+
+## Stage 20: Paid Tier — Passphrase Change & Key Rotation
+
+**Goal**: Allow users to change their passphrase (re-wrap private key) and rotate their encryption keypair.
+
+### Task 20.1: Passphrase change
+
+```
+PATCH /api/account/key-bundle
+Body: { wrapped_key: string; argon2_params: object }
+```
+
+Client steps:
+1. Derive old wrapping key → decrypt private key
+2. Derive new wrapping key from new passphrase
+3. Re-encrypt private key
+4. `PATCH` new `wrapped_key` and `argon2_params` to server
+
+All other devices must re-enter the new passphrase on next login to re-derive the wrapping key.
+
+### Task 20.2: Keypair rotation
+
+```
+PUT /api/account/key-bundle
+Body: { public_key: string; wrapped_key: string; argon2_params: object }
+```
+
+Client generates a new P-256 keypair, wraps the new private key, and replaces the bundle. Server updates `device_registrations.public_key`. The next agent `GET /agent/sync-context` returns the new public key; future payloads are encrypted to the new key.
+
+### Task 20.3: Recovery code
+
+On account creation, generate a 12-word BIP39-style recovery phrase:
+- Derive a 32-byte recovery key from the phrase using PBKDF2-SHA512
+- `AES-256-GCM(recovery_key, raw_private_key_bytes)` → stored as `recovery_ciphertext` in `user_key_bundles`
+- Allow `POST /api/account/recover` — body: `{ recovery_phrase, new_passphrase }` — to restore a wrapped key if the passphrase is forgotten
