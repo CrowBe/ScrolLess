@@ -2,38 +2,65 @@
 
 ## Design Principles
 
-1. **Dumb server, smart agent**: The server stores data, serves it, and sends push notifications. It never communicates with YouTube, X, or any content platform. All platform interaction is the agent's responsibility.
-2. **MCP-first agent interface**: The primary integration point for AI agents is a Remote MCP server. The underlying REST `/agent/*` endpoints remain available for non-MCP clients (scripts, curl, cron jobs).
-3. **Multi-user, production-grade**: Designed for shared hosting from the start. Every query is scoped to `user_id`. Auth, source management, and agent tokens are all per-user.
-4. **Production-promotable internals**: Schema, routes, and skill are designed so scaling from SQLite to Postgres and from one user to many is a configuration change, not a rewrite.
-5. **Installable PWA**: The frontend is a Progressive Web App with push notifications, installable on Android.
+1. **Server is a relay, not a store**: The server never persists feed content. It receives an encrypted payload from the agent and relays it to the device via SSE (or queues it for push). Content lives in IndexedDB on the device only.
+2. **End-to-end encryption by default**: All content fields are encrypted by the agent using the device's public key before leaving the agent. The server handles ciphertext it cannot read.
+3. **MCP-first agent interface**: The primary integration point for AI agents is a Remote MCP server. The underlying REST `/agent/*` endpoints remain available for non-MCP clients (scripts, curl, cron jobs).
+4. **Tiered identity**: `user_id` is always one of `'local'` (self-hosted), `dev_*` (free tier, device-scoped), or `usr_*` (paid tier, account-scoped). Auth middleware resolves which tier and sets `userId`; route handlers never care which was used.
+5. **Production-promotable internals**: Schema, routes, and skill are designed so the transition from free to paid tier, or from SQLite to Postgres, is a configuration/migration change, not a rewrite.
+6. **Installable PWA**: The frontend is a Progressive Web App with push notifications, installable on Android.
+
+---
+
+## Tier Model
+
+### Free Tier
+
+- No user account required.
+- On first load the device generates a P-256 keypair via Web Crypto API. The private key never leaves the device (stored in IndexedDB). The public key is registered with the server.
+- `user_id` = `dev_<uuid>` (generated on device, stored in IndexedDB).
+- Agent encrypts all content fields (ECIES P-256 + AES-256-GCM) using the registered public key before POSTing.
+- Server relays the encrypted payload to the device via SSE (`GET /api/stream`) if the connection is open.
+- If the device is offline (no active SSE connection): server logs a `sync_attempt` with `status = 'device_offline'`, returns HTTP 503 `{ "error": "device_offline" }` to the agent, and does **not** update `last_sync_at` on `user_sources`.
+- Content lives in IndexedDB only — the server never stores feed items.
+
+### Paid Tier
+
+- Account-based identity (`usr_*`).
+- Multi-device support via a wrapped private key: the private key is encrypted with the user's passphrase using Argon2id, and the ciphertext is stored server-side. Each trusted device decrypts the wrapped key on login using the user's passphrase; the plaintext private key never leaves the client.
+- Encrypted relay queue with TTL: when the target device is offline, the server queues the encrypted payload (TTL configurable, default 24 h) and delivers it when the device reconnects.
+- Historical backfill via device-to-device encrypted relay: a newly added device can request recent encrypted payloads from the server queue.
+- Agent continues to encrypt using the user's public key — same ECIES scheme as free tier.
+
+### Self-Hosted
+
+- Unchanged from original design.
+- `user_id = 'local'`, SQLite, no auth middleware enforced (token still required for agent routes).
+- Feed items stored server-side in SQLite (legacy mode — no E2E encryption required unless opted in).
 
 ---
 
 ## Deployment Topology
 
 ```
- Any MCP Client (Claude Code,            Backend (Render)
- Claude Desktop, LangChain…)        ┌─────────────────────────────┐
-┌────────────────────────┐          │  Fastify Server :3333       │
-│  MCP tools:            │          │  ├── /mcp  (MCP transport)  │
-│  get_sync_context      │── HTTPS ─▶  ├── /agent/* (REST)        │
-│  submit_items          │          │  ├── /api/* (PWA)           │
-└────────────────────────┘          │  ├── /oauth/* (auth)        │
-                                    │  ├── SQLite / Postgres       │
- Phone / Desktop (anywhere)         │  ├── Web Push sender        │
-┌────────────────────────┐          │  └── Cron (cleanup)         │
-│  PWA (Preact)          │── HTTPS ─▶  └─────────────────────────┘
-│  Hosted on Vercel      │
+ Any MCP Client (Claude Code,            Backend (Render / self-hosted)
+ Claude Desktop, LangChain…)        ┌──────────────────────────────────┐
+┌────────────────────────┐          │  Fastify Server :3333            │
+│  MCP tools:            │          │  ├── /mcp  (MCP transport)       │
+│  get_sync_context      │── HTTPS ─▶  ├── /agent/* (REST relay)       │
+│  submit_items          │          │  ├── /api/* (PWA + SSE)          │
+└────────────────────────┘          │  ├── /oauth/* (auth server)      │
+                                    │  ├── SQLite / Postgres            │
+ Phone / Desktop (anywhere)         │  ├── Web Push sender             │
+┌────────────────────────┐          │  └── Cron (cleanup)              │
+│  PWA (Preact)          │══ SSE ══▶  └──────────────────────────────────┘
+│  IndexedDB (content)   │
 │  Push notifications    │
 └────────────────────────┘
 ```
 
-**Split hosting (recommended)**: Frontend is deployed to Vercel (free tier, global CDN); backend runs on Render (free tier, persistent disk for SQLite). The frontend build sets `VITE_API_BASE_URL` to the Render service URL; the backend sets `CORS_ORIGIN` to the Vercel app URL. Both can be the same Git repo with separate deployment configs.
+**Split hosting (recommended)**: Frontend deployed to Vercel (free tier, global CDN); backend runs on Render (free tier, persistent disk for SQLite). `VITE_API_BASE_URL` points to Render; `CORS_ORIGIN` on the backend points to the Vercel URL.
 
-**Self-hosted**: A Cloudflare Tunnel (`cloudflared`) provides HTTPS from a home server without opening inbound ports. Frontend and backend are served from the same Fastify process. HTTPS is provided at the Cloudflare edge; Fastify serves plain HTTP on :3333.
-
-For quick testing: `cloudflared tunnel --url http://localhost:3333` generates a temporary public URL instantly.
+**Self-hosted**: Cloudflare Tunnel (`cloudflared tunnel --url http://localhost:3333`) provides HTTPS without opening ports. Frontend and backend served from the same Fastify process.
 
 ---
 
@@ -41,24 +68,30 @@ For quick testing: `cloudflared tunnel --url http://localhost:3333` generates a 
 
 ### What the Server Does
 
-1. **Serves sync context** to agents: which sources to scrape, when last synced, what to filter
-2. **Receives feed items** from agents via MCP tool or REST POST
-3. **Deduplicates** items by URL hash at insert time
-4. **Sends push notifications** when new items arrive
-5. **Serves the feed** to the PWA via `GET /api/feed`
-6. **Manages read state** and source configuration
-7. **Cleans up old items** on a daily schedule
+1. **Registers devices** and stores their public keys
+2. **Serves sync context** to agents: sources, last sync timestamps, encryption key, filters
+3. **Receives encrypted feed payloads** from agents and relays them to devices via SSE
+4. **Falls back to Web Push** when the target device has no active SSE connection
+5. **Logs sync attempts** (metadata only — no content)
+6. **Manages source configuration** and agent tokens per user
+7. **Runs OAuth 2.0** authorization server for MCP connector integration
+8. **Cleans up stale data** on a daily schedule (sync_attempts, oauth codes/tokens)
 
 ### What the Server Does NOT Do
 
 - Call any upstream API (YouTube, X, NewsAPI, etc.)
-- Store OAuth tokens for external services
-- Know how to scrape or parse any platform
-- Perform any content transformation or enrichment
+- Store feed items or feed content (free/paid tiers)
+- Decrypt agent payloads — the server handles ciphertext only
+- Store user preferences beyond source configuration (those live in localStorage/IndexedDB)
 
 ### Route Groups
 
-The server has four route groups:
+```
+/agent/*  →  Bearer token or OAuth token auth  →  server/agent-routes.ts
+/mcp      →  Bearer or OAuth token auth        →  server/mcp.ts
+/oauth/*  →  public (auth server)              →  server/oauth-routes.ts
+/api/*    →  device/session auth               →  server/api-routes.ts
+```
 
 #### `/mcp` — Remote MCP Server
 
@@ -66,29 +99,26 @@ Authenticated via Bearer token or OAuth access token. Used by AI agent clients (
 
 Exposes MCP tools, resources, and prompt templates. Implemented via `@modelcontextprotocol/sdk` with Streamable HTTP transport.
 
-See **MCP Server** section below.
+See **MCP Server** section below. Unchanged from original design.
 
 #### `/agent/*` — REST Agent Endpoints
 
-Authenticated via Bearer token. The underlying REST layer — also callable directly by scripts or non-MCP agents.
+Authenticated via Bearer token or OAuth access token.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/agent/sync-context` | Single call: enabled sources with URLs + last sync + filters |
-| `POST` | `/agent/feed-items` | Submit a batch of scraped feed items |
+| `GET` | `/agent/sync-context` | Sources, last sync timestamps, device public key, filters |
+| `POST` | `/agent/feed-items` | Submit a batch of encrypted feed items for relay |
 
 #### `/api/*` — PWA Endpoints
 
-Session-authenticated (Clerk). Used by the frontend.
+Authenticated via device token (free tier) or session (paid tier).
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/feed` | Unified feed with filtering + pagination |
-| `PATCH` | `/api/feed/:id/read` | Mark item as read |
-| `PATCH` | `/api/feed/:id/unread` | Mark item as unread |
-| `POST` | `/api/feed/mark-all-read` | Mark all (or filtered) items as read |
-| `GET` | `/api/stats` | Total, unread, per-source counts |
-| `GET` | `/api/sync/status` | Last agent sync time per source |
+| `POST` | `/api/device/register` | Register device public key, get `dev_` user_id |
+| `GET` | `/api/stream` | SSE stream — relay encrypted payloads to device |
+| `GET` | `/api/sync/status` | Missed sync banner data (sync_attempts metadata) |
 | `GET` | `/api/sources` | List user's configured sources |
 | `POST` | `/api/sources` | Add a new source |
 | `PATCH` | `/api/sources/:name` | Update a source (toggle enabled, edit URLs) |
@@ -96,142 +126,260 @@ Session-authenticated (Clerk). Used by the frontend.
 | `GET` | `/api/push/vapid-key` | Public VAPID key for push subscription |
 | `POST` | `/api/push/subscribe` | Store a push subscription |
 | `POST` | `/api/push/unsubscribe` | Remove a push subscription |
+| `GET` | `/api/agent-tokens` | List agent tokens for the device/user |
+| `POST` | `/api/agent-tokens` | Create a new agent token |
+| `DELETE` | `/api/agent-tokens/:id` | Revoke an agent token |
+
+**Removed routes** (replaced by IndexedDB client reads):
+- `GET /api/feed` — feed is read from IndexedDB
+- `PATCH /api/feed/:id/read` — read state managed in IndexedDB
+- `POST /api/feed/mark-all-read` — managed in IndexedDB
+- `GET /api/stats` — computed client-side from IndexedDB
 
 #### `/oauth/*` — Authorization Server
 
-Implements OAuth 2.0 Authorization Code flow with PKCE. Required for Claude connector integration and any third-party MCP client.
+Unchanged. See **OAuth 2.0** section.
 
-See **OAuth 2.0** section below.
+---
 
-### Agent Authentication
+## Device Registration
 
-Two supported mechanisms — both produce a resolved `userId` for downstream handlers:
+```
+1. PWA boots for the first time
+2. Device generates P-256 keypair via Web Crypto API
+3. Private key stored in IndexedDB (non-extractable where supported)
+4. Device generates UUID → dev_<uuid> as user_id, stored in IndexedDB
+5. POST /api/device/register { public_key: "base64(P-256 point)", device_id: "dev_<uuid>" }
+6. Server stores in device_registrations
+7. Server returns { user_id: "dev_<uuid>", ok: true }
+```
 
-**Bearer Token** (for scripts, direct REST, and MCP clients using pre-shared keys):
+On subsequent boots the device checks IndexedDB for an existing keypair and `user_id`. If found, registration is skipped.
+
+---
+
+## Agent Authentication
+
+Two supported mechanisms — both resolve to a `userId` for downstream handlers:
+
+**Bearer Token** (pre-shared key):
 1. User generates a random 256-bit hex string
-2. The plaintext key is used in the agent's MCP config or passed as `Authorization: Bearer <token>`
-3. A SHA-256 hash is stored in `agent_tokens`
-4. Server hashes the incoming token and compares against the stored hash
+2. Used as `Authorization: Bearer <token>` by the agent
+3. Server hashes the incoming token with SHA-256 and compares against `agent_tokens.token_hash`
 
-**OAuth Access Token** (for Claude connector and third-party MCP clients):
-- Short-lived access token issued after Authorization Code + PKCE flow
-- Validated against `oauth_tokens` table, checking expiry and user binding
-- See OAuth 2.0 section for full flow
+**OAuth Access Token** (Claude connector / third-party MCP clients):
+- Short-lived token issued after Authorization Code + PKCE flow
+- Validated against `oauth_tokens` table (expiry + user binding)
 
-Both mechanisms are handled in a shared auth middleware. The route handlers never care which was used.
+Both mechanisms are handled in shared auth middleware. Route handlers receive `userId` only.
+
+---
+
+## Sync Context — Agent Request
+
+`GET /agent/sync-context` returns everything an agent needs to plan and encrypt a scraping run:
+
+```json
+{
+  "encryption": {
+    "public_key": "base64(P-256 uncompressed point)",
+    "algorithm": "ECIES-P256-AES256GCM"
+  },
+  "sources": [
+    {
+      "name": "youtube",
+      "enabled": true,
+      "urls": ["https://www.youtube.com/feed/subscriptions"],
+      "last_sync": "2026-04-01T10:00:00Z",
+      "max_items": 20,
+      "scraping_resource": "scrolless://platforms/youtube"
+    },
+    {
+      "name": "x",
+      "enabled": false
+    }
+  ],
+  "filters": {
+    "blocked_keywords": ["sponsored", "giveaway"]
+  }
+}
+```
+
+`last_sync_at` is only updated when the server successfully relays a payload to the device (HTTP 200). It is **never** updated on 503 `device_offline`.
+
+---
+
+## Encryption Scheme (ECIES-P256-AES256GCM)
+
+### Overview
+
+ECIES (Elliptic Curve Integrated Encryption Scheme) using P-256 with AES-256-GCM for authenticated encryption. The agent encrypts per-item; the server relays ciphertext; the device decrypts.
+
+### Encryption (Agent Side)
+
+For each feed item:
+
+1. **Generate ephemeral keypair**: Agent generates a fresh P-256 keypair for this POST batch (`ephemeral_private_key`, `ephemeral_public_key`).
+2. **ECDH shared secret**: `shared_secret = ECDH(ephemeral_private_key, device_public_key)`
+3. **Key derivation**: `aes_key = HKDF-SHA256(shared_secret, salt="scrolless-v1", length=32)`
+4. **Encrypt per item**: For each item's content fields (`title`, `author`, `content_preview`, `thumbnail_url`, `tags`):
+   - Serialize fields as UTF-8 JSON
+   - Generate 12-byte random IV
+   - `ciphertext || authTag = AES-256-GCM(aes_key, iv, plaintext)`
+   - `encrypted_fields = base64(iv || ciphertext || authTag)`
+5. **Include in payload**: The ephemeral public key is included once per POST; `encrypted_fields` is per item.
+
+### Agent POST Payload
+
+```json
+{
+  "source": "youtube",
+  "ephemeral_public_key": "base64(P-256 uncompressed point)",
+  "items": [
+    {
+      "source_id": "abc123",
+      "url": "https://youtube.com/watch?v=abc123",
+      "published_at": "2026-04-01T10:00:00Z",
+      "is_discovery": false,
+      "encrypted_fields": "base64(iv[12] || ciphertext || authTag[16])"
+    }
+  ]
+}
+```
+
+Metadata fields (`source_id`, `url`, `published_at`, `is_discovery`) remain plaintext so the server can log and dedup by URL hash without decrypting.
+
+### Decryption (Device Side)
+
+1. Retrieve device private key from IndexedDB
+2. `shared_secret = ECDH(device_private_key, ephemeral_public_key)`
+3. `aes_key = HKDF-SHA256(shared_secret, salt="scrolless-v1", length=32)`
+4. For each item: `iv = encrypted_fields[0:12]`, `ciphertext = encrypted_fields[12:-16]`, `authTag = encrypted_fields[-16:]`
+5. `plaintext = AES-256-GCM-Decrypt(aes_key, iv, ciphertext, authTag)`
+6. Parse plaintext JSON → `{ title, author, content_preview, thumbnail_url, tags }`
+
+### Server Behaviour
+
+The server **never decrypts**. It:
+- Validates the payload shape
+- Computes `url_hash = SHA-256(normalised_url)` for dedup logging in `sync_attempts`
+- Relays the full payload (including `encrypted_fields`) to the device via SSE or push
+- Logs the attempt in `sync_attempts`
+
+---
+
+## SSE Delivery
+
+`GET /api/stream` — the device opens a persistent SSE connection when the app is in the foreground.
+
+### Flow
+
+```
+1. Device opens GET /api/stream (authenticated)
+2. Server registers the connection against user_id
+3. Agent POSTs to /agent/feed-items
+4. Server checks: does user_id have an active SSE connection?
+   YES → emit SSE event with full encrypted payload → return 200 to agent
+         update last_sync_at on user_sources
+   NO  → log sync_attempt(status='device_offline')
+         return 503 { "error": "device_offline" } to agent
+         attempt Web Push notification (push without content)
+```
+
+### SSE Event Shape
+
+```
+event: feed_items
+data: {"source":"youtube","ephemeral_public_key":"...","items":[...]}
+```
+
+### Reconnection
+
+The device uses `EventSource` with exponential backoff. The server sends a `keepalive` comment every 30 s to prevent connection drops.
+
+---
+
+## Web Push (Fallback)
+
+Web Push fires when the app is closed (no active SSE connection). It carries a notification payload only — not the encrypted content. The notification prompts the user to open the app, at which point the device will receive a fresh sync from the agent on next run.
+
+### Flow
+
+1. PWA registers service worker → user enables notifications
+2. Service worker subscribes via Push API using VAPID public key
+3. PWA sends `PushSubscription` to `POST /api/push/subscribe`
+4. When agent POSTs and device is offline: server sends push notification
+5. Push service (FCM/Mozilla) delivers to device
+6. Service worker shows system notification
+7. User taps → PWA opens → SSE reconnects → next agent run delivers content
+
+### Notification Shape
+
+One notification per agent POST, grouped by source:
+
+```json
+{
+  "title": "5 new items from YouTube",
+  "body": "Your feed updated while you were away.",
+  "source": "youtube",
+  "count": 5,
+  "url": "/"
+}
+```
 
 ---
 
 ## MCP Server
 
-The MCP server runs at `/mcp` using the Streamable HTTP transport from `@modelcontextprotocol/sdk`. It wraps the same business logic as the REST agent routes.
+Unchanged from original design. Runs at `/mcp` using Streamable HTTP transport. Wraps the same business logic as the REST agent routes.
 
 ### Tools
 
-**`get_sync_context`**
+**`get_sync_context`** — Returns the full sync context (sources, encryption key, filters). No arguments.
 
-Returns everything an agent needs to plan a scraping run. No arguments.
-
-```typescript
-// Response
-{
-  sources: [
-    {
-      name: "youtube",
-      enabled: true,
-      urls: ["https://www.youtube.com/feed/subscriptions"],
-      last_sync: "2026-03-28T10:00:00Z",  // scrape items newer than this
-      max_items: 20,
-      scraping_resource: "scrolless://platforms/youtube"
-    },
-    {
-      name: "x",
-      enabled: false  // skip — no further fields needed
-    },
-    {
-      name: "news",
-      enabled: true,
-      urls: ["https://news.ycombinator.com", "https://arstechnica.com"],
-      last_sync: "2026-03-28T08:30:00Z",
-      max_items: 20,
-      scraping_resource: "scrolless://platforms/news"
-    }
-  ],
-  filters: {
-    blocked_keywords: ["sponsored", "giveaway"]
-  }
-}
-```
-
-`enabled: false` replaces the old `blocked_sources` concept. If a source isn't enabled, the agent skips it — no separate blocklist needed.
-
-**`submit_items`**
-
-Submit a batch of scraped items from one source.
+**`submit_items`** — Submit a batch of encrypted items from one source. Same validation as `POST /agent/feed-items`.
 
 ```typescript
 // Arguments
 {
-  source: string;    // "youtube" | "x" | "news" | custom
+  source: string;
+  ephemeral_public_key: string;   // base64 P-256 point
   items: AgentFeedItem[];
 }
-
 // Response
-{
-  inserted: number;
-  duplicates: number;
-}
+{ relayed: number; offline: boolean; }
 ```
-
-Same validation and dedup behaviour as `POST /agent/feed-items`.
 
 ### Resources
 
-MCP resources serve the per-platform scraping instructions. The agent fetches these at runtime — no local skill files needed.
+MCP resources serve per-platform scraping instructions. Content is served from `skill/resources/{name}.md`.
 
 | URI | Content |
 |---|---|
 | `scrolless://platforms/youtube` | YouTube subscription feed extraction instructions |
 | `scrolless://platforms/x` | X/Twitter timeline extraction instructions |
 | `scrolless://platforms/news` | News site extraction instructions |
-| `scrolless://platforms/{name}` | Custom source instructions (user-added) |
-
-Resource content is served from `skill/resources/{name}.md`. When a user adds a custom source in the PWA, they optionally provide scraping hints that are stored in `user_sources.scraping_notes` and merged into the resource response.
+| `scrolless://platforms/{name}` | Custom source instructions |
 
 ### Prompts
 
-**`run_feed_sync`**
-
-A prompt template that encodes the complete sync workflow. An agent running `/loop update my ScrolLess feed` or similar needs no other instructions.
-
-```
-Call get_sync_context to get your work order.
-For each source where enabled is true:
-  1. Fetch the scraping_resource to get platform-specific instructions
-  2. Navigate to each URL in urls[]
-  3. Extract items published after last_sync
-  4. Skip any item whose title or content contains a blocked_keyword
-  5. Collect up to max_items items
-  6. Call submit_items with the batch
-Log the inserted/duplicates counts. If a source fails, continue to the next.
-```
+**`run_feed_sync`** — Complete sync workflow prompt. Includes encryption instructions for the agent.
 
 ---
 
 ## OAuth 2.0
 
-Implements Authorization Code flow with PKCE (RFC 7636). Required for Claude connector integration.
+Unchanged. Implements Authorization Code flow with PKCE (RFC 7636).
 
 ### Flow
 
 ```
-1. MCP client (e.g. Claude) redirects user to:
+1. MCP client redirects user to:
    GET /oauth/authorize?client_id=X&redirect_uri=Y&code_challenge=Z&state=S
 
-2. User authenticates (Clerk session) and approves the connector
+2. User authenticates and approves the connector
 
-3. Server redirects to redirect_uri with:
-   ?code=AUTH_CODE&state=S
+3. Server redirects to redirect_uri with ?code=AUTH_CODE&state=S
 
 4. Client exchanges code:
    POST /oauth/token
@@ -248,115 +396,65 @@ Implements Authorization Code flow with PKCE (RFC 7636). Required for Claude con
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/oauth/authorize` | Show consent screen, issue auth code |
-| `POST` | `/oauth/token` | Exchange code or refresh token for access token |
-| `POST` | `/oauth/revoke` | Revoke an access or refresh token |
-| `GET` | `/oauth/.well-known/oauth-authorization-server` | Server metadata (for auto-discovery) |
-
-### Client Registration (required before production)
-
-In the PoC, OAuth clients are registered manually by editing `config.json` and restarting the server. This is not acceptable for production — it requires server access to onboard any new MCP client and provides no way for users to revoke clients without operator intervention.
-
-The `config.json` bootstrap is only appropriate for the initial first-party client (e.g. the Claude connector). All subsequent client management must go through the UI.
-
-```json
-{
-  "oauth": {
-    "clients": [
-      {
-        "client_id": "claude-connector",
-        "redirect_uris": ["https://claude.ai/oauth/callback"],
-        "is_public": true
-      }
-    ],
-    "token_expires_in": 3600,
-    "refresh_token_expires_in": 2592000
-  }
-}
-```
-
-**Implementation checklist:**
-1. Add `GET /api/oauth/clients` — list clients registered by the current user
-2. Add `POST /api/oauth/clients` — register a new client (name, redirect URIs, public/confidential)
-3. Add `DELETE /api/oauth/clients/:client_id` — revoke a client and all its active tokens
-4. Expose these in the Settings UI under an "OAuth Clients" or "Connected Apps" section
-5. Seed the `config.json` bootstrap clients once at startup (`INSERT OR IGNORE`) then ignore the file for ongoing management
+| `GET` | `/oauth/authorize` | Consent screen, issue auth code |
+| `POST` | `/oauth/token` | Exchange code or refresh token |
+| `POST` | `/oauth/revoke` | Revoke access or refresh token |
+| `GET` | `/oauth/.well-known/oauth-authorization-server` | Server metadata |
 
 ---
 
-## Storage Schema
+## Server Storage Schema
 
-### `feed_items` — Core unified feed
+The server stores **no feed content**. All tables below are metadata/infrastructure only.
+
+### `device_registrations`
 
 ```sql
-CREATE TABLE feed_items (
-    id              TEXT PRIMARY KEY,          -- "source:source_id"
-    user_id         TEXT NOT NULL,
-    source          TEXT NOT NULL,
-    title           TEXT,
-    author          TEXT,
-    url             TEXT NOT NULL,
-    url_hash        TEXT NOT NULL,             -- SHA-256 of normalised URL
-    content_preview TEXT,
-    thumbnail_url   TEXT,
-    tags            TEXT,                      -- JSON array: '["tech","ai"]'
-    is_discovery    INTEGER NOT NULL DEFAULT 0,
-    published_at    TEXT NOT NULL,             -- ISO 8601
-    fetched_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    is_read         INTEGER NOT NULL DEFAULT 0,
-    raw_json        TEXT
+CREATE TABLE device_registrations (
+    user_id     TEXT PRIMARY KEY,        -- "dev_<uuid>"
+    public_key  TEXT NOT NULL,           -- base64 P-256 uncompressed point
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    last_seen   TEXT
 );
-
-CREATE UNIQUE INDEX idx_feed_url_hash ON feed_items(user_id, url_hash);
-CREATE INDEX idx_feed_published ON feed_items(published_at DESC);
-CREATE INDEX idx_feed_source ON feed_items(source);
-CREATE INDEX idx_feed_read ON feed_items(is_read);
-CREATE INDEX idx_feed_user ON feed_items(user_id);
-CREATE INDEX idx_feed_discovery ON feed_items(is_discovery);
 ```
 
-### `user_sources` — User-configured scraping sources
+### `user_sources`
 
 ```sql
 CREATE TABLE user_sources (
     user_id         TEXT NOT NULL,
     name            TEXT NOT NULL,              -- "youtube", "x", "news", or custom
     enabled         INTEGER NOT NULL DEFAULT 1,
-    urls            TEXT NOT NULL DEFAULT '[]', -- JSON array of URLs to scrape
-    max_items       INTEGER,                    -- NULL = use global default
-    scraping_notes  TEXT,                       -- Optional hints merged into MCP resource
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    urls            TEXT NOT NULL DEFAULT '[]', -- JSON array
+    max_items       INTEGER,
+    last_sync_at    TEXT,                       -- updated on successful relay only
+    scraping_notes  TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     PRIMARY KEY (user_id, name)
 );
 ```
 
-Default sources are seeded at account creation (youtube, x, news — all with `enabled = 0` until the user activates them).
+`last_sync_at` is **only** updated when the server returns 200 to the agent (successful relay). Never updated on 503.
 
-### `agent_tokens` — Agent API keys
+### `sync_attempts`
 
-```sql
-CREATE TABLE agent_tokens (
-    token_hash  TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL,
-    label       TEXT,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    last_used   TEXT
-);
-```
-
-### `sync_log` — Append-only agent sync audit trail
+Append-only log of every agent POST attempt (metadata only — no content).
 
 ```sql
-CREATE TABLE sync_log (
+CREATE TABLE sync_attempts (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     TEXT NOT NULL,
     source      TEXT NOT NULL,
-    synced_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    items_added INTEGER NOT NULL DEFAULT 0,
-    items_duped INTEGER NOT NULL DEFAULT 0,
-    error       TEXT
+    attempted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    item_count  INTEGER NOT NULL DEFAULT 0,
+    status      TEXT NOT NULL,  -- 'relayed' | 'device_offline' | 'error'
+    error       TEXT            -- NULL unless status='error'
 );
+
+CREATE INDEX idx_sync_attempts_user ON sync_attempts(user_id, attempted_at DESC);
 ```
+
+Used by `GET /api/sync/status` to power the missed-sync banner in the PWA.
 
 ### `push_subscriptions`
 
@@ -367,38 +465,33 @@ CREATE TABLE push_subscriptions (
     endpoint    TEXT NOT NULL UNIQUE,
     keys_p256dh TEXT NOT NULL,
     keys_auth   TEXT NOT NULL,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 ```
 
-### `user_preferences` — Global per-user settings
+### `agent_tokens`
 
 ```sql
-CREATE TABLE user_preferences (
+CREATE TABLE agent_tokens (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash  TEXT NOT NULL UNIQUE,
     user_id     TEXT NOT NULL,
-    key         TEXT NOT NULL,
-    value       TEXT NOT NULL,  -- JSON-encoded
-    PRIMARY KEY (user_id, key)
+    label       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    last_used   TEXT
 );
 ```
 
-Seeded defaults:
-- `blocked_keywords`: `[]`
-- `max_items_per_source`: `50`
-- `retention_days`: `7`
-
-Note: `blocked_sources` is no longer a preference key — per-source enable/disable lives in `user_sources.enabled`.
-
-### OAuth tables
+### OAuth Tables
 
 ```sql
 CREATE TABLE oauth_clients (
     client_id       TEXT PRIMARY KEY,
-    client_secret   TEXT,           -- NULL for public clients (PKCE only)
+    client_secret   TEXT,
     redirect_uris   TEXT NOT NULL,  -- JSON array
     label           TEXT,
     is_active       INTEGER NOT NULL DEFAULT 1,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE TABLE oauth_auth_codes (
@@ -406,9 +499,9 @@ CREATE TABLE oauth_auth_codes (
     client_id       TEXT NOT NULL,
     user_id         TEXT NOT NULL,
     redirect_uri    TEXT NOT NULL,
-    code_challenge  TEXT NOT NULL,  -- PKCE S256 challenge
+    code_challenge  TEXT NOT NULL,
     expires_at      TEXT NOT NULL,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE TABLE oauth_tokens (
@@ -418,158 +511,191 @@ CREATE TABLE oauth_tokens (
     user_id         TEXT NOT NULL,
     access_expires  TEXT NOT NULL,
     refresh_expires TEXT,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+```
+
+---
+
+## IndexedDB Schema (Device)
+
+All feed content lives here. The server never sees plaintext.
+
+### `feed_items`
+
+```typescript
+interface FeedItem {
+  id: string;              // "source:source_id"
+  user_id: string;         // dev_* | usr_* | local
+  source: string;
+  source_id: string;
+  url: string;
+  url_hash: string;        // SHA-256 of normalised URL (client-side dedup)
+  published_at: string;    // ISO 8601
+  fetched_at: string;      // ISO 8601 — used for retention
+  is_discovery: boolean;
+  is_read: boolean;
+  is_saved: boolean;
+  // Decrypted content fields
+  title: string;
+  author?: string;
+  content_preview?: string;
+  thumbnail_url?: string;
+  tags: string[];
+}
+```
+
+Indexes: `url_hash` (unique), `published_at` (desc), `source`, `is_read`, `is_discovery`, `is_saved`.
+
+### `sync_log`
+
+```typescript
+interface SyncLogEntry {
+  id: number;             // autoincrement
+  source: string;
+  synced_at: string;      // ISO 8601
+  items_added: number;
+  items_duped: number;
+}
+```
+
+Append-only. Used to display last-sync time in the UI.
+
+### `preferences`
+
+Key-value store:
+
+| Key | Default | Type |
+|---|---|---|
+| `user_id` | generated `dev_<uuid>` | `string` |
+| `public_key` | generated on first boot | `string` (base64) |
+| `private_key` | generated on first boot | `CryptoKey` |
+| `blocked_keywords` | `[]` | `string[]` |
+| `max_items_per_source` | `50` | `number` |
+| `retention_days` | `7` | `number` |
+
+### `device`
+
+```typescript
+interface DeviceRecord {
+  id: 'singleton';
+  user_id: string;          // dev_* stored here for persistence across sessions
+  public_key: string;       // base64
+  private_key: CryptoKey;   // non-extractable where supported
+  registered_at: string;
+}
 ```
 
 ---
 
 ## URL Normalisation & Deduplication
 
-Applied server-side at insert time before hashing:
+**Dedup is client-side.** Before storing a received item, the device:
 
-1. Lowercase the hostname
-2. Remove tracking parameters: `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `s`, `ref`, `feature`
-3. Convert YouTube short URLs: `youtu.be/VIDEO_ID` → `https://www.youtube.com/watch?v=VIDEO_ID`
-4. Sort remaining query parameters alphabetically
-5. Strip trailing slashes
+1. Normalises the URL:
+   - Lowercase hostname
+   - Remove tracking params: `utm_*`, `s`, `ref`, `feature`
+   - Convert YouTube short URLs: `youtu.be/ID` → `https://www.youtube.com/watch?v=ID`
+   - Sort remaining query params alphabetically
+   - Strip trailing slashes
+2. Computes `url_hash = SHA-256(normalised_url)`
+3. Checks IndexedDB: if `url_hash` already exists, discard the item
+4. Otherwise, store with `url_hash`
 
-The agent doesn't need to normalise — the server handles it.
+The server does not dedup. It relays all items received from the agent.
 
 ---
 
 ## Data Retention & Cleanup
 
-A daily cron (default 3:00 AM) deletes old feed items:
+**Client-side**: A daily routine (triggered on app open) deletes items from IndexedDB where `fetched_at < now - retention_days`. Default: 7 days. Uses `fetched_at`, not `published_at`.
 
-```sql
-DELETE FROM feed_items
-WHERE user_id = ?
-  AND fetched_at < datetime('now', '-N days')
-```
-
-Where N is the `retention_days` preference (default: 7). Uses `fetched_at`, not `published_at`.
-
-Also cleans oauth_auth_codes older than 10 minutes and expired oauth_tokens.
+**Server-side cron** (daily, 3:00 AM):
+- Delete `oauth_auth_codes` older than 10 minutes
+- Delete expired `oauth_tokens`
+- Delete `sync_attempts` older than 30 days
 
 ---
 
-## Web Push Notifications
+## Missed Sync Banner
 
-### Flow
-
-1. PWA registers service worker → user enables notifications
-2. Service worker subscribes via Push API using the VAPID public key
-3. PWA sends the PushSubscription to `POST /api/push/subscribe`
-4. When `submit_items` / `POST /agent/feed-items` inserts new items, server sends push notification
-5. Push service (FCM/Mozilla) delivers to the device
-6. Service worker shows system notification
-7. User taps → PWA opens
-
-### Notification Grouping
-
-One notification per agent POST, not per item:
+On app boot, `GET /api/sync/status` returns recent `sync_attempts` metadata:
 
 ```json
 {
-  "title": "5 new items from YouTube",
-  "body": "Latest: Video Title Here",
-  "source": "youtube",
-  "count": 5,
-  "url": "/"
+  "missed": [
+    {
+      "source": "youtube",
+      "attempted_at": "2026-04-01T18:00:00Z",
+      "status": "device_offline",
+      "item_count": 5
+    }
+  ],
+  "next_sync_estimate": "2026-04-01T19:30:00Z"
 }
 ```
+
+The PWA displays: _"Feed tried to refresh at 6:00pm but your device was unreachable. Next refresh at 7:30pm."_
 
 ---
 
 ## Frontend — PWA
 
-### Requirements
-
-- Served over HTTPS
-- Web app manifest with 192x192 and 512x512 icons
-- Service worker for push events + offline app shell caching
-- `"display": "standalone"` for native-app feel on Android
-
 ### Component Architecture
 
 ```
 App
-├── NotificationPrompt    # One-time: request permission + subscribe
-├── SourceFilter          # Tabs: All | YouTube | X | News (with unread counts)
-│                         # Sub-tabs or toggle: Feed | Discovery
-├── SyncStatus            # "Last synced 3 min ago" + error badge
+├── DeviceInit               # First boot: generate keypair, register device
+├── MissedSyncBanner         # Conditional: show if sync_attempts has device_offline entries
+├── NotificationPrompt       # One-time: request permission + subscribe
+├── SourceFilter             # Tabs: All | YouTube | X | News (unread counts)
+│                            # Sub-tabs: Feed | Discovery
+├── SyncStatus               # "Last synced 3 min ago" + error badge
 └── FeedList
-    ├── YouTubeCard       # Thumbnail, title, channel, expand → preview
-    ├── XCard             # Author, text, expand → full tweet
-    └── NewsCard          # Headline, source, expand → excerpt + thumbnail
+    ├── YouTubeCard          # Thumbnail, title, channel, expand → preview
+    ├── XCard                # Author, text, expand → full tweet
+    └── NewsCard             # Headline, source, expand → excerpt + thumbnail
 
-Settings (/settings)
-├── SourceList            # Cards for each user_source: toggle enabled, edit URLs
-├── AddSourceForm         # Name + URLs + optional scraping notes
-├── AgentTokens           # View/create/revoke agent tokens
-└── DangerZone            # Delete account data
+Settings (/#/settings)
+├── SourceList               # Cards per user_source: toggle enabled, edit URLs
+├── AddSourceForm            # Name + URLs + optional scraping notes
+├── AgentTokens              # View/create/revoke agent tokens
+└── DangerZone               # Delete local data / unregister device
 ```
+
+### URL Routing
+
+Uses `preact-iso` with hash routing. Views: `/#/` (feed), `/#/discover`, `/#/saved`, `/#/settings`.
 
 ### Service Worker
 
 Two responsibilities:
 
-1. **Push handler**: Receive push events → show system notification → handle notification click
-2. **Offline cache**: Cache the app shell on install. Serve cached shell for navigation requests. Pass API requests through to network.
+1. **Push handler**: Receive push events → show system notification → handle tap → open PWA
+2. **Offline cache**: Cache app shell on install. Serve cached shell for navigation requests. Pass API requests through to network.
+
+Service worker output must be `sw.js` at build root (not content-hashed).
+
+### SSE Connection Lifecycle
+
+The PWA opens `GET /api/stream` on mount and closes it on unmount. Incoming SSE events are dispatched to a handler that:
+
+1. Decrypts `encrypted_fields` using the device private key
+2. Merges items into IndexedDB (dedup by `url_hash`)
+3. Updates the feed UI reactively
 
 ---
 
-## The Agent Skill
-
-The scraping logic lives outside the server. With the MCP server in place, the agent needs no local skill files — it discovers everything at runtime.
-
-### MCP-Based Workflow (primary)
-
-An agent with the ScrolLess MCP server configured needs only a single instruction:
-
-```
-Use the run_feed_sync prompt from the ScrolLess MCP server.
-```
-
-Or equivalently for a `/loop` invocation:
-
-```
-Call get_sync_context, scrape each enabled source per its scraping_resource instructions, submit via submit_items.
-```
-
-### REST-Based Workflow (fallback / non-MCP clients)
-
-For agents that cannot connect to an MCP server, `skill/SKILL.md` documents the equivalent workflow using direct REST calls to `/agent/sync-context` and `/agent/feed-items`.
-
-### Platform Scraping Instructions
-
-Instructions live in `skill/resources/{platform}.md` and are served as MCP resources at `scrolless://platforms/{platform}`. Each file provides:
-
-1. **Target URL(s)**: Where to navigate
-2. **Extraction guidance**: What data to pull, described semantically
-3. **Pagination**: How to scroll or page through results
-4. **Edge cases**: Content to skip and how to identify it
-5. **Field mapping**: How to map extracted data to the `AgentFeedItem` schema
-
-Instructions are written for an AI agent that understands pages visually — not for a traditional scraper needing exact selectors.
-
-### Agent Feed Item Schema
+## Agent Feed Item Schema
 
 ```typescript
 interface AgentFeedItem {
-  // Required
-  source_id: string;       // Platform-native ID (video ID, tweet ID, etc.)
-  title: string;
-  url: string;             // Canonical URL — server normalises for dedup
-  published_at: string;    // ISO 8601
-
-  // Optional
-  author?: string;
-  content_preview?: string;  // First ~300 chars
-  thumbnail_url?: string;
-  tags?: string[];
-  is_discovery?: boolean;    // false = subscribed feed, true = suggested/trending
+  source_id: string;       // Platform-native ID
+  url: string;             // Canonical URL (plaintext — server logs url_hash)
+  published_at: string;    // ISO 8601 (plaintext)
+  is_discovery?: boolean;  // default false (plaintext)
+  encrypted_fields: string; // base64(iv[12] || ciphertext || authTag[16])
+                            // Decrypts to: { title, author, content_preview, thumbnail_url, tags }
 }
 ```
 
@@ -579,86 +705,103 @@ interface AgentFeedItem {
 
 ### Agent Errors
 
-- Browser timeouts, CAPTCHAs, login prompts → log and skip that source
-- Network errors → retry once, then abort that source
-- Server 401 → token invalid, stop and alert user
+- Device offline → 503 `{ "error": "device_offline" }` — agent should retry on next scheduled run
+- Invalid payload → 400 with descriptive message
+- Invalid token → 401
 - Server 429 → rate limited, stop and wait for next run
 
 ### Server Errors
 
-- Invalid payload → 400 with descriptive error
-- Invalid token → 401
 - Push delivery 410 (Gone) → delete stale subscription
 - Expired OAuth token → 401 with `WWW-Authenticate: Bearer error="invalid_token"`
 
 ### Rate Limiting
 
-Applied on MCP and REST agent endpoints:
-- Default: 60 requests per hour per token/user
-- Configurable in `config.json`
-- Returns 429 with `Retry-After` header
+Applied only on agent and MCP routes (scoped plugin — does not affect `/api/*` PWA routes):
+
+```typescript
+await fastify.register(async (agentScope) => {
+  await agentScope.register(fastifyRateLimit, { max: 60, timeWindow: '1 hour' });
+  registerAgentRoutes(agentScope, db, sseManager);
+  registerMcpHandler(agentScope, db, sseManager);
+});
+```
+
+### 503 device_offline Semantics
+
+- Returned to agent when there is no active SSE connection for the target `user_id`
+- `last_sync_at` on `user_sources` is NOT updated
+- `sync_attempts` row is inserted with `status = 'device_offline'`
+- Web Push notification is attempted (notify user to open app)
+- Agent treats 503 as "try again later" — not a permanent failure
+
+---
+
+## Paid Tier — Extended Design
+
+### Multi-Device Key Wrapping
+
+```
+1. On account creation: device generates P-256 keypair
+2. User sets a passphrase
+3. Passphrase → Argon2id → 32-byte wrapping key
+4. Private key encrypted with wrapping key (AES-256-GCM)
+5. Ciphertext stored server-side in `user_key_bundles`
+6. On new device: user enters passphrase → derive wrapping key → decrypt private key
+7. New device now holds the same private key → receives the same encrypted payloads
+```
+
+The passphrase never leaves the client. The server stores only the ciphertext of the private key.
+
+### Offline Queue
+
+When a paid-tier device is offline, the server queues the encrypted relay payload in `relay_queue` with a configurable TTL (default 24 h). On reconnect, the device pulls missed payloads. Queue entries are deleted after delivery or TTL expiry.
+
+### Additional Server Tables (Paid Tier)
+
+```sql
+CREATE TABLE user_key_bundles (
+    user_id         TEXT PRIMARY KEY,    -- usr_*
+    public_key      TEXT NOT NULL,       -- base64 P-256 point (plaintext)
+    wrapped_key     TEXT NOT NULL,       -- base64 AES-GCM(Argon2id(passphrase), private_key)
+    argon2_params   TEXT NOT NULL,       -- JSON: { m, t, p, salt }
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE relay_queue (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    payload         TEXT NOT NULL,       -- JSON encrypted relay payload (server never decrypts)
+    queued_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    expires_at      TEXT NOT NULL,
+    delivered       INTEGER NOT NULL DEFAULT 0
+);
+```
 
 ---
 
 ## Production Notes
 
-### Database
+### Timestamps
 
-Two supported configurations:
+All SQLite defaults use `strftime('%Y-%m-%dT%H:%M:%SZ', 'now')` to produce UTC ISO 8601 strings with a `Z` suffix. Client code always appends `Z` when parsing if missing: `new Date(ts.endsWith('Z') ? ts : ts + 'Z')`.
 
-**Self-hosted (SQLite):** Single-user, owner-operated deployments use SQLite. Single file, zero configuration, trivially backed up. No migration needed.
+### User Identity Seam
 
-**Hosted (Postgres):** Multi-user deployments require Postgres. SQLite has no concurrent write support and no access controls suitable for serving multiple users.
+`user_id` is always one of `'local'` | `dev_*` | `usr_*`. Auth middleware resolves this before handing off to route handlers. Every DB query includes `WHERE user_id = ?`. Never hardcode `'local'` except in the self-hosted bootstrap path.
 
-Migration from self-hosted SQLite to hosted Postgres:
+### Source Labels
 
-**Checklist:**
-1. Provision a Postgres instance (e.g. Render Postgres, Supabase, or Neon)
-2. Replace `better-sqlite3` with `postgres` or `pg`; update `server/db.ts`
-3. Replace all `datetime('now')` with `NOW()` in queries — the only SQLite-specific construct in the schema
-4. Replace `INSERT OR IGNORE` with `INSERT ... ON CONFLICT DO NOTHING`
-5. Set `DATABASE_URL` environment variable; remove the SQLite file path config
-6. Run schema migrations on first deploy; confirm all indexes are created
+Source names are stored lowercase (`'youtube'`, `'x'`, `'news'`). Display labels are mapped client-side:
 
-Use parameterised queries everywhere. No string concatenation in SQL.
-
-### User Identity
-
-In self-hosted mode, every query defaults to `user_id = 'local'`. In hosted mode, `user_id` must be resolved from the authenticated Clerk session for every request.
-
-User auth is handled by Clerk. Clerk session cookie authenticates `/api/*` routes and resolves a real `user_id`. The MCP and `/agent/*` routes use token-based auth (Bearer or OAuth) which also resolves to a `user_id`. All queries are already scoped with `WHERE user_id = ?` — the seam is only in the defaulting logic.
-
-**Checklist:**
-1. Integrate Clerk SDK; verify session middleware resolves `user_id` from the Clerk session on all `/api/*` routes
-2. Gate the `'local'` fallback behind `NODE_ENV !== 'production'` — in hosted mode a missing `user_id` must be a 401, not a silent fallback; the fallback remains for local development and self-hosted deployments
-3. On first login, seed default `user_preferences` and `user_sources` rows for the new `user_id` (currently done at DB init for `'local'`)
-4. Ensure agent token creation and OAuth token issuance bind to the authenticated `user_id`, not a hardcoded value
-
-### Client-Side Encryption
-
-Required for hosted deployments. Feed content fields must be encrypted by the agent prior to submission and decrypted in the browser. The server stores only ciphertext — the operator cannot read user feed content. No schema changes are needed; only the agent and PWA change.
-
-Self-hosted deployments may skip this (the owner operates the server and controls the data).
-
-**Scheme:**
-- Algorithm: AES-256-GCM
-- Key derivation: PBKDF2(passphrase, user-specific salt, 100 000 iterations, SHA-256)
-- Salt is generated once per user and stored server-side (in `user_preferences`)
-- The passphrase is entered by the user and never sent to the server
-- Each encrypted value is stored as `base64(iv || ciphertext || authTag)`
-
-**Fields to encrypt** (content columns in `feed_items`):
-- `title`, `author`, `content_preview`, `thumbnail_url`, `raw_json`
-
-**Fields that must stay plaintext** (used for server-side filtering and querying):
-- `source`, `published_at`, `tags`, `is_discovery`, `is_read`, `url`, `url_hash`
-
-**Implementation checklist:**
-1. Agent: derive key from user passphrase + salt before each run; encrypt the content fields before calling `submit_items` / `POST /agent/feed-items`
-2. PWA: prompt for passphrase on first load; derive the same key in the browser using the Web Crypto API (`SubtleCrypto.deriveKey`); decrypt fields before rendering
-3. Server: add a `GET /api/encryption/salt` endpoint and a one-time `POST /api/encryption/salt` endpoint to seed the salt; no other server changes required
-4. Do not encrypt `url` — it must remain readable for dedup and push notification links
+```typescript
+const SOURCE_LABELS: Record<string, string> = {
+  youtube: 'YouTube',
+  x: 'X',
+  news: 'News',
+};
+```
 
 ### Hosting
 
-The server binds to `127.0.0.1:3333` and makes no assumptions about the network layer. HTTPS is always handled externally (Cloudflare Tunnel, load balancer, or platform proxy).
+The server binds to `127.0.0.1:3333`. HTTPS is always handled externally (Cloudflare Tunnel, load balancer, or platform proxy).
