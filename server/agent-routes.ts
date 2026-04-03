@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 import { normaliseUrl, hashUrl } from './db.js';
-import type { AgentFeedPayload, AgentFeedResponse, AgentState, AgentPreferences, AgentSyncContext, AgentSyncSource } from './types.js';
+import type { AgentFeedPayload, AgentFeedResponse, AgentState, AgentPreferences, AgentSyncContext, AgentSyncSource, AgentEncryptedFeedPayload } from './types.js';
+import type { SseManager } from './sse-manager.js';
 
 // Augment FastifyRequest to include userId attached by auth hook
 declare module 'fastify' {
@@ -20,6 +21,10 @@ export type PushCallback = (
 // ── Shared business logic (used by both REST routes and MCP tools) ──
 
 export function getSyncContext(db: Database.Database, userId: string): AgentSyncContext {
+  const device = db.prepare(
+    `SELECT public_key FROM device_registrations WHERE user_id = ?`
+  ).get(userId) as { public_key: string } | undefined;
+
   const sourceRows = db.prepare(
     `SELECT name, enabled, urls, max_items, scraping_notes FROM user_sources WHERE user_id = ?`
   ).all(userId) as Array<{
@@ -57,6 +62,10 @@ export function getSyncContext(db: Database.Database, userId: string): AgentSync
   });
 
   return {
+    encryption: {
+      public_key: device?.public_key ?? '',
+      algorithm: 'ECIES-P256-AES256GCM',
+    },
     sources,
     filters: { blocked_keywords: blockedKeywords },
   };
@@ -168,7 +177,8 @@ export function insertFeedItems(
 export function registerAgentRoutes(
   fastify: FastifyInstance,
   db: Database.Database,
-  onNewItems?: PushCallback
+  onNewItems?: PushCallback,
+  sseManager?: SseManager
 ): void {
   // GET /agent/sync-context
   fastify.get('/agent/sync-context', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -179,7 +189,7 @@ export function registerAgentRoutes(
   // POST /agent/feed-items
   fastify.post('/agent/feed-items', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = req.userId ?? 'local';
-    const body = req.body as AgentFeedPayload;
+    const body = req.body as AgentFeedPayload | AgentEncryptedFeedPayload;
 
     if (!body || typeof body.source !== 'string' || !body.source.trim()) {
       return reply.status(400).send({ error: '`source` is required and must be a non-empty string' });
@@ -188,8 +198,36 @@ export function registerAgentRoutes(
       return reply.status(400).send({ error: '`items` is required and must be an array' });
     }
 
+    if ('ephemeral_public_key' in body && typeof body.ephemeral_public_key === 'string') {
+      if (!sseManager) {
+        return reply.status(503).send({ error: 'device_offline' });
+      }
+
+      const relayPayload = body as AgentEncryptedFeedPayload;
+      const relayed = sseManager.send(userId, 'feed_items', relayPayload);
+      const status = relayed ? 'relayed' : 'device_offline';
+
+      db.prepare(`
+        INSERT INTO sync_attempts (user_id, source, item_count, status)
+        VALUES (?, ?, ?, ?)
+      `).run(userId, relayPayload.source, relayPayload.items.length, status);
+
+      if (!relayed) {
+        onNewItems?.(userId, relayPayload.source, relayPayload.items.length, undefined).catch(() => {});
+        return reply.status(503).send({ error: 'device_offline' });
+      }
+
+      db.prepare(`
+        UPDATE user_sources
+        SET last_sync_at = datetime('now')
+        WHERE user_id = ? AND name = ?
+      `).run(userId, relayPayload.source);
+
+      return reply.status(200).send({ relayed: relayPayload.items.length });
+    }
+
     try {
-      const response = insertFeedItems(db, userId, body, onNewItems);
+      const response = insertFeedItems(db, userId, body as AgentFeedPayload, onNewItems);
       return reply.status(201).send(response);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Validation error';

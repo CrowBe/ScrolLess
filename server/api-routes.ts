@@ -1,6 +1,7 @@
 import { randomBytes, createHash } from 'crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
+import type { SseManager } from './sse-manager.js';
 
 interface FeedQuery {
   limit?: string;
@@ -31,8 +32,54 @@ function parseMetadata(raw: string | null): Record<string, string | number | boo
 
 export function registerApiRoutes(
   fastify: FastifyInstance,
-  db: Database.Database
+  db: Database.Database,
+  sseManager?: SseManager
 ): void {
+  // POST /api/device/register
+  fastify.post('/api/device/register', async (req: FastifyRequest, reply: FastifyReply) => {
+    const body = req.body as { public_key?: string; device_id?: string };
+
+    if (!body?.public_key || !body?.device_id) {
+      return reply.status(400).send({ error: 'public_key and device_id are required' });
+    }
+    if (!body.device_id.startsWith('dev_')) {
+      return reply.status(400).send({ error: 'device_id must start with dev_' });
+    }
+
+    db.prepare(`
+      INSERT OR IGNORE INTO device_registrations (user_id, public_key)
+      VALUES (?, ?)
+    `).run(body.device_id, body.public_key);
+
+    return reply.status(201).send({ user_id: body.device_id });
+  });
+
+  // GET /api/stream
+  fastify.get('/api/stream', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userIdHeader = req.headers['x-device-id'];
+    const userId = Array.isArray(userIdHeader) ? userIdHeader[0] : userIdHeader;
+    if (!userId || !userId.startsWith('dev_')) {
+      return reply.status(401).send({ error: 'Missing or invalid X-Device-Id header' });
+    }
+
+    const registration = db.prepare(
+      `SELECT user_id FROM device_registrations WHERE user_id = ?`
+    ).get(userId) as { user_id: string } | undefined;
+    if (!registration) {
+      return reply.status(401).send({ error: 'Unknown device' });
+    }
+    if (!sseManager) {
+      return reply.status(503).send({ error: 'SSE manager unavailable' });
+    }
+
+    sseManager.register(userId, reply);
+    db.prepare(`UPDATE device_registrations SET last_seen = datetime('now') WHERE user_id = ?`).run(userId);
+
+    req.raw.on('close', () => {
+      sseManager.remove(userId);
+    });
+  });
+
   // GET /api/feed
   fastify.get('/api/feed', async (req: FastifyRequest, reply: FastifyReply) => {
     const q = req.query as FeedQuery;
@@ -187,22 +234,45 @@ export function registerApiRoutes(
 
   // GET /api/sync/status
   fastify.get('/api/sync/status', async (_req: FastifyRequest, reply: FastifyReply) => {
-    const rows = db.prepare(`
-      SELECT source, synced_at, items_added, items_duped, error
-      FROM sync_log
+    const missed = db.prepare(`
+      SELECT source, attempted_at, status, item_count
+      FROM sync_attempts
       WHERE user_id = 'local'
-      GROUP BY source
-      HAVING synced_at = MAX(synced_at)
-      ORDER BY synced_at DESC
+        AND status != 'relayed'
+        AND attempted_at >= datetime('now', '-1 day')
+      ORDER BY attempted_at DESC
     `).all() as Array<{
       source: string;
-      synced_at: string;
-      items_added: number;
-      items_duped: number;
-      error: string | null;
+      attempted_at: string;
+      status: 'device_offline' | 'error';
+      item_count: number;
     }>;
 
-    return reply.send(rows);
+    const relayedRows = db.prepare(`
+      SELECT attempted_at
+      FROM sync_attempts
+      WHERE user_id = 'local' AND status = 'relayed'
+      ORDER BY attempted_at DESC
+      LIMIT 10
+    `).all() as Array<{
+      attempted_at: string;
+    }>;
+
+    let nextSyncEstimate: string | null = null;
+    if (relayedRows.length >= 2) {
+      const timestamps = relayedRows
+        .map((row) => Date.parse(row.attempted_at))
+        .filter((ts) => !Number.isNaN(ts))
+        .sort((a, b) => a - b);
+      if (timestamps.length >= 2) {
+        const intervals = timestamps.slice(1).map((ts, idx) => ts - timestamps[idx]);
+        const avgInterval = intervals.reduce((sum, n) => sum + n, 0) / intervals.length;
+        const last = timestamps[timestamps.length - 1];
+        nextSyncEstimate = new Date(last + avgInterval).toISOString();
+      }
+    }
+
+    return reply.send({ missed, next_sync_estimate: nextSyncEstimate });
   });
 
   // GET /api/push/vapid-key

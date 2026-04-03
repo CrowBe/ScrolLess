@@ -35,6 +35,14 @@ CREATE INDEX IF NOT EXISTS idx_feed_saved ON feed_items(is_saved);
 CREATE INDEX IF NOT EXISTS idx_feed_user ON feed_items(user_id);
 CREATE INDEX IF NOT EXISTS idx_feed_discovery ON feed_items(is_discovery);
 
+-- Device registrations (edge device identity + public key)
+CREATE TABLE IF NOT EXISTS device_registrations (
+    user_id     TEXT PRIMARY KEY,
+    public_key  TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    last_seen   TEXT
+);
+
 -- Agent API keys (hashed)
 CREATE TABLE IF NOT EXISTS agent_tokens (
     token_hash  TEXT PRIMARY KEY,
@@ -54,6 +62,18 @@ CREATE TABLE IF NOT EXISTS sync_log (
     items_duped INTEGER NOT NULL DEFAULT 0,
     error       TEXT
 );
+
+-- Edge relay sync attempts (no feed content)
+CREATE TABLE IF NOT EXISTS sync_attempts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      TEXT NOT NULL,
+    source       TEXT NOT NULL,
+    attempted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    item_count   INTEGER NOT NULL DEFAULT 0,
+    status       TEXT NOT NULL,  -- 'relayed' | 'device_offline' | 'error'
+    error        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sync_attempts_user ON sync_attempts(user_id, attempted_at DESC);
 
 -- Web Push subscription endpoints
 CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -80,6 +100,7 @@ CREATE TABLE IF NOT EXISTS user_sources (
     enabled         INTEGER NOT NULL DEFAULT 1,
     urls            TEXT,                         -- JSON array of URLs
     max_items       INTEGER,                      -- per-source override
+    last_sync_at    TEXT,
     scraping_notes  TEXT,                         -- freeform notes appended to platform resource
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     PRIMARY KEY (user_id, name)

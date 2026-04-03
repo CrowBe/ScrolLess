@@ -35,6 +35,11 @@ export function initDb(dbPath?: string): Database.Database {
     // Column already exists — safe to ignore
   }
   try {
+    db.exec(`ALTER TABLE user_sources ADD COLUMN last_sync_at TEXT`);
+  } catch {
+    // Column already exists — safe to ignore
+  }
+  try {
     db.exec(`ALTER TABLE feed_items ADD COLUMN is_saved INTEGER NOT NULL DEFAULT 0`);
   } catch {
     // Column already exists — safe to ignore
