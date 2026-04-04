@@ -17,7 +17,7 @@ For each article/story on the page, extract:
 
 | Field | Where to find it | Notes |
 |---|---|---|
-| `source_id` | Hash of the article URL | Use a simple hash — the server deduplicates by URL anyway |
+| `source_id` | Hash of the article URL | Use a stable hash so the device can deduplicate consistently |
 | `title` | Article headline | The main title text |
 | `author` | Publication name or article author | Use the site name if individual author isn't shown |
 | `url` | Article link URL | The canonical URL of the article (not the site's internal redirect) |

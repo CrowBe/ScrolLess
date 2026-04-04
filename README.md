@@ -166,7 +166,7 @@ Available MCP tools:
 | Tool | Description |
 |---|---|
 | `get_sync_context` | Returns enabled sources, URLs, last sync times, and content filters |
-| `submit_items` | Submit a batch of scraped items; returns inserted/duplicate counts |
+| `submit_items` | Submit an encrypted batch; returns relayed count |
 
 Available MCP resources: `scrolless://platforms/{name}` — platform-specific scraping instructions from `skill/resources/{name}.md`.
 
@@ -176,7 +176,7 @@ Available MCP resources: `scrolless://platforms/{name}` — platform-specific sc
 curl -X POST http://localhost:3333/agent/feed-items \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"source":"youtube","items":[{"source_id":"abc123","title":"Test","url":"https://youtube.com/watch?v=abc123","published_at":"2026-03-23T10:00:00Z"}]}'
+  -d '{"source":"youtube","ephemeral_public_key":"BASE64_EPHEMERAL_P256_KEY","items":[{"source_id":"abc123","url":"https://youtube.com/watch?v=abc123","published_at":"2026-03-23T10:00:00Z","encrypted_fields":"BASE64_IV_CIPHERTEXT_TAG"}]}'
 ```
 
 ---

@@ -35,12 +35,9 @@ No platform-specific instructions are available for this source.
 
 Extract content items from the provided URLs. For each item, extract:
 - source_id: a unique identifier for the item
-- title: the item's title or headline
 - url: the canonical URL
 - published_at: publication timestamp in ISO 8601 format
-- author: the content creator (if available)
-- content_preview: first ~300 characters of content (if available)
-- thumbnail_url: a thumbnail image URL (if available)
+- plaintext fields to encrypt: title, author, content_preview, thumbnail_url, tags
 
 Skip ads, sponsored content, and navigation elements.
 `;
