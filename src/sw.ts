@@ -1,30 +1,30 @@
 /// <reference lib="webworker" />
 // Service worker — built to dist/client/sw.js (no hashing) via build-sw.mjs
 
-declare const self: ServiceWorkerGlobalScope;
+const sw = globalThis as unknown as ServiceWorkerGlobalScope;
 
 const CACHE = 'scrolless-v1';
 const APP_SHELL = ['/', '/manifest.json', '/icons/icon-192.png'];
 
 // Install: cache app shell
-self.addEventListener('install', (event) => {
+sw.addEventListener('install', (event: ExtendableEvent) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())
+    caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)).then(() => sw.skipWaiting())
   );
 });
 
 // Activate: clean old caches
-self.addEventListener('activate', (event) => {
+sw.addEventListener('activate', (event: ExtendableEvent) => {
   event.waitUntil(
     caches
       .keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim())
+      .then(() => sw.clients.claim())
   );
 });
 
 // Fetch: serve shell from cache for navigations, network-first for API
-self.addEventListener('fetch', (event: FetchEvent) => {
+sw.addEventListener('fetch', (event: FetchEvent) => {
   const url = new URL(event.request.url);
 
   // Pass API and agent requests through to network
@@ -48,7 +48,7 @@ self.addEventListener('fetch', (event: FetchEvent) => {
 });
 
 // Push: show notification
-self.addEventListener('push', (event: PushEvent) => {
+sw.addEventListener('push', (event: PushEvent) => {
   const data = event.data?.json() as {
     title: string;
     body: string;
@@ -58,7 +58,7 @@ self.addEventListener('push', (event: PushEvent) => {
   };
 
   event.waitUntil(
-    self.registration.showNotification(data.title, {
+    sw.registration.showNotification(data.title, {
       body: data.body,
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
@@ -69,16 +69,16 @@ self.addEventListener('push', (event: PushEvent) => {
 });
 
 // Notification click: focus or open PWA
-self.addEventListener('notificationclick', (event: NotificationEvent) => {
+sw.addEventListener('notificationclick', (event: NotificationEvent) => {
   event.notification.close();
   const target: string = event.notification.data?.url ?? '/';
 
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+    sw.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
         if ('focus' in client) return (client as WindowClient).focus();
       }
-      return self.clients.openWindow(target);
+      return sw.clients.openWindow(target);
     })
   );
 });
