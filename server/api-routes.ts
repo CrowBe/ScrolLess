@@ -37,8 +37,11 @@ function getRequestUserId(req: FastifyRequest, db: Database.Database): string | 
   if (!userId) {
     return process.env.NODE_ENV === 'production' ? null : 'local';
   }
+  if (userId.startsWith('usr_')) {
+    return userId;
+  }
   if (!userId.startsWith('dev_')) {
-    return null;
+    return process.env.NODE_ENV === 'production' ? null : 'local';
   }
 
   const registration = db.prepare(
@@ -95,6 +98,7 @@ export function registerApiRoutes(
   sseManager?: SseManager
 ): void {
   const isPaidTier = (userId: string): boolean => userId.startsWith('usr_');
+  const paidFeedOnly = process.env.ENFORCE_PAID_FEED === '1';
 
   const verifySignature = (publicKey: string, nonce: string, signature: string): boolean => {
     try {
@@ -267,7 +271,7 @@ export function registerApiRoutes(
     const q = req.query as FeedQuery;
     const userId = getRequestUserId(req, db);
     if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
-    if (!isPaidTier(userId)) {
+    if (paidFeedOnly && !isPaidTier(userId)) {
       return reply.status(403).send({ error: 'feed endpoint disabled for free tier; use paid queue workflow' });
     }
     const limit = Math.min(Math.max(1, parseInt(q.limit ?? '50', 10) || 50), 200);

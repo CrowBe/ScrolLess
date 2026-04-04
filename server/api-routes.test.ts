@@ -321,3 +321,60 @@ describe('POST /api/v1/queue/ack', () => {
     expect(secondAck.json()).toEqual({ ok: true, status: 'acked' });
   });
 });
+
+describe('paid feed gating feature flag', () => {
+  let db: Database.Database;
+  let app: FastifyInstance;
+  const previousPaidOnly = process.env.ENFORCE_PAID_FEED;
+
+  beforeEach(async () => {
+    process.env.ENFORCE_PAID_FEED = '1';
+    db = createTestDb();
+    db.prepare(`
+      INSERT INTO feed_items (
+        id, user_id, source, title, url, url_hash, published_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'news:item-1',
+      'usr_paid',
+      'news',
+      'Paid item',
+      'https://example.com/paid',
+      'paid_hash',
+      '2026-04-04T00:00:00Z'
+    );
+    db.prepare(
+      `INSERT INTO device_registrations (user_id, public_key) VALUES (?, ?)`
+    ).run('dev_free', 'pk');
+
+    app = Fastify();
+    registerApiRoutes(app, db);
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app.close();
+    db.close();
+    if (previousPaidOnly == null) {
+      delete process.env.ENFORCE_PAID_FEED;
+    } else {
+      process.env.ENFORCE_PAID_FEED = previousPaidOnly;
+    }
+  });
+
+  it('allows paid identities and blocks free device identities when enabled', async () => {
+    const paidRes = await app.inject({
+      method: 'GET',
+      url: '/api/feed',
+      headers: { 'x-device-id': 'usr_paid' },
+    });
+    expect(paidRes.statusCode).toBe(200);
+
+    const freeRes = await app.inject({
+      method: 'GET',
+      url: '/api/feed',
+      headers: { 'x-device-id': 'dev_free' },
+    });
+    expect(freeRes.statusCode).toBe(403);
+  });
+});
