@@ -14,6 +14,7 @@ import { registerApiRoutes } from './api-routes.js';
 import { registerOAuthRoutes, seedOAuthClients } from './oauth-routes.js';
 import { registerMcpHandler } from './mcp.js';
 import { initPush, notifyNewItems } from './push.js';
+import { SseManager } from './sse-manager.js';
 import type { AppConfig } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -43,6 +44,7 @@ async function start() {
 
   const dbPath = config.db_path;
   const db = initDb(dbPath);
+  const sseManager = new SseManager();
 
   if (config.agent_token_hash) {
     seedAgentToken(db, config.agent_token_hash, 'default');
@@ -80,7 +82,7 @@ async function start() {
       }
     },
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type', 'Mcp-Session-Id'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Mcp-Session-Id', 'X-Device-Id'],
     exposedHeaders: ['Mcp-Session-Id'],
   });
 
@@ -132,12 +134,12 @@ async function start() {
         return auth || req.ip;
       },
     });
-    registerAgentRoutes(agentScope, db, pushCallback);
+    registerAgentRoutes(agentScope, db, pushCallback, sseManager);
     registerMcpHandler(agentScope, db, pushCallback);
   });
 
   // Register non-rate-limited routes
-  registerApiRoutes(fastify, db);
+  registerApiRoutes(fastify, db, sseManager);
   registerOAuthRoutes(fastify, db, config);
 
   // Static file serving in production

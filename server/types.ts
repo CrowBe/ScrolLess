@@ -20,12 +20,28 @@ export interface AgentFeedItem {
 
 export interface AgentFeedPayload {
   source: string;
+  ephemeral_public_key?: string;
   items: AgentFeedItem[];
 }
 
 export interface AgentFeedResponse {
-  inserted: number;
-  duplicates: number;
+  inserted?: number;
+  duplicates?: number;
+  relayed?: number;
+}
+
+export interface AgentEncryptedFeedItem {
+  source_id: string;
+  url: string;
+  published_at: string;
+  is_discovery?: boolean;
+  encrypted_fields: string;
+}
+
+export interface AgentEncryptedFeedPayload {
+  source: string;
+  ephemeral_public_key: string;
+  items: AgentEncryptedFeedItem[];
 }
 
 export interface AgentStateSource {
@@ -52,6 +68,10 @@ export interface AgentSyncSource {
 }
 
 export interface AgentSyncContext {
+  encryption?: {
+    public_key: string;
+    algorithm: 'ECIES-P256-AES256GCM';
+  };
   sources: AgentSyncSource[];
   filters: {
     blocked_keywords: string[];
