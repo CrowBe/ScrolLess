@@ -413,29 +413,29 @@ export function registerApiRoutes(
     const body = req.body as { enabled?: number; urls?: string[]; max_items?: number | null };
 
     const sets: string[] = [];
-    const params: unknown[] = [];
+    const setParams: unknown[] = [];
+    const whereParams: unknown[] = [userId, decodeURIComponent(name)];
 
     if (body.enabled != null) {
       sets.push('enabled = ?');
-      params.push(body.enabled);
+      setParams.push(body.enabled);
     }
     if (body.urls != null) {
       sets.push('urls = ?');
-      params.push(JSON.stringify(body.urls));
+      setParams.push(JSON.stringify(body.urls));
     }
     if (body.max_items !== undefined) {
       sets.push('max_items = ?');
-      params.push(body.max_items);
+      setParams.push(body.max_items);
     }
 
     if (sets.length === 0) {
       return reply.status(400).send({ error: 'nothing to update' });
     }
 
-    params.push(decodeURIComponent(name));
     const result = db.prepare(
       `UPDATE user_sources SET ${sets.join(', ')} WHERE user_id = ? AND name = ?`
-    ).run(userId, ...params);
+    ).run(...setParams, ...whereParams);
 
     if (result.changes === 0) {
       return reply.status(404).send({ error: 'source not found' });
