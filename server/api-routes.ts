@@ -1,4 +1,4 @@
-import { randomBytes, createHash } from 'crypto';
+import { randomBytes, createHash, createPublicKey, createVerify } from 'crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 import type { SseManager } from './sse-manager.js';
@@ -37,8 +37,11 @@ function getRequestUserId(req: FastifyRequest, db: Database.Database): string | 
   if (!userId) {
     return process.env.NODE_ENV === 'production' ? null : 'local';
   }
+  if (userId.startsWith('usr_')) {
+    return userId;
+  }
   if (!userId.startsWith('dev_')) {
-    return null;
+    return process.env.NODE_ENV === 'production' ? null : 'local';
   }
 
   const registration = db.prepare(
@@ -48,7 +51,29 @@ function getRequestUserId(req: FastifyRequest, db: Database.Database): string | 
     return null;
   }
 
-  return userId;
+  const rotation = db.prepare(
+    `SELECT active_device_id, previous_active_device_id, grace_expires_at
+     FROM free_device_rotation
+     WHERE scope_id = 1`
+  ).get() as {
+    active_device_id: string;
+    previous_active_device_id: string | null;
+    grace_expires_at: string | null;
+  } | undefined;
+
+  if (!rotation) {
+    return userId;
+  }
+
+  if (rotation.active_device_id === userId) {
+    return userId;
+  }
+  if (rotation.previous_active_device_id === userId && rotation.grace_expires_at) {
+    if (new Date(rotation.grace_expires_at) > new Date()) {
+      return userId;
+    }
+  }
+  return null;
 }
 
 
@@ -72,6 +97,30 @@ export function registerApiRoutes(
   db: Database.Database,
   sseManager?: SseManager
 ): void {
+  const isPaidTier = (userId: string): boolean => userId.startsWith('usr_');
+  const paidFeedOnly = process.env.ENFORCE_PAID_FEED === '1';
+
+  const verifySignature = (publicKey: string, nonce: string, signature: string): boolean => {
+    try {
+      const normalizedSignature = signature.trim();
+      const signatureBuffer = Buffer.from(normalizedSignature, 'base64');
+      if (signatureBuffer.length === 0) {
+        return false;
+      }
+
+      const normalizedKey = publicKey.trim();
+      const key = normalizedKey.includes('BEGIN PUBLIC KEY')
+        ? createPublicKey(normalizedKey)
+        : createPublicKey({ key: Buffer.from(normalizedKey, 'base64'), format: 'der', type: 'spki' });
+      const verifier = createVerify('SHA256');
+      verifier.update(nonce);
+      verifier.end();
+      return verifier.verify(key, signatureBuffer);
+    } catch {
+      return false;
+    }
+  };
+
   const registerDeviceHandler = async (req: FastifyRequest, reply: FastifyReply) => {
     const body = req.body as { public_key?: string; device_id?: string };
 
@@ -94,6 +143,110 @@ export function registerApiRoutes(
   };
   // POST /api/v1/device/register
   fastify.post('/api/v1/device/register', registerDeviceHandler);
+
+  // POST /api/v1/device/challenge
+  fastify.post('/api/v1/device/challenge', async (req: FastifyRequest, reply: FastifyReply) => {
+    const body = req.body as { device_id?: string; public_key?: string };
+    if (!body?.device_id || !body?.public_key) {
+      return reply.status(400).send({ error: 'device_id and public_key are required' });
+    }
+    if (!body.device_id.startsWith('dev_')) {
+      return reply.status(400).send({ error: 'device_id must start with dev_' });
+    }
+
+    const challengeId = `chal_${randomBytes(12).toString('hex')}`;
+    const nonce = randomBytes(32).toString('base64');
+    const issuedAt = new Date();
+    const expiresAt = new Date(issuedAt.getTime() + 5 * 60 * 1000);
+
+    db.prepare(`
+      INSERT INTO device_challenges (challenge_id, device_id, public_key, nonce, issued_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      challengeId,
+      body.device_id,
+      body.public_key,
+      nonce,
+      issuedAt.toISOString(),
+      expiresAt.toISOString()
+    );
+
+    return reply.send({
+      challenge_id: challengeId,
+      nonce,
+      issued_at: issuedAt.toISOString(),
+      expires_at: expiresAt.toISOString(),
+    });
+  });
+
+  // POST /api/v1/device/verify
+  fastify.post('/api/v1/device/verify', async (req: FastifyRequest, reply: FastifyReply) => {
+    const body = req.body as { challenge_id?: string; device_id?: string; signature?: string };
+    if (!body?.challenge_id || !body?.device_id || !body?.signature) {
+      return reply.status(400).send({ error: 'challenge_id, device_id and signature are required' });
+    }
+
+    const challenge = db.prepare(`
+      SELECT challenge_id, device_id, public_key, nonce, expires_at, consumed_at
+      FROM device_challenges
+      WHERE challenge_id = ?
+    `).get(body.challenge_id) as {
+      challenge_id: string;
+      device_id: string;
+      public_key: string;
+      nonce: string;
+      expires_at: string;
+      consumed_at: string | null;
+    } | undefined;
+
+    if (!challenge || challenge.device_id !== body.device_id) {
+      return reply.status(401).send({ error: 'invalid challenge' });
+    }
+    if (challenge.consumed_at) {
+      return reply.status(401).send({ error: 'challenge already used' });
+    }
+    if (new Date(challenge.expires_at) <= new Date()) {
+      return reply.status(401).send({ error: 'challenge expired' });
+    }
+    if (!verifySignature(challenge.public_key, challenge.nonce, body.signature)) {
+      return reply.status(401).send({ error: 'invalid signature' });
+    }
+
+    db.prepare(
+      `UPDATE device_challenges SET consumed_at = ? WHERE challenge_id = ?`
+    ).run(new Date().toISOString(), body.challenge_id);
+
+    db.prepare(`
+      INSERT INTO device_registrations (user_id, public_key, last_seen)
+      VALUES (?, ?, NULL)
+      ON CONFLICT(user_id) DO UPDATE SET
+        public_key = excluded.public_key,
+        last_seen = NULL
+    `).run(body.device_id, challenge.public_key);
+
+    const existingRotation = db.prepare(
+      `SELECT active_device_id FROM free_device_rotation WHERE scope_id = 1`
+    ).get() as { active_device_id: string } | undefined;
+
+    let graceExpiresAt: string | null = null;
+    if (!existingRotation) {
+      db.prepare(`
+        INSERT INTO free_device_rotation (scope_id, active_device_id, previous_active_device_id, grace_expires_at)
+        VALUES (1, ?, NULL, NULL)
+      `).run(body.device_id);
+    } else if (existingRotation.active_device_id !== body.device_id) {
+      graceExpiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      db.prepare(`
+        UPDATE free_device_rotation
+        SET previous_active_device_id = active_device_id,
+            active_device_id = ?,
+            grace_expires_at = ?
+        WHERE scope_id = 1
+      `).run(body.device_id, graceExpiresAt);
+    }
+
+    return reply.send({ ok: true, user_id: body.device_id, grace_expires_at: graceExpiresAt });
+  });
 
   // GET /api/stream
   fastify.get('/api/stream', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -118,6 +271,9 @@ export function registerApiRoutes(
     const q = req.query as FeedQuery;
     const userId = getRequestUserId(req, db);
     if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    if (paidFeedOnly && !isPaidTier(userId)) {
+      return reply.status(403).send({ error: 'feed endpoint disabled for free tier; use paid queue workflow' });
+    }
     const limit = Math.min(Math.max(1, parseInt(q.limit ?? '50', 10) || 50), 200);
     const offset = Math.max(0, parseInt(q.offset ?? '0', 10) || 0);
 
@@ -517,4 +673,50 @@ export function registerApiRoutes(
   };
   // DELETE /api/v1/tokens/:hash
   fastify.delete('/api/v1/tokens/:hash', revokeTokenHandler);
+
+  // POST /api/v1/queue/ack
+  fastify.post('/api/v1/queue/ack', async (req: FastifyRequest, reply: FastifyReply) => {
+    const body = req.body as { delivery_id?: string; device_id?: string };
+    if (!body?.delivery_id || !body?.device_id) {
+      return reply.status(400).send({ error: 'delivery_id and device_id are required' });
+    }
+
+    const existing = db.prepare(`
+      SELECT user_id, acked_at
+      FROM paid_queue_deliveries
+      WHERE delivery_id = ? AND device_id = ?
+    `).get(body.delivery_id, body.device_id) as { user_id: string; acked_at: string | null } | undefined;
+
+    if (!existing) {
+      return reply.status(404).send({ error: 'delivery not found' });
+    }
+
+    if (!existing.acked_at) {
+      const now = new Date().toISOString();
+      db.prepare(`
+        UPDATE paid_queue_deliveries
+        SET acked_at = ?, status = 'acked'
+        WHERE delivery_id = ? AND device_id = ?
+      `).run(now, body.delivery_id, body.device_id);
+
+      const hasAnyAck = db.prepare(`
+        SELECT 1 as ok
+        FROM paid_queue_deliveries
+        WHERE delivery_id = ? AND acked_at IS NOT NULL
+        LIMIT 1
+      `).get(body.delivery_id) as { ok: number } | undefined;
+
+      if (hasAnyAck) {
+        db.prepare(`
+          INSERT INTO paid_queue_cursor (user_id, last_acked_delivery_id, last_acked_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(user_id) DO UPDATE SET
+            last_acked_delivery_id = excluded.last_acked_delivery_id,
+            last_acked_at = excluded.last_acked_at
+        `).run(existing.user_id, body.delivery_id, now);
+      }
+    }
+
+    return reply.send({ ok: true, status: 'acked' });
+  });
 }
