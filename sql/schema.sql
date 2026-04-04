@@ -43,6 +43,25 @@ CREATE TABLE IF NOT EXISTS device_registrations (
     last_seen   TEXT
 );
 
+-- Device proof-of-possession challenges
+CREATE TABLE IF NOT EXISTS device_challenges (
+    challenge_id TEXT PRIMARY KEY,
+    device_id    TEXT NOT NULL,
+    public_key   TEXT NOT NULL,
+    nonce        TEXT NOT NULL,
+    issued_at    TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    consumed_at  TEXT
+);
+
+-- Free-tier single-active-device rotation state
+CREATE TABLE IF NOT EXISTS free_device_rotation (
+    scope_id                 INTEGER PRIMARY KEY CHECK (scope_id = 1),
+    active_device_id         TEXT NOT NULL,
+    previous_active_device_id TEXT,
+    grace_expires_at         TEXT
+);
+
 -- Agent API keys (hashed)
 CREATE TABLE IF NOT EXISTS agent_tokens (
     token_hash  TEXT PRIMARY KEY,
@@ -136,4 +155,26 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
     access_expires  TEXT NOT NULL,
     refresh_expires TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- Paid-tier encrypted queue, tracked per recipient device
+CREATE TABLE IF NOT EXISTS paid_queue_deliveries (
+    delivery_id      TEXT NOT NULL,
+    user_id          TEXT NOT NULL,
+    device_id        TEXT NOT NULL,
+    payload_envelope TEXT NOT NULL,
+    submitted_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    acked_at         TEXT,
+    expires_at       TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'queued', -- queued | delivered_unacked | acked | expired
+    PRIMARY KEY (delivery_id, device_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_paid_queue_user ON paid_queue_deliveries(user_id, submitted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_paid_queue_device ON paid_queue_deliveries(device_id, status);
+
+CREATE TABLE IF NOT EXISTS paid_queue_cursor (
+    user_id                TEXT PRIMARY KEY,
+    last_acked_delivery_id TEXT,
+    last_acked_at          TEXT
 );

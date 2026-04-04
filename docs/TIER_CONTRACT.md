@@ -155,12 +155,12 @@ Behavioral requirements:
 
 ## 10. Implementation TODO checklist
 
-- [ ] Patch `PATCH /api/sources/:name` SQL parameter ordering bug.
+- [x] Patch `PATCH /api/sources/:name` SQL parameter ordering bug.
 - [x] Create this architecture contract doc (`docs/TIER_CONTRACT.md`).
-- [ ] Define and implement `POST /api/v1/device/challenge`.
-- [ ] Define and implement `POST /api/v1/device/verify`.
-- [ ] Define and implement `POST /api/v1/queue/ack` (idempotent ACK).
+- [x] Define and implement `POST /api/v1/device/challenge`.
+- [x] Define and implement `POST /api/v1/device/verify`.
+- [x] Define and implement `POST /api/v1/queue/ack` (idempotent ACK).
 - [x] Migrate device/token routes to `/api/v1/...` and remove unversioned endpoints.
-- [ ] Add free vs paid feature flag/tier gating for feed endpoint behavior.
-- [ ] Implement minimal paid queue schema with per-device delivery rows.
-- [ ] Add acceptance tests for rotation grace period, per-device ACK, and cursor advancement.
+- [x] Add free vs paid feature flag/tier gating for feed endpoint behavior.
+- [x] Implement minimal paid queue schema with per-device delivery rows.
+- [x] Add acceptance tests for rotation grace period, per-device ACK, and cursor advancement.

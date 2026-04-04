@@ -4,6 +4,7 @@ import Database from 'better-sqlite3';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { createSign, generateKeyPairSync } from 'crypto';
 import { registerApiRoutes } from './api-routes.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -195,5 +196,128 @@ describe('versioned auth/token route aliases', () => {
       url: '/api/tokens',
     });
     expect(tokenRes.statusCode).toBe(404);
+  });
+});
+
+describe('device challenge + verify rotation', () => {
+  let db: Database.Database;
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    db = createTestDb();
+    app = Fastify();
+    registerApiRoutes(app, db);
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app.close();
+    db.close();
+  });
+
+  const createVerifiedDevice = async (deviceId: string) => {
+    const keyPair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+    const publicKeyPem = keyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+
+    const challengeRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/device/challenge',
+      payload: { device_id: deviceId, public_key: publicKeyPem },
+    });
+    expect(challengeRes.statusCode).toBe(200);
+    const challenge = challengeRes.json() as { challenge_id: string; nonce: string };
+
+    const signer = createSign('SHA256');
+    signer.update(challenge.nonce);
+    signer.end();
+    const signature = signer.sign(keyPair.privateKey).toString('base64');
+
+    const verifyRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/device/verify',
+      payload: { challenge_id: challenge.challenge_id, device_id: deviceId, signature },
+    });
+    expect(verifyRes.statusCode).toBe(200);
+    return verifyRes.json() as { ok: boolean; user_id: string; grace_expires_at: string | null };
+  };
+
+  it('enforces 5-minute grace and rotates active free-tier device', async () => {
+    const first = await createVerifiedDevice('dev_a');
+    expect(first.ok).toBe(true);
+    expect(first.grace_expires_at).toBeNull();
+
+    const second = await createVerifiedDevice('dev_b');
+    expect(second.ok).toBe(true);
+    expect(second.grace_expires_at).not.toBeNull();
+
+    const duringGrace = await app.inject({
+      method: 'GET',
+      url: '/api/sources',
+      headers: { 'x-device-id': 'dev_a' },
+    });
+    expect(duringGrace.statusCode).toBe(200);
+
+    db.prepare(
+      `UPDATE free_device_rotation SET grace_expires_at = datetime('now', '-1 minute') WHERE scope_id = 1`
+    ).run();
+
+    const afterGrace = await app.inject({
+      method: 'GET',
+      url: '/api/sources',
+      headers: { 'x-device-id': 'dev_a' },
+    });
+    expect(afterGrace.statusCode).toBe(401);
+  });
+});
+
+describe('POST /api/v1/queue/ack', () => {
+  let db: Database.Database;
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    db = createTestDb();
+    db.prepare(`
+      INSERT INTO paid_queue_deliveries (delivery_id, user_id, device_id, payload_envelope, expires_at, status)
+      VALUES
+        ('del_1', 'usr_1', 'dev_A', '{"ciphertext":"a"}', datetime('now', '+1 day'), 'delivered_unacked'),
+        ('del_1', 'usr_1', 'dev_B', '{"ciphertext":"a"}', datetime('now', '+1 day'), 'queued')
+    `).run();
+    app = Fastify();
+    registerApiRoutes(app, db);
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app.close();
+    db.close();
+  });
+
+  it('is idempotent per device and advances cursor when at least one device ACKs', async () => {
+    const firstAck = await app.inject({
+      method: 'POST',
+      url: '/api/v1/queue/ack',
+      payload: { delivery_id: 'del_1', device_id: 'dev_A' },
+    });
+    expect(firstAck.statusCode).toBe(200);
+    expect(firstAck.json()).toEqual({ ok: true, status: 'acked' });
+
+    const row = db.prepare(
+      `SELECT acked_at, status FROM paid_queue_deliveries WHERE delivery_id = ? AND device_id = ?`
+    ).get('del_1', 'dev_A') as { acked_at: string | null; status: string };
+    expect(row.acked_at).not.toBeNull();
+    expect(row.status).toBe('acked');
+
+    const cursor = db.prepare(
+      `SELECT last_acked_delivery_id FROM paid_queue_cursor WHERE user_id = ?`
+    ).get('usr_1') as { last_acked_delivery_id: string } | undefined;
+    expect(cursor?.last_acked_delivery_id).toBe('del_1');
+
+    const secondAck = await app.inject({
+      method: 'POST',
+      url: '/api/v1/queue/ack',
+      payload: { delivery_id: 'del_1', device_id: 'dev_A' },
+    });
+    expect(secondAck.statusCode).toBe(200);
+    expect(secondAck.json()).toEqual({ ok: true, status: 'acked' });
   });
 });
