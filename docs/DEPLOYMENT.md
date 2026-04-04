@@ -184,12 +184,12 @@ Add `vercel.json` at the repo root:
 ```json
 {
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|agent/|mcp|oauth/).*)", "destination": "/index.html" }
   ]
 }
 ```
 
-This routes all non-API paths to the SPA for client-side routing.
+This routes only frontend paths to the SPA for client-side routing and avoids rewriting backend route groups in split-hosting deployments.
 
 ---
 
