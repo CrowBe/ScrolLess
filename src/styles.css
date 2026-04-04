@@ -527,6 +527,24 @@ img { display: block; max-width: 100%; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ── Device Session Status ───────────────────────────────── */
+
+.device-session-status {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  color: var(--on-surface-variant);
+}
+
+.device-session-status__icon { font-size: 1rem; }
+
+.device-session-status--ok { color: var(--primary); }
+
+.device-session-status--warn { color: var(--tertiary); }
+
+.device-session-status--error { color: var(--error); }
+
 /* ── Sync Status ────────────────────────────────────────── */
 .sync-status {
   display: flex;

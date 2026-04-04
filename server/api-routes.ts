@@ -51,6 +51,22 @@ function getRequestUserId(req: FastifyRequest, db: Database.Database): string | 
   return userId;
 }
 
+
+function getStreamUserId(req: FastifyRequest, db: Database.Database): string | null {
+  const fromHeader = getRequestUserId(req, db);
+  if (fromHeader) return fromHeader;
+
+  const q = req.query as { device_id?: string };
+  if (!q.device_id || !q.device_id.startsWith('dev_')) return null;
+
+  const registration = db.prepare(
+    `SELECT user_id FROM device_registrations WHERE user_id = ?`
+  ).get(q.device_id) as { user_id: string } | undefined;
+  if (!registration) return null;
+
+  return q.device_id;
+}
+
 export function registerApiRoutes(
   fastify: FastifyInstance,
   db: Database.Database,
@@ -80,7 +96,7 @@ export function registerApiRoutes(
 
   // GET /api/stream
   fastify.get('/api/stream', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
+    const userId = getStreamUserId(req, db);
     if (!userId || !userId.startsWith('dev_')) {
       return reply.status(401).send({ error: 'Missing or invalid X-Device-Id header for registered device' });
     }
