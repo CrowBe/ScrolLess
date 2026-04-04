@@ -135,7 +135,7 @@ async function start() {
       },
     });
     registerAgentRoutes(agentScope, db, pushCallback, sseManager);
-    registerMcpHandler(agentScope, db, pushCallback);
+    registerMcpHandler(agentScope, db, pushCallback, sseManager);
   });
 
   // Register non-rate-limited routes

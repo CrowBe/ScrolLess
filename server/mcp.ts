@@ -7,8 +7,9 @@ import { z } from 'zod';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 import { verifyAgentToken } from './auth.js';
-import { getSyncContext, insertFeedItems, type PushCallback } from './agent-routes.js';
-import type { AgentFeedPayload } from './types.js';
+import { getSyncContext, type PushCallback } from './agent-routes.js';
+import type { AgentEncryptedFeedPayload } from './types.js';
+import type { SseManager } from './sse-manager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RESOURCES_DIR = join(__dirname, '../skill/resources');
@@ -34,12 +35,9 @@ No platform-specific instructions are available for this source.
 
 Extract content items from the provided URLs. For each item, extract:
 - source_id: a unique identifier for the item
-- title: the item's title or headline
 - url: the canonical URL
 - published_at: publication timestamp in ISO 8601 format
-- author: the content creator (if available)
-- content_preview: first ~300 characters of content (if available)
-- thumbnail_url: a thumbnail image URL (if available)
+- plaintext fields to encrypt: title, author, content_preview, thumbnail_url, tags
 
 Skip ads, sponsored content, and navigation elements.
 `;
@@ -52,7 +50,7 @@ For each source where enabled is true:
   4. Skip any item whose title or content contains a blocked_keyword
   5. Collect up to max_items items
   6. Call submit_items with the batch
-Log the inserted/duplicates counts. If a source fails, continue to the next.`;
+Log the relayed count. If a source fails, continue to the next.`;
 
 function readPlatformResource(name: string): string | null {
   return resourceCache.get(name) ?? null;
@@ -68,7 +66,8 @@ function getScrapingNotes(db: Database.Database, userId: string, sourceName: str
 export function registerMcpHandler(
   fastify: FastifyInstance,
   db: Database.Database,
-  pushCallback?: PushCallback
+  pushCallback?: PushCallback,
+  sseManager?: SseManager
 ): void {
   // Map of session ID to transport, owning userId, and creation time
   const transports = new Map<string, { transport: StreamableHTTPServerTransport; userId: string; createdAt: number }>();
@@ -106,45 +105,56 @@ export function registerMcpHandler(
     // Tool: submit_items
     mcp.tool(
       'submit_items',
-      'Submit a batch of scraped feed items from one source. Returns inserted/duplicates counts.',
+      'Submit an encrypted batch of scraped feed items from one source. Returns relayed count.',
       {
         source: z.string().describe('Source name, e.g. "youtube", "x", "news"'),
+        ephemeral_public_key: z.string().describe('Base64 ephemeral P-256 public key used for this batch'),
         items: z.array(z.object({
           source_id: z.string(),
-          title: z.string(),
           url: z.string(),
           published_at: z.string(),
-          source_type: z.string().optional(),
-          content_type: z.string().optional(),
-          card_type: z.string().optional(),
-          author: z.string().optional(),
-          content_preview: z.string().optional(),
-          thumbnail_url: z.string().optional(),
-          action_label: z.string().optional(),
-          action_icon: z.string().optional(),
-          metadata: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
-          tags: z.array(z.string()).optional(),
+          encrypted_fields: z.string(),
           is_discovery: z.boolean().optional(),
         })).describe('Array of feed items to submit'),
       },
       async (args) => {
-        const payload: AgentFeedPayload = {
+        const payload: AgentEncryptedFeedPayload = {
           source: args.source,
+          ephemeral_public_key: args.ephemeral_public_key,
           items: args.items,
         };
 
-        try {
-          const result = insertFeedItems(db, userId, payload, pushCallback);
+        if (!sseManager) {
           return {
-            content: [{ type: 'text', text: JSON.stringify(result) }],
-          };
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : 'Validation error';
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: message }) }],
+            content: [{ type: 'text', text: JSON.stringify({ error: 'device_offline' }) }],
             isError: true,
           };
         }
+
+        const relayed = sseManager.send(userId, 'feed_items', payload);
+        const status = relayed ? 'relayed' : 'device_offline';
+        db.prepare(`
+          INSERT INTO sync_attempts (user_id, source, item_count, status)
+          VALUES (?, ?, ?, ?)
+        `).run(userId, payload.source, payload.items.length, status);
+
+        if (!relayed) {
+          pushCallback?.(userId, payload.source, payload.items.length, undefined).catch(() => {});
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'device_offline' }) }],
+            isError: true,
+          };
+        }
+
+        db.prepare(`
+          UPDATE user_sources
+          SET last_sync_at = datetime('now')
+          WHERE user_id = ? AND name = ?
+        `).run(userId, payload.source);
+
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ relayed: payload.items.length }) }],
+        };
       }
     );
 

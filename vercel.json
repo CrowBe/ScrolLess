@@ -1,5 +1,5 @@
 {
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|agent/|mcp|oauth/).*)", "destination": "/index.html" }
   ]
 }

@@ -25,11 +25,11 @@ Available as a **hosted product** (multi-user, Postgres + Clerk) and as an **ope
 ```
 
 1. **Agent scrapes**: Claude (via MCP or direct API calls) opens a browser, visits YouTube subscriptions, X timeline, and news sites, and extracts feed items.
-2. **Agent posts**: The agent sends structured feed items to `POST /agent/feed-items` (Bearer token auth) or via the `submit_items` MCP tool.
-3. **Server stores + notifies**: The server inserts items (deduplicating by URL hash), then sends a Web Push notification to subscribed devices.
-4. **PWA renders**: The app fetches from `/api/feed` and displays items sorted by recency with source filtering and read/unread tracking.
+2. **Agent posts**: The agent sends encrypted feed batches to `POST /agent/feed-items` (Bearer token auth) or via the `submit_items` MCP tool.
+3. **Server relays + notifies**: The server relays encrypted items over SSE to connected devices and sends a Web Push notification.
+4. **PWA renders**: The app decrypts and stores items in IndexedDB, then renders the unified feed locally.
 
-The server is deliberately dumb — it stores data, serves it, and sends push notifications. All platform interaction happens on the agent side.
+The server is deliberately dumb — it coordinates relay + metadata and sends push notifications. All platform interaction and feed-content handling happens off-server.
 
 ## Stack
 
@@ -166,7 +166,7 @@ Available MCP tools:
 | Tool | Description |
 |---|---|
 | `get_sync_context` | Returns enabled sources, URLs, last sync times, and content filters |
-| `submit_items` | Submit a batch of scraped items; returns inserted/duplicate counts |
+| `submit_items` | Submit an encrypted batch; returns relayed count |
 
 Available MCP resources: `scrolless://platforms/{name}` — platform-specific scraping instructions from `skill/resources/{name}.md`.
 
@@ -176,7 +176,7 @@ Available MCP resources: `scrolless://platforms/{name}` — platform-specific sc
 curl -X POST http://localhost:3333/agent/feed-items \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"source":"youtube","items":[{"source_id":"abc123","title":"Test","url":"https://youtube.com/watch?v=abc123","published_at":"2026-03-23T10:00:00Z"}]}'
+  -d '{"source":"youtube","ephemeral_public_key":"BASE64_EPHEMERAL_P256_KEY","items":[{"source_id":"abc123","url":"https://youtube.com/watch?v=abc123","published_at":"2026-03-23T10:00:00Z","encrypted_fields":"BASE64_IV_CIPHERTEXT_TAG"}]}'
 ```
 
 ---
