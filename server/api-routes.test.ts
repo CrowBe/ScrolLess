@@ -199,6 +199,48 @@ describe('versioned auth/token route aliases', () => {
   });
 });
 
+describe('device enrollment token protection', () => {
+  let db: Database.Database;
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    db = createTestDb();
+    app = Fastify();
+    registerApiRoutes(app, db, undefined, { deviceEnrollmentToken: 'enroll-secret' });
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app.close();
+    db.close();
+  });
+
+  it('rejects registration without X-Device-Enroll-Token', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/device/register',
+      payload: { device_id: 'dev_secure', public_key: 'pk' },
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({ error: 'Missing or invalid X-Device-Enroll-Token header' });
+  });
+
+  it('allows challenge creation with valid enrollment token', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/device/challenge',
+      headers: { 'x-device-enroll-token': 'enroll-secret' },
+      payload: { device_id: 'dev_secure', public_key: 'pk' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { challenge_id: string; nonce: string };
+    expect(body.challenge_id).toMatch(/^chal_/);
+    expect(body.nonce.length).toBeGreaterThan(10);
+  });
+});
+
 describe('device challenge + verify rotation', () => {
   let db: Database.Database;
   let app: FastifyInstance;

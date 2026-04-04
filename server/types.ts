@@ -80,4 +80,7 @@ export interface AppConfig {
     token_expires_in?: number;
     refresh_token_expires_in?: number;
   };
+  device?: {
+    enrollment_token?: string;
+  };
 }

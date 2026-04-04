@@ -135,6 +135,7 @@ The remaining fields are optional for local testing:
 | `push.subject` | Web Push (set to `mailto:you@example.com`) |
 | `base_url` | OAuth flow, cloud tunnel access |
 | `admin_password` | OAuth consent screen |
+| `device.enrollment_token` | Protecting `/api/v1/device/register` and `/api/v1/device/challenge` from unauthorized enrollment |
 
 Generate VAPID keys if you want push notifications:
 

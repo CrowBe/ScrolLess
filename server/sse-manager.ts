@@ -1,6 +1,6 @@
 import type { FastifyReply } from 'fastify';
 
-type SseEventPayload = Record<string, unknown>;
+type SseEventPayload = object;
 
 interface SseClient {
   reply: FastifyReply;
