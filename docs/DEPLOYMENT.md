@@ -31,7 +31,7 @@ DB_PATH=/data/feed.db
 > **Note**: Render free tier instances spin down after 15 minutes of inactivity. Push notifications won't fire while spun down. Upgrade to Starter ($7/mo) for always-on.
 
 Verify these routes respond from the Render URL:
-- `GET /api/feed` — 200
+- `GET /api/stream` — 401 without `X-Device-Id`, 200 with registered device header
 - `POST /agent/feed-items` — 401 (no token)
 - `GET /oauth/.well-known/oauth-authorization-server` — metadata JSON
 - `/mcp` — MCP endpoint

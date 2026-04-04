@@ -33,9 +33,8 @@
 
 ### Self-Hosted
 
-- Unchanged from original design.
 - `user_id = 'local'`, SQLite, no auth middleware enforced (token still required for agent routes).
-- Feed items stored server-side in SQLite (legacy mode — no E2E encryption required unless opted in).
+- Same encrypted relay model as hosted tiers: server relays ciphertext and does not persist feed content.
 
 ---
 

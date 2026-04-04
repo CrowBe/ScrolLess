@@ -25,11 +25,11 @@ Available as a **hosted product** (multi-user, Postgres + Clerk) and as an **ope
 ```
 
 1. **Agent scrapes**: Claude (via MCP or direct API calls) opens a browser, visits YouTube subscriptions, X timeline, and news sites, and extracts feed items.
-2. **Agent posts**: The agent sends structured feed items to `POST /agent/feed-items` (Bearer token auth) or via the `submit_items` MCP tool.
-3. **Server stores + notifies**: The server inserts items (deduplicating by URL hash), then sends a Web Push notification to subscribed devices.
-4. **PWA renders**: The app fetches from `/api/feed` and displays items sorted by recency with source filtering and read/unread tracking.
+2. **Agent posts**: The agent sends encrypted feed batches to `POST /agent/feed-items` (Bearer token auth) or via the `submit_items` MCP tool.
+3. **Server relays + notifies**: The server relays encrypted items over SSE to connected devices and sends a Web Push notification.
+4. **PWA renders**: The app decrypts and stores items in IndexedDB, then renders the unified feed locally.
 
-The server is deliberately dumb — it stores data, serves it, and sends push notifications. All platform interaction happens on the agent side.
+The server is deliberately dumb — it coordinates relay + metadata and sends push notifications. All platform interaction and feed-content handling happens off-server.
 
 ## Stack
 

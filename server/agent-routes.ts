@@ -1,7 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
-import { normaliseUrl, hashUrl } from './db.js';
-import type { AgentFeedPayload, AgentFeedResponse, AgentState, AgentPreferences, AgentSyncContext, AgentSyncSource, AgentEncryptedFeedPayload } from './types.js';
+import type { AgentFeedResponse, AgentState, AgentPreferences, AgentSyncContext, AgentSyncSource, AgentEncryptedFeedPayload } from './types.js';
 import type { SseManager } from './sse-manager.js';
 
 // Augment FastifyRequest to include userId attached by auth hook
@@ -11,12 +10,7 @@ declare module 'fastify' {
   }
 }
 
-export type PushCallback = (
-  userId: string,
-  source: string,
-  count: number,
-  latestTitle?: string
-) => Promise<void>;
+export type PushCallback = (userId: string, source: string, count: number, latestTitle?: string) => Promise<void>;
 
 // ── Shared business logic (used by both REST routes and MCP tools) ──
 
@@ -26,13 +20,14 @@ export function getSyncContext(db: Database.Database, userId: string): AgentSync
   ).get(userId) as { public_key: string } | undefined;
 
   const sourceRows = db.prepare(
-    `SELECT name, enabled, urls, max_items, scraping_notes FROM user_sources WHERE user_id = ?`
+    `SELECT name, enabled, urls, max_items, scraping_notes, last_sync_at FROM user_sources WHERE user_id = ?`
   ).all(userId) as Array<{
     name: string;
     enabled: number;
     urls: string;
     max_items: number | null;
     scraping_notes: string | null;
+    last_sync_at: string | null;
   }>;
 
   const prefRows = db.prepare(
@@ -42,11 +37,6 @@ export function getSyncContext(db: Database.Database, userId: string): AgentSync
   const globalMaxItems = parseInt(JSON.parse(prefs.get('max_items_per_source') ?? '50'), 10);
   const blockedKeywords: string[] = JSON.parse(prefs.get('blocked_keywords') ?? '[]');
 
-  const syncRows = db.prepare(
-    `SELECT source, MAX(synced_at) as last_sync FROM sync_log WHERE user_id = ? GROUP BY source`
-  ).all(userId) as Array<{ source: string; last_sync: string }>;
-  const syncMap = new Map(syncRows.map(r => [r.source, r.last_sync]));
-
   const sources: AgentSyncSource[] = sourceRows.map(row => {
     if (!row.enabled) {
       return { name: row.name, enabled: false };
@@ -55,7 +45,7 @@ export function getSyncContext(db: Database.Database, userId: string): AgentSync
       name: row.name,
       enabled: true,
       urls: JSON.parse(row.urls) as string[],
-      last_sync: syncMap.get(row.name) ?? null,
+      last_sync: row.last_sync_at ?? null,
       max_items: row.max_items ?? globalMaxItems,
       scraping_resource: `scrolless://platforms/${row.name}`,
     };
@@ -69,107 +59,6 @@ export function getSyncContext(db: Database.Database, userId: string): AgentSync
     sources,
     filters: { blocked_keywords: blockedKeywords },
   };
-}
-
-export function insertFeedItems(
-  db: Database.Database,
-  userId: string,
-  payload: AgentFeedPayload,
-  onNewItems?: PushCallback
-): AgentFeedResponse {
-  const source = payload.source.trim();
-  let inserted = 0;
-  let duplicates = 0;
-
-  const insertStmt = db.prepare(`
-    INSERT OR IGNORE INTO feed_items
-      (id, user_id, source, source_type, content_type, card_type, title, author, url, url_hash, content_preview, thumbnail_url, tags, is_discovery, published_at, action_label, action_icon, metadata_json, raw_json)
-    VALUES
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const insertAll = db.transaction((items: AgentFeedPayload['items']) => {
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-
-      if (!item.source_id || typeof item.source_id !== 'string') {
-        throw new Error(`items[${i}].source_id is required`);
-      }
-      if (!item.title || typeof item.title !== 'string') {
-        throw new Error(`items[${i}].title is required`);
-      }
-      if (!item.url || typeof item.url !== 'string') {
-        throw new Error(`items[${i}].url is required`);
-      }
-      if (!item.published_at || typeof item.published_at !== 'string') {
-        throw new Error(`items[${i}].published_at is required`);
-      }
-      if (isNaN(Date.parse(item.published_at))) {
-        throw new Error(`items[${i}].published_at must be a valid ISO 8601 date string`);
-      }
-      if (item.tags !== undefined && !Array.isArray(item.tags)) {
-        throw new Error(`items[${i}].tags must be an array of strings if provided`);
-      }
-      if (item.metadata !== undefined && (typeof item.metadata !== 'object' || item.metadata === null || Array.isArray(item.metadata))) {
-        throw new Error(`items[${i}].metadata must be an object if provided`);
-      }
-
-      const id = `${source}:${item.source_id}`;
-      const normUrl = normaliseUrl(item.url);
-      const urlHash = hashUrl(normUrl);
-      const tagsJson = item.tags ? JSON.stringify(item.tags) : null;
-      const metadataJson = item.metadata ? JSON.stringify(item.metadata) : null;
-
-      const result = insertStmt.run(
-        id,
-        userId,
-        source,
-        item.source_type ?? null,
-        item.content_type ?? null,
-        item.card_type ?? null,
-        item.title,
-        item.author ?? null,
-        normUrl,
-        urlHash,
-        item.content_preview ?? null,
-        item.thumbnail_url ?? null,
-        tagsJson,
-        item.is_discovery ? 1 : 0,
-        item.published_at,
-        item.action_label ?? null,
-        item.action_icon ?? null,
-        metadataJson,
-        JSON.stringify(item)
-      );
-
-      if (result.changes > 0) {
-        inserted++;
-      } else {
-        duplicates++;
-      }
-    }
-  });
-
-  insertAll(payload.items);
-
-  db.prepare(`
-    INSERT INTO sync_log (user_id, source, items_added, items_duped)
-    VALUES (?, ?, ?, ?)
-  `).run(userId, source, inserted, duplicates);
-
-  if (inserted > 0 && onNewItems) {
-    const latest = db.prepare(`
-      SELECT title FROM feed_items
-      WHERE user_id = ? AND source = ?
-      ORDER BY published_at DESC LIMIT 1
-    `).get(userId, source) as { title: string } | undefined;
-
-    onNewItems(userId, source, inserted, latest?.title).catch((err) => {
-      console.error('Push notification error:', err);
-    });
-  }
-
-  return { inserted, duplicates };
 }
 
 // ── REST route registration ──
@@ -189,7 +78,7 @@ export function registerAgentRoutes(
   // POST /agent/feed-items
   fastify.post('/agent/feed-items', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = req.userId ?? 'local';
-    const body = req.body as AgentFeedPayload | AgentEncryptedFeedPayload;
+    const body = req.body as AgentEncryptedFeedPayload;
 
     if (!body || typeof body.source !== 'string' || !body.source.trim()) {
       return reply.status(400).send({ error: '`source` is required and must be a non-empty string' });
@@ -198,41 +87,49 @@ export function registerAgentRoutes(
       return reply.status(400).send({ error: '`items` is required and must be an array' });
     }
 
-    if ('ephemeral_public_key' in body && typeof body.ephemeral_public_key === 'string') {
-      if (!sseManager) {
-        return reply.status(503).send({ error: 'device_offline' });
+    if (!body.ephemeral_public_key || typeof body.ephemeral_public_key !== 'string') {
+      return reply.status(400).send({ error: '`ephemeral_public_key` is required for encrypted relay payloads' });
+    }
+    for (let i = 0; i < body.items.length; i++) {
+      const item = body.items[i];
+      if (!item.source_id || typeof item.source_id !== 'string') {
+        return reply.status(400).send({ error: `items[${i}].source_id is required` });
       }
-
-      const relayPayload = body as AgentEncryptedFeedPayload;
-      const relayed = sseManager.send(userId, 'feed_items', relayPayload);
-      const status = relayed ? 'relayed' : 'device_offline';
-
-      db.prepare(`
-        INSERT INTO sync_attempts (user_id, source, item_count, status)
-        VALUES (?, ?, ?, ?)
-      `).run(userId, relayPayload.source, relayPayload.items.length, status);
-
-      if (!relayed) {
-        onNewItems?.(userId, relayPayload.source, relayPayload.items.length, undefined).catch(() => {});
-        return reply.status(503).send({ error: 'device_offline' });
+      if (!item.url || typeof item.url !== 'string') {
+        return reply.status(400).send({ error: `items[${i}].url is required` });
       }
-
-      db.prepare(`
-        UPDATE user_sources
-        SET last_sync_at = datetime('now')
-        WHERE user_id = ? AND name = ?
-      `).run(userId, relayPayload.source);
-
-      return reply.status(200).send({ relayed: relayPayload.items.length });
+      if (!item.published_at || typeof item.published_at !== 'string' || Number.isNaN(Date.parse(item.published_at))) {
+        return reply.status(400).send({ error: `items[${i}].published_at must be a valid ISO 8601 date string` });
+      }
+      if (!item.encrypted_fields || typeof item.encrypted_fields !== 'string') {
+        return reply.status(400).send({ error: `items[${i}].encrypted_fields is required` });
+      }
     }
 
-    try {
-      const response = insertFeedItems(db, userId, body as AgentFeedPayload, onNewItems);
-      return reply.status(201).send(response);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Validation error';
-      return reply.status(400).send({ error: message });
+    if (!sseManager) {
+      return reply.status(503).send({ error: 'device_offline' });
     }
+
+    const relayed = sseManager.send(userId, 'feed_items', body);
+    const status = relayed ? 'relayed' : 'device_offline';
+
+    db.prepare(`
+      INSERT INTO sync_attempts (user_id, source, item_count, status)
+      VALUES (?, ?, ?, ?)
+    `).run(userId, body.source, body.items.length, status);
+
+    if (!relayed) {
+      onNewItems?.(userId, body.source, body.items.length, undefined).catch(() => {});
+      return reply.status(503).send({ error: 'device_offline' });
+    }
+
+    db.prepare(`
+      UPDATE user_sources
+      SET last_sync_at = datetime('now')
+      WHERE user_id = ? AND name = ?
+    `).run(userId, body.source);
+
+    return reply.status(200).send({ relayed: body.items.length } satisfies AgentFeedResponse);
   });
 
   // GET /agent/state
@@ -240,13 +137,25 @@ export function registerAgentRoutes(
     const userId = req.userId ?? 'local';
 
     const rows = db.prepare(`
-      SELECT source,
-             MAX(published_at) as last_sync,
-             COUNT(*) as item_count
-      FROM feed_items
-      WHERE user_id = ?
-      GROUP BY source
-    `).all(userId) as Array<{ source: string; last_sync: string | null; item_count: number }>;
+      SELECT us.name as source,
+             us.last_sync_at as last_sync,
+             COALESCE(sa.item_count, 0) as item_count
+      FROM user_sources us
+      LEFT JOIN (
+        SELECT source, item_count
+        FROM sync_attempts s1
+        WHERE user_id = ?
+          AND status = 'relayed'
+          AND attempted_at = (
+            SELECT MAX(s2.attempted_at)
+            FROM sync_attempts s2
+            WHERE s2.user_id = s1.user_id
+              AND s2.source = s1.source
+              AND s2.status = 'relayed'
+          )
+      ) sa ON sa.source = us.name
+      WHERE us.user_id = ?
+    `).all(userId, userId) as Array<{ source: string; last_sync: string | null; item_count: number }>;
 
     const sources: AgentState['sources'] = {};
     for (const row of rows) {
@@ -284,14 +193,10 @@ export function cleanupOldItems(
   userId: string,
   retentionDays: number
 ): { deletedItems: number; deletedLogs: number } {
-  const itemResult = db.prepare(`
-    DELETE FROM feed_items
-    WHERE user_id = ? AND fetched_at < datetime('now', '-' || ? || ' days')
-  `).run(userId, retentionDays);
-
   const logResult = db.prepare(`
-    DELETE FROM sync_log WHERE user_id = ? AND synced_at < datetime('now', '-30 days')
-  `).run(userId);
+    DELETE FROM sync_attempts
+    WHERE user_id = ? AND attempted_at < datetime('now', '-' || ? || ' days')
+  `).run(userId, retentionDays);
 
   // Clean up expired OAuth auth codes
   const authCodesResult = db.prepare(
@@ -303,10 +208,10 @@ export function cleanupOldItems(
     `DELETE FROM oauth_tokens WHERE user_id = ? AND access_expires < datetime('now') AND (refresh_expires IS NULL OR refresh_expires < datetime('now'))`
   ).run(userId);
 
-  const deletedItems = itemResult.changes;
+  const deletedItems = 0;
   const deletedLogs = logResult.changes;
 
-  console.log(`[cleanup] Deleted ${deletedItems} feed items, ${deletedLogs} sync log entries, ${authCodesResult.changes} expired auth codes, ${oauthTokensResult.changes} expired OAuth tokens`);
+  console.log(`[cleanup] Deleted ${deletedLogs} sync attempt entries, ${authCodesResult.changes} expired auth codes, ${oauthTokensResult.changes} expired OAuth tokens`);
   return { deletedItems, deletedLogs };
 }
 
