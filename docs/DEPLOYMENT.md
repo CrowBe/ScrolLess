@@ -18,6 +18,7 @@ Split hosting: Vercel serves the frontend (global CDN), Render runs the backend 
 
 ```
 NODE_ENV=production
+SCROLLESS_ALLOW_DEV_AUTH_BYPASS=false
 AGENT_TOKEN_HASH=<sha256 hash of your agent token>
 VAPID_PUBLIC_KEY=<your VAPID public key>
 VAPID_PRIVATE_KEY=<your VAPID private key>
@@ -31,7 +32,7 @@ DB_PATH=/data/feed.db
 > **Note**: Render free tier instances spin down after 15 minutes of inactivity. Push notifications won't fire while spun down. Upgrade to Starter ($7/mo) for always-on.
 
 Verify these routes respond from the Render URL:
-- `GET /api/stream` — 401 without `X-Device-Id`, 200 with registered device header
+- `GET /api/stream` — 401 without full device proof headers, 200 with registered device + valid proof signature
 - `POST /agent/feed-items` — 401 (no token)
 - `GET /oauth/.well-known/oauth-authorization-server` — metadata JSON
 - `/mcp` — MCP endpoint
@@ -150,12 +151,15 @@ Create the env file:
 mkdir -p ~/.config/scrolless
 cat > ~/.config/scrolless/env << 'EOF'
 AGENT_TOKEN_HASH=<your hash>
+SCROLLESS_ALLOW_DEV_AUTH_BYPASS=false
 VAPID_PUBLIC_KEY=<key>
 VAPID_PRIVATE_KEY=<key>
 VAPID_SUBJECT=mailto:you@example.com
 EOF
 chmod 600 ~/.config/scrolless/env
 ```
+
+> Leave `SCROLLESS_ALLOW_DEV_AUTH_BYPASS` unset (or `false`) in production. This bypass exists only for explicit local development.
 
 Enable and start:
 

@@ -33,7 +33,8 @@
 
 ### Self-Hosted
 
-- `user_id = 'local'`, SQLite, no auth middleware enforced (token still required for agent routes).
+- `user_id = 'local'`, SQLite by default.
+- `/api/*` still runs auth middleware. In development only, auth bypass is allowed **only** when `SCROLLESS_ALLOW_DEV_AUTH_BYPASS=true` and `NODE_ENV !== production`.
 - Same encrypted relay model as hosted tiers: server relays ciphertext and does not persist feed content.
 
 ---
@@ -111,7 +112,7 @@ Authenticated via Bearer token or OAuth access token.
 
 #### `/api/*` — PWA Endpoints
 
-Authenticated via device token (free tier) or session (paid tier).
+Authenticated via registered device identity plus device proof.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -125,15 +126,53 @@ Authenticated via device token (free tier) or session (paid tier).
 | `GET` | `/api/push/vapid-key` | Public VAPID key for push subscription |
 | `POST` | `/api/push/subscribe` | Store a push subscription |
 | `POST` | `/api/push/unsubscribe` | Remove a push subscription |
-| `GET` | `/api/agent-tokens` | List agent tokens for the device/user |
-| `POST` | `/api/agent-tokens` | Create a new agent token |
-| `DELETE` | `/api/agent-tokens/:id` | Revoke an agent token |
+| `GET` | `/api/tokens` | List agent tokens for the device/user |
+| `POST` | `/api/tokens` | Create a new agent token |
+| `DELETE` | `/api/tokens/:hash` | Revoke an agent token |
 
 **Removed routes** (replaced by IndexedDB client reads):
 - `GET /api/feed` — feed is read from IndexedDB
 - `PATCH /api/feed/:id/read` — read state managed in IndexedDB
 - `POST /api/feed/mark-all-read` — managed in IndexedDB
 - `GET /api/stats` — computed client-side from IndexedDB
+
+### Device Proof Model (`/api/*`)
+
+For registered devices, each `/api/*` request is authenticated by:
+
+1. `X-Device-Id: dev_<...>`
+2. `X-Device-Proof-Ts: <unix-seconds>`
+3. `X-Device-Proof-Signature: <base64(signature)>`
+
+The device signs: `<ts>.<HTTP_METHOD>.<request_path_without_query>` using its private key. The server verifies the signature against `device_registrations.public_key`. Proof TTL is short-lived (2 minutes).
+
+Sensitive endpoints require valid device proof (not just identity):
+- `/api/sources*`
+- `/api/tokens*`
+- `/api/push/subscribe`
+- `/api/push/unsubscribe`
+- feed-state mutation routes (`/api/feed/:id/read`, `/api/feed/:id/unread`, `/api/feed/:id/save`, `/api/feed/:id/unsave`, `/api/feed/mark-all-read`)
+
+### Trust Boundary & Threat Model
+
+#### Hosted (managed deployment)
+
+- **Trusted**: server runtime, DB, key material in config/env, TLS termination.
+- **Untrusted**: browser network path, any caller without a registered device private key, MCP clients unless separately authenticated.
+- **Primary risks**:
+  - replay or request forgery against `/api/*`
+  - token theft for `/agent/*`/`/mcp`
+  - device impersonation without private-key proof
+- **Mitigations**:
+  - short-lived device proof signatures bound to method+path
+  - separate auth middleware for `/agent/*` (Bearer/OAuth) and `/api/*` (device proof)
+  - explicit dev bypass opt-in only outside production
+
+#### Self-hosted
+
+- Same cryptographic model as hosted, but operator controls host, network, and secrets.
+- Local misconfiguration is the biggest risk (e.g., exposing HTTP, weak token hygiene, leaving dev bypass enabled).
+- Minimum hardening: HTTPS/TLS, strong agent tokens, and keep `SCROLLESS_ALLOW_DEV_AUTH_BYPASS` unset in production.
 
 #### `/oauth/*` — Authorization Server
 

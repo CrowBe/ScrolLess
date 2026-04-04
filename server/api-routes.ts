@@ -2,6 +2,7 @@ import { randomBytes, createHash } from 'crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 import type { SseManager } from './sse-manager.js';
+import { requireApiAuth, requireSensitiveApiProof } from './auth.js';
 
 interface FeedQuery {
   limit?: string;
@@ -28,27 +29,6 @@ function parseMetadata(raw: string | null): Record<string, string | number | boo
   } catch {
     return undefined;
   }
-}
-
-function getRequestUserId(req: FastifyRequest, db: Database.Database): string | null {
-  const userIdHeader = req.headers['x-device-id'];
-  const userId = Array.isArray(userIdHeader) ? userIdHeader[0] : userIdHeader;
-
-  if (!userId) {
-    return process.env.NODE_ENV === 'production' ? null : 'local';
-  }
-  if (!userId.startsWith('dev_')) {
-    return null;
-  }
-
-  const registration = db.prepare(
-    `SELECT user_id FROM device_registrations WHERE user_id = ?`
-  ).get(userId) as { user_id: string } | undefined;
-  if (!registration) {
-    return null;
-  }
-
-  return userId;
 }
 
 export function registerApiRoutes(
@@ -80,10 +60,9 @@ export function registerApiRoutes(
 
   // GET /api/stream
   fastify.get('/api/stream', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
-    if (!userId || !userId.startsWith('dev_')) {
-      return reply.status(401).send({ error: 'Missing or invalid X-Device-Id header for registered device' });
-    }
+    const auth = requireApiAuth(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     if (!sseManager) {
       return reply.status(503).send({ error: 'SSE manager unavailable' });
     }
@@ -99,8 +78,9 @@ export function registerApiRoutes(
   // GET /api/feed
   fastify.get('/api/feed', async (req: FastifyRequest, reply: FastifyReply) => {
     const q = req.query as FeedQuery;
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireApiAuth(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const limit = Math.min(Math.max(1, parseInt(q.limit ?? '50', 10) || 50), 200);
     const offset = Math.max(0, parseInt(q.offset ?? '0', 10) || 0);
 
@@ -171,8 +151,9 @@ export function registerApiRoutes(
   // PATCH /api/feed/:id/read
   fastify.patch('/api/feed/:id/read', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireSensitiveApiProof(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const result = db.prepare(
       `UPDATE feed_items SET is_read = 1 WHERE id = ? AND user_id = ?`
     ).run(decodeURIComponent(id), userId);
@@ -182,8 +163,9 @@ export function registerApiRoutes(
   // PATCH /api/feed/:id/unread
   fastify.patch('/api/feed/:id/unread', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireSensitiveApiProof(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const result = db.prepare(
       `UPDATE feed_items SET is_read = 0 WHERE id = ? AND user_id = ?`
     ).run(decodeURIComponent(id), userId);
@@ -193,8 +175,9 @@ export function registerApiRoutes(
   // PATCH /api/feed/:id/save
   fastify.patch('/api/feed/:id/save', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireSensitiveApiProof(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const result = db.prepare(
       `UPDATE feed_items SET is_saved = 1 WHERE id = ? AND user_id = ?`
     ).run(decodeURIComponent(id), userId);
@@ -204,8 +187,9 @@ export function registerApiRoutes(
   // PATCH /api/feed/:id/unsave
   fastify.patch('/api/feed/:id/unsave', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireSensitiveApiProof(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const result = db.prepare(
       `UPDATE feed_items SET is_saved = 0 WHERE id = ? AND user_id = ?`
     ).run(decodeURIComponent(id), userId);
@@ -215,8 +199,9 @@ export function registerApiRoutes(
   // POST /api/feed/mark-all-read
   fastify.post('/api/feed/mark-all-read', async (req: FastifyRequest, reply: FastifyReply) => {
     const q = req.query as { source?: string };
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireSensitiveApiProof(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     if (q.source) {
       db.prepare(
         `UPDATE feed_items SET is_read = 1 WHERE user_id = ? AND source = ? AND is_read = 0`
@@ -232,8 +217,9 @@ export function registerApiRoutes(
   // GET /api/stats
   fastify.get('/api/stats', async (req: FastifyRequest, reply: FastifyReply) => {
     const q = req.query as { discovery?: string };
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireApiAuth(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     let discoveryFilter = '';
     if (q.discovery === 'true' || q.discovery === '1') {
       discoveryFilter = ' AND is_discovery = 1';
@@ -263,8 +249,9 @@ export function registerApiRoutes(
 
   // GET /api/sync/status
   fastify.get('/api/sync/status', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireApiAuth(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const missed = db.prepare(`
       SELECT source, attempted_at, status, item_count
       FROM sync_attempts
@@ -308,8 +295,9 @@ export function registerApiRoutes(
 
   // GET /api/push/vapid-key
   fastify.get('/api/push/vapid-key', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireApiAuth(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const row = db.prepare(
       `SELECT value FROM user_preferences WHERE user_id = ? AND key = 'vapid_public_key'`
     ).get(userId) as { value: string } | undefined;
@@ -319,8 +307,9 @@ export function registerApiRoutes(
 
   // POST /api/push/subscribe
   fastify.post('/api/push/subscribe', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireSensitiveApiProof(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const body = req.body as {
       endpoint: string;
       keys: { p256dh: string; auth: string };
@@ -340,8 +329,9 @@ export function registerApiRoutes(
 
   // POST /api/push/unsubscribe
   fastify.post('/api/push/unsubscribe', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireSensitiveApiProof(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const body = req.body as { endpoint: string };
 
     if (!body?.endpoint) {
@@ -357,8 +347,9 @@ export function registerApiRoutes(
 
   // GET /api/sources
   fastify.get('/api/sources', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireApiAuth(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const rows = db.prepare(
       `SELECT name, enabled, urls, max_items, created_at FROM user_sources WHERE user_id = ? ORDER BY name`
     ).all(userId) as Array<{ name: string; enabled: number; urls: string | null; max_items: number | null; created_at: string }>;
@@ -376,8 +367,9 @@ export function registerApiRoutes(
 
   // POST /api/sources
   fastify.post('/api/sources', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireSensitiveApiProof(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const body = req.body as { name?: string; urls?: string[]; max_items?: number };
 
     if (!body?.name || typeof body.name !== 'string' || !body.name.trim()) {
@@ -407,8 +399,9 @@ export function registerApiRoutes(
 
   // PATCH /api/sources/:name
   fastify.patch('/api/sources/:name', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireSensitiveApiProof(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const { name } = req.params as { name: string };
     const body = req.body as { enabled?: number; urls?: string[]; max_items?: number | null };
 
@@ -446,8 +439,9 @@ export function registerApiRoutes(
 
   // DELETE /api/sources/:name
   fastify.delete('/api/sources/:name', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireSensitiveApiProof(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const { name } = req.params as { name: string };
     const result = db.prepare(
       `DELETE FROM user_sources WHERE user_id = ? AND name = ?`
@@ -462,8 +456,9 @@ export function registerApiRoutes(
 
   // GET /api/tokens — list agent tokens (hashes are safe to expose; plain tokens are never stored)
   fastify.get('/api/tokens', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireSensitiveApiProof(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const rows = db.prepare(
       `SELECT token_hash, label, created_at, last_used FROM agent_tokens WHERE user_id = ? ORDER BY created_at DESC`
     ).all(userId) as Array<{ token_hash: string; label: string | null; created_at: string; last_used: string | null }>;
@@ -472,8 +467,9 @@ export function registerApiRoutes(
 
   // POST /api/tokens — create a new agent token; returns the plain token once
   fastify.post('/api/tokens', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireSensitiveApiProof(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const body = req.body as { label?: string } | null;
     const label = (body?.label ?? '').trim() || 'agent';
     const plain = randomBytes(32).toString('hex');
@@ -486,8 +482,9 @@ export function registerApiRoutes(
 
   // DELETE /api/tokens/:hash — revoke a token by its hash
   fastify.delete('/api/tokens/:hash', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const auth = requireSensitiveApiProof(req, reply);
+    if (!auth) return;
+    const userId = auth.userId;
     const { hash } = req.params as { hash: string };
     const result = db.prepare(
       `DELETE FROM agent_tokens WHERE token_hash = ? AND user_id = ?`

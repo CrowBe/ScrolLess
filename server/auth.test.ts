@@ -1,9 +1,10 @@
+import { createSign, generateKeyPairSync } from 'crypto';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { hashToken, verifyAgentToken, seedAgentToken } from './auth.js';
+import { hashToken, verifyAgentToken, seedAgentToken, resolveApiAuth } from './auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -108,5 +109,74 @@ describe('seedAgentToken', () => {
     seedAgentToken(db, 'hash123', 'second');
     const row = db.prepare('SELECT label FROM agent_tokens WHERE token_hash = ?').get('hash123') as { label: string };
     expect(row.label).toBe('first');
+  });
+});
+
+describe('resolveApiAuth', () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = createTestDb();
+    delete process.env.SCROLLESS_ALLOW_DEV_AUTH_BYPASS;
+    process.env.NODE_ENV = 'test';
+  });
+  afterEach(() => { db.close(); });
+
+  it('accepts valid device signature proof', () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const deviceId = 'dev_auth_test';
+    db.prepare(`INSERT INTO device_registrations (user_id, public_key) VALUES (?, ?)`)
+      .run(deviceId, publicKey.export({ type: 'spki', format: 'pem' }).toString());
+
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const url = '/api/sources';
+    const method = 'POST';
+    const payload = `${ts}.${method}.${url}`;
+    const signer = createSign('sha256');
+    signer.update(payload);
+    signer.end();
+    const signature = signer.sign(privateKey).toString('base64');
+
+    const req = {
+      headers: {
+        'x-device-id': deviceId,
+        'x-device-proof-ts': ts,
+        'x-device-proof-signature': signature,
+      },
+      method,
+      url,
+    } as unknown as Parameters<typeof resolveApiAuth>[0];
+
+    const auth = resolveApiAuth(req, db);
+    expect(auth?.userId).toBe(deviceId);
+    expect(auth?.hasDeviceProof).toBe(true);
+  });
+
+  it('rejects missing proof headers for registered device', () => {
+    db.prepare(`INSERT INTO device_registrations (user_id, public_key) VALUES ('dev_missing', 'not-a-real-key')`).run();
+    const req = {
+      headers: {
+        'x-device-id': 'dev_missing',
+      },
+      method: 'GET',
+      url: '/api/feed',
+    } as unknown as Parameters<typeof resolveApiAuth>[0];
+
+    expect(resolveApiAuth(req, db)).toBeNull();
+  });
+
+  it('allows fallback only when explicit dev bypass env var is set', () => {
+    const req = {
+      headers: {},
+      method: 'GET',
+      url: '/api/feed',
+    } as unknown as Parameters<typeof resolveApiAuth>[0];
+
+    expect(resolveApiAuth(req, db)).toBeNull();
+
+    process.env.SCROLLESS_ALLOW_DEV_AUTH_BYPASS = 'true';
+    const auth = resolveApiAuth(req, db);
+    expect(auth?.userId).toBe('local');
+    expect(auth?.authMethod).toBe('dev-bypass');
   });
 });

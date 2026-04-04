@@ -8,7 +8,7 @@ import { join, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 import { initDb } from './db.js';
-import { hashToken, seedAgentToken, verifyAgentToken } from './auth.js';
+import { hashToken, seedAgentToken, verifyAgentToken, registerApiAuthHook } from './auth.js';
 import { registerAgentRoutes, scheduleCleanup } from './agent-routes.js';
 import { registerApiRoutes } from './api-routes.js';
 import { registerOAuthRoutes, seedOAuthClients } from './oauth-routes.js';
@@ -82,7 +82,14 @@ async function start() {
       }
     },
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type', 'Mcp-Session-Id', 'X-Device-Id'],
+    allowedHeaders: [
+      'Authorization',
+      'Content-Type',
+      'Mcp-Session-Id',
+      'X-Device-Id',
+      'X-Device-Proof-Ts',
+      'X-Device-Proof-Signature',
+    ],
     exposedHeaders: ['Mcp-Session-Id'],
   });
 
@@ -122,6 +129,9 @@ async function start() {
   // Push callback passed to agent routes
   const pushCallback = (userId: string, source: string, count: number, latestTitle?: string) =>
     notifyNewItems(db, userId, source, count, latestTitle);
+
+  // Auth preHandler for /api routes (device auth + proof validation)
+  registerApiAuthHook(fastify, db);
 
   // Rate limiting — scoped to agent/MCP routes only
   // (skipIf does not exist in @fastify/rate-limit v9; use scoped plugin instead)
