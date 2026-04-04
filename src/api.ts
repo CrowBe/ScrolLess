@@ -123,11 +123,11 @@ export interface AgentToken {
 }
 
 export function getTokens(): Promise<AgentToken[]> {
-  return req<AgentToken[]>('/api/tokens');
+  return req<AgentToken[]>('/api/v1/tokens');
 }
 
 export function createToken(label: string): Promise<{ token: string; token_hash: string; label: string }> {
-  return req('/api/tokens', {
+  return req('/api/v1/tokens', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ label }),
@@ -135,7 +135,7 @@ export function createToken(label: string): Promise<{ token: string; token_hash:
 }
 
 export function revokeToken(hash: string): Promise<{ ok: boolean }> {
-  return req(`/api/tokens/${encodeURIComponent(hash)}`, { method: 'DELETE' });
+  return req(`/api/v1/tokens/${encodeURIComponent(hash)}`, { method: 'DELETE' });
 }
 
 // Re-export FeedItemResponse for convenience

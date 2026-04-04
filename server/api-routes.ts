@@ -72,8 +72,7 @@ export function registerApiRoutes(
   db: Database.Database,
   sseManager?: SseManager
 ): void {
-  // POST /api/device/register
-  fastify.post('/api/device/register', async (req: FastifyRequest, reply: FastifyReply) => {
+  const registerDeviceHandler = async (req: FastifyRequest, reply: FastifyReply) => {
     const body = req.body as { public_key?: string; device_id?: string };
 
     if (!body?.public_key || !body?.device_id) {
@@ -92,7 +91,9 @@ export function registerApiRoutes(
     `).run(body.device_id, body.public_key);
 
     return reply.status(201).send({ user_id: body.device_id });
-  });
+  };
+  // POST /api/v1/device/register
+  fastify.post('/api/v1/device/register', registerDeviceHandler);
 
   // GET /api/stream
   fastify.get('/api/stream', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -476,18 +477,18 @@ export function registerApiRoutes(
     return reply.send({ ok: true });
   });
 
-  // GET /api/tokens — list agent tokens (hashes are safe to expose; plain tokens are never stored)
-  fastify.get('/api/tokens', async (req: FastifyRequest, reply: FastifyReply) => {
+  const listTokensHandler = async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = getRequestUserId(req, db);
     if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const rows = db.prepare(
       `SELECT token_hash, label, created_at, last_used FROM agent_tokens WHERE user_id = ? ORDER BY created_at DESC`
     ).all(userId) as Array<{ token_hash: string; label: string | null; created_at: string; last_used: string | null }>;
     return reply.send(rows);
-  });
+  };
+  // GET /api/v1/tokens
+  fastify.get('/api/v1/tokens', listTokensHandler);
 
-  // POST /api/tokens — create a new agent token; returns the plain token once
-  fastify.post('/api/tokens', async (req: FastifyRequest, reply: FastifyReply) => {
+  const createTokenHandler = async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = getRequestUserId(req, db);
     if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const body = req.body as { label?: string } | null;
@@ -498,10 +499,11 @@ export function registerApiRoutes(
       `INSERT INTO agent_tokens (token_hash, user_id, label) VALUES (?, ?, ?)`
     ).run(hash, userId, label);
     return reply.status(201).send({ token: plain, token_hash: hash, label });
-  });
+  };
+  // POST /api/v1/tokens
+  fastify.post('/api/v1/tokens', createTokenHandler);
 
-  // DELETE /api/tokens/:hash — revoke a token by its hash
-  fastify.delete('/api/tokens/:hash', async (req: FastifyRequest, reply: FastifyReply) => {
+  const revokeTokenHandler = async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = getRequestUserId(req, db);
     if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const { hash } = req.params as { hash: string };
@@ -512,5 +514,7 @@ export function registerApiRoutes(
       return reply.status(404).send({ error: 'token not found' });
     }
     return reply.send({ ok: true });
-  });
+  };
+  // DELETE /api/v1/tokens/:hash
+  fastify.delete('/api/v1/tokens/:hash', revokeTokenHandler);
 }

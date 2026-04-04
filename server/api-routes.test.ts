@@ -126,3 +126,74 @@ describe('PATCH /api/sources/:name', () => {
     expect(res.json()).toEqual({ error: 'source not found' });
   });
 });
+
+describe('versioned auth/token route aliases', () => {
+  let db: Database.Database;
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    db = createTestDb();
+    app = Fastify();
+    registerApiRoutes(app, db);
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app.close();
+    db.close();
+  });
+
+  it('supports /api/v1/device/register', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/device/register',
+      payload: { device_id: 'dev_v1', public_key: 'test-public-key' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toEqual({ user_id: 'dev_v1' });
+  });
+
+  it('supports /api/v1/tokens create/list/delete', async () => {
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tokens',
+      payload: { label: 'v1 token' },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const created = createRes.json() as { token: string; token_hash: string; label: string };
+    expect(created.token).toMatch(/^[a-f0-9]{64}$/);
+    expect(created.label).toBe('v1 token');
+
+    const listRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/tokens',
+    });
+    expect(listRes.statusCode).toBe(200);
+    const listed = listRes.json() as Array<{ token_hash: string; label: string }>;
+    expect(listed.length).toBe(1);
+    expect(listed[0]?.token_hash).toBe(created.token_hash);
+
+    const deleteRes = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/tokens/${created.token_hash}`,
+    });
+    expect(deleteRes.statusCode).toBe(200);
+    expect(deleteRes.json()).toEqual({ ok: true });
+  });
+
+  it('rejects removed unversioned routes', async () => {
+    const registerRes = await app.inject({
+      method: 'POST',
+      url: '/api/device/register',
+      payload: { device_id: 'dev_legacy', public_key: 'legacy-key' },
+    });
+    expect(registerRes.statusCode).toBe(404);
+
+    const tokenRes = await app.inject({
+      method: 'GET',
+      url: '/api/tokens',
+    });
+    expect(tokenRes.statusCode).toBe(404);
+  });
+});
