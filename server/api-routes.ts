@@ -30,6 +30,27 @@ function parseMetadata(raw: string | null): Record<string, string | number | boo
   }
 }
 
+function getRequestUserId(req: FastifyRequest, db: Database.Database): string | null {
+  const userIdHeader = req.headers['x-device-id'];
+  const userId = Array.isArray(userIdHeader) ? userIdHeader[0] : userIdHeader;
+
+  if (!userId) {
+    return process.env.NODE_ENV === 'production' ? null : 'local';
+  }
+  if (!userId.startsWith('dev_')) {
+    return null;
+  }
+
+  const registration = db.prepare(
+    `SELECT user_id FROM device_registrations WHERE user_id = ?`
+  ).get(userId) as { user_id: string } | undefined;
+  if (!registration) {
+    return null;
+  }
+
+  return userId;
+}
+
 export function registerApiRoutes(
   fastify: FastifyInstance,
   db: Database.Database,
@@ -47,8 +68,11 @@ export function registerApiRoutes(
     }
 
     db.prepare(`
-      INSERT OR IGNORE INTO device_registrations (user_id, public_key)
-      VALUES (?, ?)
+      INSERT INTO device_registrations (user_id, public_key, last_seen)
+      VALUES (?, ?, NULL)
+      ON CONFLICT(user_id) DO UPDATE SET
+        public_key = excluded.public_key,
+        last_seen = NULL
     `).run(body.device_id, body.public_key);
 
     return reply.status(201).send({ user_id: body.device_id });
@@ -56,17 +80,9 @@ export function registerApiRoutes(
 
   // GET /api/stream
   fastify.get('/api/stream', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userIdHeader = req.headers['x-device-id'];
-    const userId = Array.isArray(userIdHeader) ? userIdHeader[0] : userIdHeader;
+    const userId = getRequestUserId(req, db);
     if (!userId || !userId.startsWith('dev_')) {
-      return reply.status(401).send({ error: 'Missing or invalid X-Device-Id header' });
-    }
-
-    const registration = db.prepare(
-      `SELECT user_id FROM device_registrations WHERE user_id = ?`
-    ).get(userId) as { user_id: string } | undefined;
-    if (!registration) {
-      return reply.status(401).send({ error: 'Unknown device' });
+      return reply.status(401).send({ error: 'Missing or invalid X-Device-Id header for registered device' });
     }
     if (!sseManager) {
       return reply.status(503).send({ error: 'SSE manager unavailable' });
@@ -76,14 +92,15 @@ export function registerApiRoutes(
     db.prepare(`UPDATE device_registrations SET last_seen = datetime('now') WHERE user_id = ?`).run(userId);
 
     req.raw.on('close', () => {
-      sseManager.remove(userId);
+      sseManager.remove(userId, reply);
     });
   });
 
   // GET /api/feed
   fastify.get('/api/feed', async (req: FastifyRequest, reply: FastifyReply) => {
     const q = req.query as FeedQuery;
-    const userId = 'local';
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const limit = Math.min(Math.max(1, parseInt(q.limit ?? '50', 10) || 50), 200);
     const offset = Math.max(0, parseInt(q.offset ?? '0', 10) || 0);
 
@@ -154,50 +171,60 @@ export function registerApiRoutes(
   // PATCH /api/feed/:id/read
   fastify.patch('/api/feed/:id/read', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const result = db.prepare(
-      `UPDATE feed_items SET is_read = 1 WHERE id = ? AND user_id = 'local'`
-    ).run(decodeURIComponent(id));
+      `UPDATE feed_items SET is_read = 1 WHERE id = ? AND user_id = ?`
+    ).run(decodeURIComponent(id), userId);
     return reply.send({ ok: result.changes > 0 });
   });
 
   // PATCH /api/feed/:id/unread
   fastify.patch('/api/feed/:id/unread', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const result = db.prepare(
-      `UPDATE feed_items SET is_read = 0 WHERE id = ? AND user_id = 'local'`
-    ).run(decodeURIComponent(id));
+      `UPDATE feed_items SET is_read = 0 WHERE id = ? AND user_id = ?`
+    ).run(decodeURIComponent(id), userId);
     return reply.send({ ok: result.changes > 0 });
   });
 
   // PATCH /api/feed/:id/save
   fastify.patch('/api/feed/:id/save', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const result = db.prepare(
-      `UPDATE feed_items SET is_saved = 1 WHERE id = ? AND user_id = 'local'`
-    ).run(decodeURIComponent(id));
+      `UPDATE feed_items SET is_saved = 1 WHERE id = ? AND user_id = ?`
+    ).run(decodeURIComponent(id), userId);
     return reply.send({ ok: result.changes > 0 });
   });
 
   // PATCH /api/feed/:id/unsave
   fastify.patch('/api/feed/:id/unsave', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const result = db.prepare(
-      `UPDATE feed_items SET is_saved = 0 WHERE id = ? AND user_id = 'local'`
-    ).run(decodeURIComponent(id));
+      `UPDATE feed_items SET is_saved = 0 WHERE id = ? AND user_id = ?`
+    ).run(decodeURIComponent(id), userId);
     return reply.send({ ok: result.changes > 0 });
   });
 
   // POST /api/feed/mark-all-read
   fastify.post('/api/feed/mark-all-read', async (req: FastifyRequest, reply: FastifyReply) => {
     const q = req.query as { source?: string };
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     if (q.source) {
       db.prepare(
-        `UPDATE feed_items SET is_read = 1 WHERE user_id = 'local' AND source = ? AND is_read = 0`
-      ).run(q.source);
+        `UPDATE feed_items SET is_read = 1 WHERE user_id = ? AND source = ? AND is_read = 0`
+      ).run(userId, q.source);
     } else {
       db.prepare(
-        `UPDATE feed_items SET is_read = 1 WHERE user_id = 'local' AND is_read = 0`
-      ).run();
+        `UPDATE feed_items SET is_read = 1 WHERE user_id = ? AND is_read = 0`
+      ).run(userId);
     }
     return reply.send({ ok: true });
   });
@@ -205,6 +232,8 @@ export function registerApiRoutes(
   // GET /api/stats
   fastify.get('/api/stats', async (req: FastifyRequest, reply: FastifyReply) => {
     const q = req.query as { discovery?: string };
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     let discoveryFilter = '';
     if (q.discovery === 'true' || q.discovery === '1') {
       discoveryFilter = ' AND is_discovery = 1';
@@ -213,35 +242,37 @@ export function registerApiRoutes(
     }
 
     const total = (db.prepare(
-      `SELECT COUNT(*) as n FROM feed_items WHERE user_id = 'local'${discoveryFilter}`
-    ).get() as { n: number }).n;
+      `SELECT COUNT(*) as n FROM feed_items WHERE user_id = ?${discoveryFilter}`
+    ).get(userId) as { n: number }).n;
 
     const unread = (db.prepare(
-      `SELECT COUNT(*) as n FROM feed_items WHERE user_id = 'local' AND is_read = 0${discoveryFilter}`
-    ).get() as { n: number }).n;
+      `SELECT COUNT(*) as n FROM feed_items WHERE user_id = ? AND is_read = 0${discoveryFilter}`
+    ).get(userId) as { n: number }).n;
 
     const bySource = db.prepare(`
       SELECT source,
              COUNT(*) as count,
              SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) as unread
       FROM feed_items
-      WHERE user_id = 'local'${discoveryFilter}
+      WHERE user_id = ?${discoveryFilter}
       GROUP BY source
-    `).all() as Array<{ source: string; count: number; unread: number }>;
+    `).all(userId) as Array<{ source: string; count: number; unread: number }>;
 
     return reply.send({ total, unread, by_source: bySource });
   });
 
   // GET /api/sync/status
-  fastify.get('/api/sync/status', async (_req: FastifyRequest, reply: FastifyReply) => {
+  fastify.get('/api/sync/status', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const missed = db.prepare(`
       SELECT source, attempted_at, status, item_count
       FROM sync_attempts
-      WHERE user_id = 'local'
+      WHERE user_id = ?
         AND status != 'relayed'
         AND attempted_at >= datetime('now', '-1 day')
       ORDER BY attempted_at DESC
-    `).all() as Array<{
+    `).all(userId) as Array<{
       source: string;
       attempted_at: string;
       status: 'device_offline' | 'error';
@@ -251,10 +282,10 @@ export function registerApiRoutes(
     const relayedRows = db.prepare(`
       SELECT attempted_at
       FROM sync_attempts
-      WHERE user_id = 'local' AND status = 'relayed'
+      WHERE user_id = ? AND status = 'relayed'
       ORDER BY attempted_at DESC
       LIMIT 10
-    `).all() as Array<{
+    `).all(userId) as Array<{
       attempted_at: string;
     }>;
 
@@ -276,16 +307,20 @@ export function registerApiRoutes(
   });
 
   // GET /api/push/vapid-key
-  fastify.get('/api/push/vapid-key', async (_req: FastifyRequest, reply: FastifyReply) => {
+  fastify.get('/api/push/vapid-key', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const row = db.prepare(
-      `SELECT value FROM user_preferences WHERE user_id = 'local' AND key = 'vapid_public_key'`
-    ).get() as { value: string } | undefined;
+      `SELECT value FROM user_preferences WHERE user_id = ? AND key = 'vapid_public_key'`
+    ).get(userId) as { value: string } | undefined;
     // Vapid key comes from config, exposed via a stored pref set at startup
     return reply.send({ key: row?.value ?? null });
   });
 
   // POST /api/push/subscribe
   fastify.post('/api/push/subscribe', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const body = req.body as {
       endpoint: string;
       keys: { p256dh: string; auth: string };
@@ -297,14 +332,16 @@ export function registerApiRoutes(
 
     db.prepare(`
       INSERT OR REPLACE INTO push_subscriptions (user_id, endpoint, keys_p256dh, keys_auth)
-      VALUES ('local', ?, ?, ?)
-    `).run(body.endpoint, body.keys.p256dh, body.keys.auth);
+      VALUES (?, ?, ?, ?)
+    `).run(userId, body.endpoint, body.keys.p256dh, body.keys.auth);
 
     return reply.send({ ok: true });
   });
 
   // POST /api/push/unsubscribe
   fastify.post('/api/push/unsubscribe', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const body = req.body as { endpoint: string };
 
     if (!body?.endpoint) {
@@ -312,17 +349,19 @@ export function registerApiRoutes(
     }
 
     db.prepare(
-      `DELETE FROM push_subscriptions WHERE user_id = 'local' AND endpoint = ?`
-    ).run(body.endpoint);
+      `DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?`
+    ).run(userId, body.endpoint);
 
     return reply.send({ ok: true });
   });
 
   // GET /api/sources
-  fastify.get('/api/sources', async (_req: FastifyRequest, reply: FastifyReply) => {
+  fastify.get('/api/sources', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const rows = db.prepare(
-      `SELECT name, enabled, urls, max_items, created_at FROM user_sources WHERE user_id = 'local' ORDER BY name`
-    ).all() as Array<{ name: string; enabled: number; urls: string | null; max_items: number | null; created_at: string }>;
+      `SELECT name, enabled, urls, max_items, created_at FROM user_sources WHERE user_id = ? ORDER BY name`
+    ).all(userId) as Array<{ name: string; enabled: number; urls: string | null; max_items: number | null; created_at: string }>;
 
     const sources = rows.map((r) => ({
       name: r.name,
@@ -337,6 +376,8 @@ export function registerApiRoutes(
 
   // POST /api/sources
   fastify.post('/api/sources', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const body = req.body as { name?: string; urls?: string[]; max_items?: number };
 
     if (!body?.name || typeof body.name !== 'string' || !body.name.trim()) {
@@ -352,8 +393,8 @@ export function registerApiRoutes(
 
     try {
       db.prepare(
-        `INSERT INTO user_sources (user_id, name, urls, max_items) VALUES ('local', ?, ?, ?)`
-      ).run(name, urls, maxItems);
+        `INSERT INTO user_sources (user_id, name, urls, max_items) VALUES (?, ?, ?, ?)`
+      ).run(userId, name, urls, maxItems);
     } catch (err: unknown) {
       if (err instanceof Error && err.message.includes('UNIQUE constraint')) {
         return reply.status(409).send({ error: 'source already exists' });
@@ -366,6 +407,8 @@ export function registerApiRoutes(
 
   // PATCH /api/sources/:name
   fastify.patch('/api/sources/:name', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const { name } = req.params as { name: string };
     const body = req.body as { enabled?: number; urls?: string[]; max_items?: number | null };
 
@@ -391,8 +434,8 @@ export function registerApiRoutes(
 
     params.push(decodeURIComponent(name));
     const result = db.prepare(
-      `UPDATE user_sources SET ${sets.join(', ')} WHERE user_id = 'local' AND name = ?`
-    ).run(...params);
+      `UPDATE user_sources SET ${sets.join(', ')} WHERE user_id = ? AND name = ?`
+    ).run(userId, ...params);
 
     if (result.changes === 0) {
       return reply.status(404).send({ error: 'source not found' });
@@ -403,10 +446,12 @@ export function registerApiRoutes(
 
   // DELETE /api/sources/:name
   fastify.delete('/api/sources/:name', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const { name } = req.params as { name: string };
     const result = db.prepare(
-      `DELETE FROM user_sources WHERE user_id = 'local' AND name = ?`
-    ).run(decodeURIComponent(name));
+      `DELETE FROM user_sources WHERE user_id = ? AND name = ?`
+    ).run(userId, decodeURIComponent(name));
 
     if (result.changes === 0) {
       return reply.status(404).send({ error: 'source not found' });
@@ -416,31 +461,37 @@ export function registerApiRoutes(
   });
 
   // GET /api/tokens — list agent tokens (hashes are safe to expose; plain tokens are never stored)
-  fastify.get('/api/tokens', async (_req: FastifyRequest, reply: FastifyReply) => {
+  fastify.get('/api/tokens', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const rows = db.prepare(
-      `SELECT token_hash, label, created_at, last_used FROM agent_tokens WHERE user_id = 'local' ORDER BY created_at DESC`
-    ).all() as Array<{ token_hash: string; label: string | null; created_at: string; last_used: string | null }>;
+      `SELECT token_hash, label, created_at, last_used FROM agent_tokens WHERE user_id = ? ORDER BY created_at DESC`
+    ).all(userId) as Array<{ token_hash: string; label: string | null; created_at: string; last_used: string | null }>;
     return reply.send(rows);
   });
 
   // POST /api/tokens — create a new agent token; returns the plain token once
   fastify.post('/api/tokens', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const body = req.body as { label?: string } | null;
     const label = (body?.label ?? '').trim() || 'agent';
     const plain = randomBytes(32).toString('hex');
     const hash = createHash('sha256').update(plain).digest('hex');
     db.prepare(
-      `INSERT INTO agent_tokens (token_hash, user_id, label) VALUES (?, 'local', ?)`
-    ).run(hash, label);
+      `INSERT INTO agent_tokens (token_hash, user_id, label) VALUES (?, ?, ?)`
+    ).run(hash, userId, label);
     return reply.status(201).send({ token: plain, token_hash: hash, label });
   });
 
   // DELETE /api/tokens/:hash — revoke a token by its hash
   fastify.delete('/api/tokens/:hash', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const { hash } = req.params as { hash: string };
     const result = db.prepare(
-      `DELETE FROM agent_tokens WHERE token_hash = ? AND user_id = 'local'`
-    ).run(hash);
+      `DELETE FROM agent_tokens WHERE token_hash = ? AND user_id = ?`
+    ).run(hash, userId);
     if (result.changes === 0) {
       return reply.status(404).send({ error: 'token not found' });
     }

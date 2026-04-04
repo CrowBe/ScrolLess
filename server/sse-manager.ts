@@ -29,9 +29,10 @@ export class SseManager {
     this.clients.set(userId, { reply, keepalive });
   }
 
-  remove(userId: string): void {
+  remove(userId: string, reply?: FastifyReply): void {
     const existing = this.clients.get(userId);
     if (!existing) return;
+    if (reply && existing.reply !== reply) return;
     clearInterval(existing.keepalive);
     this.clients.delete(userId);
   }
