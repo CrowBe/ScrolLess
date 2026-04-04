@@ -1,5 +1,6 @@
 import { render } from 'preact';
 import { App } from './app';
+import { startDeviceSession } from './bootstrap/device-session';
 import './styles.css';
 
 // Register service worker
@@ -10,6 +11,15 @@ if ('serviceWorker' in navigator) {
     });
   });
 }
+
+
+startDeviceSession({
+  onFeedItems: async (items) => {
+    window.dispatchEvent(new CustomEvent('scrolless:feed-items', { detail: { items } }));
+  },
+}).catch((err) => {
+  console.warn('Device session bootstrap failed:', err);
+});
 
 const root = document.getElementById('app');
 if (root) {

@@ -4,6 +4,7 @@ import type { FeedItemResponse, Stats } from './types';
 import { SourceFilter } from './components/source-filter';
 import { FeedList } from './components/feed-list';
 import { SyncStatus } from './components/sync-status';
+import { DeviceSessionStatusBadge } from './components/device-session-status';
 import { NotificationPrompt } from './components/notification-prompt';
 import { Settings } from './settings';
 
@@ -116,6 +117,18 @@ export function App() {
     loadStats();
   }
 
+
+  useEffect(() => {
+    function onFeedItems() {
+      setOffset(0);
+      loadFeed(true);
+      loadStats();
+    }
+
+    window.addEventListener('scrolless:feed-items', onFeedItems);
+    return () => window.removeEventListener('scrolless:feed-items', onFeedItems);
+  }, [loadFeed]);
+
   function handleToggleSave(id: string, saved: boolean) {
     (saved ? unsaveItem(id) : saveItem(id)).catch(console.error);
     setItems((prev) =>
@@ -129,6 +142,7 @@ export function App() {
       <header class="app-header glass">
         <span class="app-header__logo">ScrolLess</span>
         <div class="app-header__right">
+          <DeviceSessionStatusBadge />
           <SyncStatus />
           <button
             class="app-header__settings"
