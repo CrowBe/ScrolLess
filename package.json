@@ -14,7 +14,10 @@
     "test:all": "vitest run && vitest run --config vitest.server.config.ts",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:update": "playwright test --update-snapshots"
+    "test:e2e:update": "playwright test --update-snapshots",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:client": "tsc --noEmit -p src/tsconfig.json",
+    "lint": "npm run typecheck"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",

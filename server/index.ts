@@ -139,7 +139,9 @@ async function start() {
   });
 
   // Register non-rate-limited routes
-  registerApiRoutes(fastify, db, sseManager);
+  registerApiRoutes(fastify, db, sseManager, {
+    deviceEnrollmentToken: config.device?.enrollment_token,
+  });
   registerOAuthRoutes(fastify, db, config);
 
   // Static file serving in production

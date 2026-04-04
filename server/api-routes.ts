@@ -1,6 +1,7 @@
-import { randomBytes, createHash, createPublicKey, createVerify } from 'crypto';
+import { randomBytes, createHash, createPublicKey, createVerify, timingSafeEqual } from 'crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
+import { z } from 'zod';
 import type { SseManager } from './sse-manager.js';
 
 interface FeedQuery {
@@ -10,6 +11,55 @@ interface FeedQuery {
   unread_only?: string;
   discovery?: string;
   saved?: string;
+}
+
+interface ApiRouteOptions {
+  deviceEnrollmentToken?: string;
+}
+
+const deviceIdSchema = z.string().regex(/^dev_[A-Za-z0-9._-]+$/, 'device_id must start with dev_');
+const deviceRegisterSchema = z.object({
+  public_key: z.string().trim().min(1, 'public_key is required'),
+  device_id: deviceIdSchema,
+});
+const deviceChallengeSchema = z.object({
+  device_id: deviceIdSchema,
+  public_key: z.string().trim().min(1, 'public_key is required'),
+});
+const deviceVerifySchema = z.object({
+  challenge_id: z.string().trim().min(1, 'challenge_id is required'),
+  device_id: deviceIdSchema,
+  signature: z.string().trim().min(1, 'signature is required'),
+});
+const sourceCreateSchema = z.object({
+  name: z.string().trim().min(1, 'name is required'),
+  urls: z.array(z.string().url('Invalid URL')).min(1, 'at least one url is required'),
+  max_items: z.number().int().positive().max(500).optional(),
+});
+const sourcePatchSchema = z.object({
+  enabled: z.union([z.literal(0), z.literal(1)]).optional(),
+  urls: z.array(z.string().url('Invalid URL')).min(1, 'at least one url is required').optional(),
+  max_items: z.number().int().positive().max(500).nullable().optional(),
+}).refine((body) => body.enabled !== undefined || body.urls !== undefined || body.max_items !== undefined, {
+  message: 'nothing to update',
+});
+const queueAckSchema = z.object({
+  delivery_id: z.string().trim().min(1, 'delivery_id is required'),
+  device_id: deviceIdSchema,
+});
+
+function parseBody<T>(
+  schema: z.ZodType<T>,
+  body: unknown,
+  reply: FastifyReply
+): T | null {
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    reply.status(400).send({ error: first?.message ?? 'invalid request' });
+    return null;
+  }
+  return parsed.data;
 }
 
 function parseTags(raw: string | null): string[] {
@@ -95,10 +145,31 @@ function getStreamUserId(req: FastifyRequest, db: Database.Database): string | n
 export function registerApiRoutes(
   fastify: FastifyInstance,
   db: Database.Database,
-  sseManager?: SseManager
+  sseManager?: SseManager,
+  options?: ApiRouteOptions
 ): void {
   const isPaidTier = (userId: string): boolean => userId.startsWith('usr_');
   const paidFeedOnly = process.env.ENFORCE_PAID_FEED === '1';
+  const enrollmentToken = options?.deviceEnrollmentToken?.trim() || null;
+
+  const hasValidEnrollmentToken = (providedRaw: string | undefined): boolean => {
+    if (!enrollmentToken) return true;
+    if (!providedRaw) return false;
+    const expected = Buffer.from(enrollmentToken);
+    const received = Buffer.from(providedRaw);
+    if (expected.length !== received.length) return false;
+    return expected.length > 0 && timingSafeEqual(expected, received);
+  };
+
+  const requireEnrollmentToken = (req: FastifyRequest, reply: FastifyReply): boolean => {
+    const header = req.headers['x-device-enroll-token'];
+    const provided = Array.isArray(header) ? header[0] : header;
+    if (!hasValidEnrollmentToken(provided)) {
+      reply.status(401).send({ error: 'Missing or invalid X-Device-Enroll-Token header' });
+      return false;
+    }
+    return true;
+  };
 
   const verifySignature = (publicKey: string, nonce: string, signature: string): boolean => {
     try {
@@ -122,14 +193,9 @@ export function registerApiRoutes(
   };
 
   const registerDeviceHandler = async (req: FastifyRequest, reply: FastifyReply) => {
-    const body = req.body as { public_key?: string; device_id?: string };
-
-    if (!body?.public_key || !body?.device_id) {
-      return reply.status(400).send({ error: 'public_key and device_id are required' });
-    }
-    if (!body.device_id.startsWith('dev_')) {
-      return reply.status(400).send({ error: 'device_id must start with dev_' });
-    }
+    if (!requireEnrollmentToken(req, reply)) return;
+    const body = parseBody(deviceRegisterSchema, req.body, reply);
+    if (!body) return;
 
     db.prepare(`
       INSERT INTO device_registrations (user_id, public_key, last_seen)
@@ -146,13 +212,9 @@ export function registerApiRoutes(
 
   // POST /api/v1/device/challenge
   fastify.post('/api/v1/device/challenge', async (req: FastifyRequest, reply: FastifyReply) => {
-    const body = req.body as { device_id?: string; public_key?: string };
-    if (!body?.device_id || !body?.public_key) {
-      return reply.status(400).send({ error: 'device_id and public_key are required' });
-    }
-    if (!body.device_id.startsWith('dev_')) {
-      return reply.status(400).send({ error: 'device_id must start with dev_' });
-    }
+    if (!requireEnrollmentToken(req, reply)) return;
+    const body = parseBody(deviceChallengeSchema, req.body, reply);
+    if (!body) return;
 
     const challengeId = `chal_${randomBytes(12).toString('hex')}`;
     const nonce = randomBytes(32).toString('base64');
@@ -181,10 +243,8 @@ export function registerApiRoutes(
 
   // POST /api/v1/device/verify
   fastify.post('/api/v1/device/verify', async (req: FastifyRequest, reply: FastifyReply) => {
-    const body = req.body as { challenge_id?: string; device_id?: string; signature?: string };
-    if (!body?.challenge_id || !body?.device_id || !body?.signature) {
-      return reply.status(400).send({ error: 'challenge_id, device_id and signature are required' });
-    }
+    const body = parseBody(deviceVerifySchema, req.body, reply);
+    if (!body) return;
 
     const challenge = db.prepare(`
       SELECT challenge_id, device_id, public_key, nonce, expires_at, consumed_at
@@ -551,14 +611,8 @@ export function registerApiRoutes(
   fastify.post('/api/sources', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = getRequestUserId(req, db);
     if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
-    const body = req.body as { name?: string; urls?: string[]; max_items?: number };
-
-    if (!body?.name || typeof body.name !== 'string' || !body.name.trim()) {
-      return reply.status(400).send({ error: 'name is required' });
-    }
-    if (!Array.isArray(body.urls) || body.urls.length === 0) {
-      return reply.status(400).send({ error: 'at least one url is required' });
-    }
+    const body = parseBody(sourceCreateSchema, req.body, reply);
+    if (!body) return;
 
     const name = body.name.trim().toLowerCase();
     const urls = JSON.stringify(body.urls.filter((u) => typeof u === 'string' && u.trim()));
@@ -583,7 +637,8 @@ export function registerApiRoutes(
     const userId = getRequestUserId(req, db);
     if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const { name } = req.params as { name: string };
-    const body = req.body as { enabled?: number; urls?: string[]; max_items?: number | null };
+    const body = parseBody(sourcePatchSchema, req.body, reply);
+    if (!body) return;
 
     const sets: string[] = [];
     const setParams: unknown[] = [];
@@ -600,10 +655,6 @@ export function registerApiRoutes(
     if (body.max_items !== undefined) {
       sets.push('max_items = ?');
       setParams.push(body.max_items);
-    }
-
-    if (sets.length === 0) {
-      return reply.status(400).send({ error: 'nothing to update' });
     }
 
     const result = db.prepare(
@@ -676,10 +727,8 @@ export function registerApiRoutes(
 
   // POST /api/v1/queue/ack
   fastify.post('/api/v1/queue/ack', async (req: FastifyRequest, reply: FastifyReply) => {
-    const body = req.body as { delivery_id?: string; device_id?: string };
-    if (!body?.delivery_id || !body?.device_id) {
-      return reply.status(400).send({ error: 'delivery_id and device_id are required' });
-    }
+    const body = parseBody(queueAckSchema, req.body, reply);
+    if (!body) return;
 
     const existing = db.prepare(`
       SELECT user_id, acked_at
