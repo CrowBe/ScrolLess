@@ -43,9 +43,9 @@ export interface Stats {
 
 export interface SyncLogEntry {
   source: string;
-  synced_at: string;
-  items_added: number;
-  items_duped: number;
+  attempted_at: string;
+  status: 'device_offline' | 'error';
+  item_count: number;
   error?: string;
 }
 

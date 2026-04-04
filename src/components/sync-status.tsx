@@ -5,12 +5,14 @@ import { relativeTime } from '../utils';
 
 export function SyncStatus() {
   const [entries, setEntries] = useState<SyncLogEntry[]>([]);
+  const [nextSyncEstimate, setNextSyncEstimate] = useState<string | null>(null);
   const [error, setError] = useState(false);
 
   async function load() {
     try {
       const data = await getSyncStatus();
-      setEntries(data);
+      setEntries(data.missed);
+      setNextSyncEstimate(data.next_sync_estimate);
       setError(false);
     } catch {
       setError(true);
@@ -23,7 +25,7 @@ export function SyncStatus() {
     return () => clearInterval(id);
   }, []);
 
-  if (entries.length === 0 && !error) return null;
+  if (entries.length === 0 && !error && !nextSyncEstimate) return null;
   if (error) return (
     <div class="sync-status sync-status--error">
       <span class="material-symbols-outlined sync-status__icon">sync_problem</span>
@@ -31,11 +33,12 @@ export function SyncStatus() {
     </div>
   );
 
-  const hasErrors = entries.some((e) => e.error);
-  const latest = entries.reduce<SyncLogEntry | null>((best, e) => {
-    if (!best) return e;
-    return e.synced_at > best.synced_at ? e : best;
-  }, null);
+  const hasErrors = entries.length > 0;
+  const statusText = hasErrors
+    ? `Missed ${entries.length} sync${entries.length === 1 ? '' : 's'}`
+    : nextSyncEstimate
+      ? `Next sync ${relativeTime(nextSyncEstimate)}`
+      : 'Sync healthy';
 
   return (
     <div class={`sync-status${hasErrors ? ' sync-status--error' : ''}`}>
@@ -43,7 +46,7 @@ export function SyncStatus() {
         {hasErrors ? 'warning' : 'sync'}
       </span>
       <span class="sync-status__text">
-        {latest ? `Synced ${relativeTime(latest.synced_at)}` : 'Never synced'}
+        {statusText}
       </span>
       {hasErrors && (
         <span class="sync-status__err-badge">Sync error</span>

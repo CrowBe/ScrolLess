@@ -3,7 +3,12 @@ import type { FeedResponse, Stats, SyncLogEntry, FeedItemResponse, UserSource } 
 const base = '';
 
 async function req<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(base + url, options);
+  const headers = new Headers(options?.headers ?? {});
+  const deviceId = localStorage.getItem('scrolless_device_id');
+  if (deviceId) {
+    headers.set('X-Device-Id', deviceId);
+  }
+  const res = await fetch(base + url, { ...options, headers });
   if (!res.ok) throw new Error(`${options?.method ?? 'GET'} ${url} → ${res.status}`);
   return res.json() as Promise<T>;
 }
@@ -54,8 +59,8 @@ export function getStats(discovery?: boolean): Promise<Stats> {
   return req<Stats>(`/api/stats${q}`);
 }
 
-export function getSyncStatus(): Promise<SyncLogEntry[]> {
-  return req<SyncLogEntry[]>('/api/sync/status');
+export function getSyncStatus(): Promise<{ missed: SyncLogEntry[]; next_sync_estimate: string | null }> {
+  return req<{ missed: SyncLogEntry[]; next_sync_estimate: string | null }>('/api/sync/status');
 }
 
 export function getVapidKey(): Promise<{ key: string }> {
