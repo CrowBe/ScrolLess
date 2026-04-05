@@ -944,16 +944,14 @@ img { display: block; max-width: 100%; }
 .input {
   width: 100%;
   padding: 0.625rem 0.75rem;
-  background: color-mix(in srgb, var(--surface-container) 88%, var(--surface) 12%);
+  background: var(--surface-container-high);
   color: var(--on-surface);
-  border: 1px solid color-mix(in srgb, var(--outline-variant) 72%, transparent);
+  border: 1px solid var(--outline-variant);
   border-radius: var(--radius-card);
   font-family: var(--font-body);
   font-size: 0.875rem;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--on-surface) 6%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--surface-container-high) 60%, transparent);
-  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%);
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .form-input::placeholder,
@@ -967,11 +965,10 @@ img { display: block; max-width: 100%; }
 .form-textarea:focus,
 .input:focus {
   outline: none;
-  border-color: color-mix(in srgb, var(--primary) 72%, var(--outline) 28%);
-  background: color-mix(in srgb, var(--surface-container-high) 92%, var(--surface) 8%);
+  border-color: var(--primary);
   box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--primary) 36%, transparent),
-    0 0 0 4px color-mix(in srgb, var(--primary-container) 45%, transparent);
+    0 0 0 1px var(--primary),
+    0 0 0 3px rgb(71 195 194 / 28%);
 }
 
 .form-textarea {
