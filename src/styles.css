@@ -764,7 +764,7 @@ img { display: block; max-width: 100%; }
   color: var(--on-surface);
 }
 
-.settings__token-create .input {
+.settings__token-create .form-input {
   flex: 1 1 14rem;
   min-width: 0;
 }
@@ -940,28 +940,38 @@ img { display: block; max-width: 100%; }
 }
 
 .form-input,
-.form-textarea {
+.form-textarea,
+.input {
   width: 100%;
   padding: 0.625rem 0.75rem;
-  background: var(--surface-container);
+  background: color-mix(in srgb, var(--surface-container) 88%, var(--surface) 12%);
   color: var(--on-surface);
-  border: none;
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 72%, transparent);
   border-radius: var(--radius-card);
   font-family: var(--font-body);
   font-size: 0.875rem;
-  transition: box-shadow 0.15s;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--on-surface) 6%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--surface-container-high) 60%, transparent);
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 
 .form-input::placeholder,
-.form-textarea::placeholder {
+.form-textarea::placeholder,
+.input::placeholder {
   color: var(--on-surface-variant);
-  opacity: 0.5;
+  opacity: 0.62;
 }
 
 .form-input:focus,
-.form-textarea:focus {
+.form-textarea:focus,
+.input:focus {
   outline: none;
-  box-shadow: 0 0 0 2px var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 72%, var(--outline) 28%);
+  background: color-mix(in srgb, var(--surface-container-high) 92%, var(--surface) 8%);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--primary) 36%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--primary-container) 45%, transparent);
 }
 
 .form-textarea {
