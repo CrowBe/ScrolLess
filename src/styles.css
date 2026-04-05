@@ -637,6 +637,116 @@ img { display: block; max-width: 100%; }
   color: var(--primary);
 }
 
+.settings__token-reveal {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.settings__token-value {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.5rem;
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  font-size: 0.75rem;
+}
+
+.settings__token-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.settings__token-copy-state {
+  margin: 0;
+  color: var(--primary);
+  font-size: 0.75rem;
+}
+
+.settings__token-copy-state--error {
+  color: var(--error);
+}
+
+.settings__token-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.settings__token-item {
+  border: 1px solid var(--outline-variant);
+  border-radius: 0.625rem;
+  padding: 0.75rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "label revoke"
+    "meta revoke";
+  gap: 0.25rem 0.75rem;
+  align-items: center;
+}
+
+.settings__token-label {
+  grid-area: label;
+  font-size: 0.875rem;
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings__token-meta {
+  grid-area: meta;
+  font-size: 0.75rem;
+  color: var(--on-surface-variant);
+  min-width: 0;
+}
+
+.settings__token-revoke {
+  grid-area: revoke;
+}
+
+.settings__token-create {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.settings__token-create .input {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .settings__section {
+    padding: 1rem;
+  }
+
+  .settings__token-item {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "label"
+      "meta"
+      "revoke";
+    gap: 0.5rem;
+  }
+
+  .settings__token-revoke {
+    justify-self: flex-start;
+  }
+
+  .settings__token-create .btn {
+    width: 100%;
+  }
+}
+
 /* ── Accent bar ─────────────────────────────────────────── */
 .accent-bar {
   width: 2px;

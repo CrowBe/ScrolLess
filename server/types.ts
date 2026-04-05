@@ -2,6 +2,8 @@
 
 export interface AgentFeedResponse {
   relayed?: number;
+  queued?: number;
+  queue_ttl_minutes?: number;
 }
 
 export interface AgentEncryptedFeedItem {

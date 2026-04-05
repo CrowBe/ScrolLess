@@ -10,6 +10,7 @@ function AgentTokens() {
   const [newLabel, setNewLabel] = useState('');
   const [newToken, setNewToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
 
   const load = useCallback(async () => {
     try { setTokens(await getTokens()); } catch { /* ignore */ }
@@ -22,6 +23,7 @@ function AgentTokens() {
     try {
       const res = await createToken(newLabel || 'agent');
       setNewToken(res.token);
+      setCopyState('idle');
       setNewLabel('');
       await load();
     } catch (err) {
@@ -40,6 +42,17 @@ function AgentTokens() {
     }
   }
 
+  async function handleCopyToken() {
+    if (!newToken) return;
+    try {
+      await navigator.clipboard.writeText(newToken);
+      setCopyState('copied');
+    } catch (err) {
+      console.error('Failed to copy token:', err);
+      setCopyState('error');
+    }
+  }
+
   return (
     <section class="settings__section">
       <h2 class="settings__heading">Agent Tokens</h2>
@@ -47,7 +60,12 @@ function AgentTokens() {
         <div class="settings__token-reveal">
           <p class="settings__help">Copy this token now — it will not be shown again.</p>
           <code class="settings__token-value">{newToken}</code>
-          <button class="btn btn--ghost btn--sm" onClick={() => setNewToken(null)}>Dismiss</button>
+          <div class="settings__token-actions">
+            <button class="btn btn--primary btn--sm" onClick={handleCopyToken}>Copy token</button>
+            <button class="btn btn--ghost btn--sm" onClick={() => { setNewToken(null); setCopyState('idle'); }}>Dismiss</button>
+          </div>
+          {copyState === 'copied' && <p class="settings__token-copy-state">Copied to clipboard.</p>}
+          {copyState === 'error' && <p class="settings__token-copy-state settings__token-copy-state--error">Clipboard unavailable. Copy manually.</p>}
         </div>
       )}
       {tokens.length > 0 && (
