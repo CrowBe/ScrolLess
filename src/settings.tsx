@@ -89,7 +89,7 @@ function AgentTokens() {
       )}
       <div class="settings__token-create">
         <input
-          class="input"
+          class="form-input"
           type="text"
           placeholder="Token label (e.g. my-agent)"
           value={newLabel}
