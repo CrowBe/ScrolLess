@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS user_sources (
     PRIMARY KEY (user_id, name)
 );
 
--- OAuth 2.0 clients (seeded from config.json)
+-- OAuth 2.0 clients (seeded from environment config)
 CREATE TABLE IF NOT EXISTS oauth_clients (
     client_id       TEXT PRIMARY KEY,
     client_secret   TEXT,                     -- NULL for public clients (PKCE only)

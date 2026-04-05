@@ -71,7 +71,7 @@ Self-hosted deployments may skip encryption — the owner controls both the serv
 
 ### OAuth Client Management UI
 
-OAuth clients are currently seeded only from `config.json`. Users of the hosted product have no way to see which MCP clients are connected or revoke access without operator intervention.
+OAuth clients are currently seeded only from backend environment configuration. Users of the hosted product have no way to see which MCP clients are connected or revoke access without operator intervention.
 
 **What to change:**
 
@@ -82,7 +82,7 @@ OAuth clients are currently seeded only from `config.json`. Users of the hosted 
 
 2. Add a "Connected Apps" section to `src/settings.tsx`
 
-3. `config.json` bootstrap continues to seed first-party clients via `INSERT OR IGNORE`; all ongoing management goes through the API
+3. Environment-based bootstrap continues to seed first-party clients via `INSERT OR IGNORE`; all ongoing management goes through the API
 
 ---
 

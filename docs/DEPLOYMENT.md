@@ -22,11 +22,11 @@ AGENT_TOKEN_HASH=<sha256 hash of your agent token>
 VAPID_PUBLIC_KEY=<your VAPID public key>
 VAPID_PRIVATE_KEY=<your VAPID private key>
 VAPID_SUBJECT=mailto:you@example.com
-CORS_ORIGIN=https://yourapp.vercel.app
+BASE_URL=https://yourapp.onrender.com
 DB_PATH=/data/feed.db
 ```
 
-6. Update `config.json` (or wire env vars into the config loader) so `db_path` points to `/data/feed.db`
+6. Set `DB_PATH=/data/feed.db` so SQLite data is persisted on the Render disk
 
 > **Note**: Render free tier instances spin down after 15 minutes of inactivity. Push notifications won't fire while spun down. Upgrade to Starter ($7/mo) for always-on.
 
@@ -201,7 +201,7 @@ Required for push notifications. Generate once and store permanently:
 npx web-push generate-vapid-keys
 ```
 
-Add the public and private keys to your config or environment.
+Add the public and private keys to your environment.
 
 ---
 
@@ -212,10 +212,10 @@ Add the public and private keys to your config or environment.
 npm run generate-token
 # Output: e.g. a1b2c3d4...
 
-# Hash it for the server config
+# Hash it for the server
 node -e "const c=require('crypto');const t='YOUR_TOKEN_HERE';console.log(c.createHash('sha256').update(t).digest('hex'))"
 
-# Store the HASH in config.json or AGENT_TOKEN_HASH env var
+# Store the HASH in AGENT_TOKEN_HASH
 # Store the PLAINTEXT token in your agent's MCP config or script
 ```
 

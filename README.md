@@ -49,7 +49,6 @@ The server is deliberately dumb — it coordinates relay + metadata and sends pu
 ScrolLess/
 ├── README.md
 ├── CLAUDE.md                        # Coding agent context file
-├── config.example.json              # Server config template
 ├── .mcp.json.example                # MCP client config template
 ├── docs/
 │   ├── ARCHITECTURE.md              # Routes, auth, payload formats, schema, push, PWA
@@ -113,29 +112,26 @@ npm run generate-token
 # prints a random hex token — save it, you'll need it twice below
 ```
 
-### 3. Create `config.json`
+### 3. Set backend environment variables
+
+Hash your token and export it:
 
 ```bash
-cp config.example.json config.json
+export AGENT_TOKEN_HASH="$(node -e 'console.log(require(\"crypto\").createHash(\"sha256\").update(\"YOUR_TOKEN\").digest(\"hex\"))')"
 ```
 
-Hash your token and paste it in:
+Set optional values as needed:
 
-```bash
-node -e "console.log(require('crypto').createHash('sha256').update('YOUR_TOKEN').digest('hex'))"
-```
-
-Set `agent_token_hash` in `config.json` to the output.
-
-The remaining fields are optional for local testing:
-
-| Field | Required for |
+| Environment variable | Required for |
 |---|---|
-| `push.vapid_public_key/private_key` | Web Push notifications |
-| `push.subject` | Web Push (set to `mailto:you@example.com`) |
-| `base_url` | OAuth flow, cloud tunnel access |
-| `admin_password` | OAuth consent screen |
-| `device.enrollment_token` | Protecting `/api/v1/device/register` and `/api/v1/device/challenge` from unauthorized enrollment |
+| `DB_PATH` | Custom SQLite location (default: `~/.feed-aggregator/feed.db`) |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web Push notifications |
+| `VAPID_SUBJECT` | Web Push contact (set to `mailto:you@example.com`) |
+| `BASE_URL` | OAuth flow, cloud tunnel access, and CORS allowlist |
+| `ADMIN_PASSWORD` | OAuth consent screen |
+| `DEVICE_ENROLLMENT_TOKEN` | Protecting `/api/v1/device/register` and `/api/v1/device/challenge` from unauthorized enrollment |
+| `AGENT_RATE_LIMIT_PER_HOUR` | Agent/MCP rate limit (default: `60`) |
+| `OAUTH_CLIENTS_JSON` | OAuth client seed list (JSON array) |
 
 Generate VAPID keys if you want push notifications:
 
@@ -151,7 +147,7 @@ npm run dev:server        # backend only, port 3333
 npm run dev               # backend + Vite frontend on port 5173
 ```
 
-The server binds to `127.0.0.1:3333` by default. To accept connections from other devices on your local network, set `"host": "0.0.0.0"` in the `server` block of `config.json`.
+The server binds to `127.0.0.1:3333` by default. To accept connections from other devices on your local network, run with `HOST=0.0.0.0`.
 
 ### 5. Connect Claude via MCP
 
@@ -206,8 +202,8 @@ For a stable named tunnel tied to a domain you control, follow the [Cloudflare T
 
 ### After setting up the tunnel
 
-1. Set `base_url` in `config.json` to your public HTTPS URL (e.g. `https://random-name.trycloudflare.com`). This is required for the OAuth flow when connecting via claude.ai.
-2. Add the public origin to the CORS allowlist — edit the `allowed` array in `server/index.ts` or set `base_url` (it's included automatically).
+1. Set `BASE_URL` to your public HTTPS URL (e.g. `https://random-name.trycloudflare.com`). This is required for the OAuth flow when connecting via claude.ai.
+2. `BASE_URL` is automatically added to the CORS allowlist.
 3. Update your `.mcp.json` URL to the tunnel URL if using a remote MCP client.
 
 ---
