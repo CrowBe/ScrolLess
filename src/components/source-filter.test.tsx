@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/preact';
 import { SourceFilter } from './source-filter';
 import type { Stats } from '../types';
+import { markAllRead } from '../api';
 
 vi.mock('../api', () => ({
   markAllRead: vi.fn().mockResolvedValue(undefined),
@@ -20,9 +21,7 @@ const stats: Stats = {
 const defaultProps = {
   stats,
   source: '',
-  discovery: false,
   onSourceChange: vi.fn(),
-  onDiscoveryChange: vi.fn(),
   onMarkedAllRead: vi.fn(),
 };
 
@@ -63,31 +62,6 @@ describe('SourceFilter', () => {
     expect(onSourceChange).toHaveBeenCalledWith('youtube');
   });
 
-  it('shows Feed/Discover toggle', () => {
-    render(<SourceFilter {...defaultProps} />);
-    expect(screen.getByText('Feed')).toBeInTheDocument();
-    expect(screen.getByText('Discover')).toBeInTheDocument();
-  });
-
-  it('marks Feed active when discovery is false', () => {
-    render(<SourceFilter {...defaultProps} discovery={false} />);
-    const feedBtn = screen.getByText('Feed').closest('button');
-    expect(feedBtn).toHaveClass('chip--active');
-  });
-
-  it('marks Discover active when discovery is true', () => {
-    render(<SourceFilter {...defaultProps} discovery={true} />);
-    const discoverBtn = screen.getByText('Discover').closest('button');
-    expect(discoverBtn).toHaveClass('chip--active');
-  });
-
-  it('calls onDiscoveryChange when Discover is clicked', () => {
-    const onDiscoveryChange = vi.fn();
-    render(<SourceFilter {...defaultProps} onDiscoveryChange={onDiscoveryChange} />);
-    fireEvent.click(screen.getByText('Discover'));
-    expect(onDiscoveryChange).toHaveBeenCalledWith(true);
-  });
-
   it('shows zero unread badges with null stats', () => {
     render(<SourceFilter {...defaultProps} stats={null} />);
     expect(screen.queryByText('8')).not.toBeInTheDocument();
@@ -96,5 +70,30 @@ describe('SourceFilter', () => {
   it('shows Mark all read button', () => {
     render(<SourceFilter {...defaultProps} />);
     expect(screen.getByText('Mark all read')).toBeInTheDocument();
+  });
+
+  it('disables Mark all read when there are no unread items', () => {
+    const zeroStats: Stats = {
+      ...stats,
+      unread: 0,
+      by_source: stats.by_source.map((entry) => ({ ...entry, unread: 0 })),
+    };
+
+    render(<SourceFilter {...defaultProps} stats={zeroStats} />);
+    expect(screen.getByText('Mark all read')).toBeDisabled();
+  });
+
+  it('marks source chips with aria-pressed and calls mark all read', () => {
+    render(<SourceFilter {...defaultProps} source="youtube" />);
+
+    const youtubeChip = screen.getByRole('button', { name: /^YouTube/ });
+    const allChip = screen.getByRole('button', { name: /^All/ });
+
+    expect(youtubeChip).toHaveAttribute('aria-pressed', 'true');
+    expect(allChip).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(screen.getByText('Mark all read'));
+
+    expect(markAllRead).toHaveBeenCalledWith('youtube');
   });
 });

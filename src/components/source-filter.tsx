@@ -5,9 +5,7 @@ import { displayName } from '../source-labels';
 interface Props {
   stats: Stats | null;
   source: string;
-  discovery: boolean;
   onSourceChange: (source: string) => void;
-  onDiscoveryChange: (discovery: boolean) => void;
   onMarkedAllRead: () => void;
 }
 
@@ -22,11 +20,10 @@ function unreadFor(stats: Stats | null, source: string): number {
 export function SourceFilter({
   stats,
   source,
-  discovery,
   onSourceChange,
-  onDiscoveryChange,
   onMarkedAllRead,
 }: Props) {
+  const unreadCount = unreadFor(stats, source);
   const dynamicSources = Array.from(new Set([
     ...SOURCE_ORDER,
     ...(stats?.by_source.map((s) => s.source) ?? []),
@@ -35,19 +32,21 @@ export function SourceFilter({
   const sources = [{ id: '', label: 'All' }, ...dynamicSources.map((id) => ({ id, label: displayName(id) }))];
 
   async function handleMarkAllRead() {
+    if (unreadCount === 0) return;
     await markAllRead(source || undefined);
     onMarkedAllRead();
   }
 
   return (
     <div class="source-filter">
-      <div class="source-filter__chips">
+      <div class="source-filter__chips" role="toolbar" aria-label="Feed source filters">
         {sources.map((s) => {
           const unread = unreadFor(stats, s.id);
           return (
             <button
               key={s.id}
               class={`chip${source === s.id ? ' chip--active' : ''}`}
+              aria-pressed={source === s.id}
               onClick={() => onSourceChange(s.id)}
             >
               {s.label}
@@ -60,22 +59,11 @@ export function SourceFilter({
       </div>
 
       <div class="source-filter__actions">
-        <div class="source-filter__toggle">
-          <button
-            class={`chip chip--sm${!discovery ? ' chip--active' : ''}`}
-            onClick={() => onDiscoveryChange(false)}
-          >
-            Feed
-          </button>
-          <button
-            class={`chip chip--sm${discovery ? ' chip--active' : ''}`}
-            onClick={() => onDiscoveryChange(true)}
-          >
-            Discover
-          </button>
-        </div>
-
-        <button class="btn btn--ghost btn--sm" onClick={handleMarkAllRead}>
+        <button
+          class="btn btn--ghost btn--sm"
+          onClick={handleMarkAllRead}
+          disabled={unreadCount === 0}
+        >
           Mark all read
         </button>
       </div>
