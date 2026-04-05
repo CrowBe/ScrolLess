@@ -186,12 +186,12 @@ Create `server/db.ts`:
 - Execute `schema.sql` on startup
 - Export a typed `db` instance
 - Seed default sources (`youtube`, `x`, `news`) for `user_id = 'local'` with `enabled = 0`
-- Seed OAuth clients from `config.json` if present
+- Seed OAuth clients from environment configuration if present
 
 ### Task 2.3: Config loader
 
 Create `server/config.ts`:
-- Load `config.json` if present, fall back to environment variables
+- Load runtime settings from environment variables
 - Export typed config: `vapidPublicKey`, `vapidPrivateKey`, `vapidEmail`, `agentRateLimit`, `cors`, `oauth.clients`
 
 ---
@@ -495,7 +495,7 @@ Relay logic:
 
 ### Task 8.1: VAPID setup
 
-Load `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_EMAIL` from `config.json` / environment. Generate defaults on first run and persist to `config.json`.
+Load `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_EMAIL` from environment variables.
 
 Call `webpush.setVapidDetails(...)` during server startup.
 

@@ -3,41 +3,89 @@ import fastifyStatic from '@fastify/static';
 import fastifyCors from '@fastify/cors';
 import fastifyFormbody from '@fastify/formbody';
 import fastifyRateLimit from '@fastify/rate-limit';
-import { readFileSync, existsSync } from 'fs';
-import { join, resolve, dirname } from 'path';
+import { existsSync } from 'fs';
+import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 import { initDb } from './db.js';
-import { hashToken, seedAgentToken, verifyAgentToken } from './auth.js';
+import { seedAgentToken, verifyAgentToken } from './auth.js';
 import { registerAgentRoutes, scheduleCleanup } from './agent-routes.js';
 import { registerApiRoutes } from './api-routes.js';
 import { registerOAuthRoutes, seedOAuthClients } from './oauth-routes.js';
 import { registerMcpHandler } from './mcp.js';
 import { initPush, notifyNewItems } from './push.js';
 import { SseManager } from './sse-manager.js';
-import type { AppConfig } from './types.js';
+import type { AppConfig, OAuthClientConfig } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProd = process.env.NODE_ENV === 'production';
 
-// Load config
-function loadConfig(): AppConfig {
-  const configPath = resolve(process.cwd(), 'config.json');
-  const examplePath = resolve(process.cwd(), 'config.example.json');
+function parseNumber(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 
-  if (existsSync(configPath)) {
-    return JSON.parse(readFileSync(configPath, 'utf8')) as AppConfig;
+function parseOauthClients(value: string | undefined): OAuthClientConfig[] {
+  if (!value) {
+    return [{
+      client_id: 'claude-connector',
+      redirect_uris: ['https://claude.ai/oauth/callback'],
+      is_public: true,
+    }];
   }
 
-  console.warn('[config] config.json not found — using config.example.json (push/auth may be non-functional)');
-  return JSON.parse(readFileSync(examplePath, 'utf8')) as AppConfig;
+  try {
+    const parsed = JSON.parse(value) as OAuthClientConfig[];
+    if (!Array.isArray(parsed)) throw new Error('not an array');
+    return parsed;
+  } catch (err) {
+    console.warn('[config] Failed to parse OAUTH_CLIENTS_JSON. Falling back to default claude-connector client.', err);
+    return [{
+      client_id: 'claude-connector',
+      redirect_uris: ['https://claude.ai/oauth/callback'],
+      is_public: true,
+    }];
+  }
+}
+
+// Load config from environment variables.
+function loadConfig(): AppConfig {
+  const config: AppConfig = {
+    agent_token_hash: process.env.AGENT_TOKEN_HASH ?? '',
+    db_path: process.env.DB_PATH,
+    base_url: process.env.BASE_URL,
+    admin_password: process.env.ADMIN_PASSWORD,
+    server: {
+      port: parseNumber(process.env.PORT, 3333),
+      host: process.env.HOST ?? '127.0.0.1',
+    },
+    push: {
+      vapid_public_key: process.env.VAPID_PUBLIC_KEY,
+      vapid_private_key: process.env.VAPID_PRIVATE_KEY,
+      subject: process.env.VAPID_SUBJECT,
+    },
+    rate_limit: {
+      agent_max_per_hour: parseNumber(process.env.AGENT_RATE_LIMIT_PER_HOUR, 60),
+    },
+    oauth: {
+      clients: parseOauthClients(process.env.OAUTH_CLIENTS_JSON),
+      token_expires_in: parseNumber(process.env.OAUTH_TOKEN_EXPIRES_IN, 3600),
+      refresh_token_expires_in: parseNumber(process.env.OAUTH_REFRESH_TOKEN_EXPIRES_IN, 2592000),
+    },
+    device: {
+      enrollment_token: process.env.DEVICE_ENROLLMENT_TOKEN,
+    },
+  };
+
+  return config;
 }
 
 async function start() {
   const config = loadConfig();
 
   if (!config.agent_token_hash) {
-    console.warn('[auth] agent_token_hash is not set in config.json — agent endpoints will reject all requests');
+    console.warn('[auth] AGENT_TOKEN_HASH is not set — agent endpoints will reject all requests');
     console.warn('[auth] Generate a token: npm run generate-token');
     console.warn('[auth] Then hash it: node -e "const c=require(\'crypto\');const t=\'YOUR_TOKEN\';console.log(c.createHash(\'sha256\').update(t).digest(\'hex\'))"');
   }
