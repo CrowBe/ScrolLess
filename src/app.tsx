@@ -166,12 +166,7 @@ export function App() {
           <SourceFilter
             stats={stats}
             source={source}
-            discovery={view === 'discover'}
             onSourceChange={setSource}
-            onDiscoveryChange={(d) => {
-              if (d) setView('discover');
-              else setView('feed');
-            }}
             onMarkedAllRead={handleMarkedAllRead}
           />
         )}
@@ -197,6 +192,8 @@ export function App() {
             key={id}
             class={`bottom-nav__item${view === id ? ' bottom-nav__item--active' : ''}`}
             onClick={() => setView(id)}
+            aria-label={label}
+            aria-current={view === id ? 'page' : undefined}
           >
             <span
               class="material-symbols-outlined"
