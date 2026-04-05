@@ -7,6 +7,7 @@ interface Props {
   source: string;
   onSourceChange: (source: string) => void;
   onMarkedAllRead: () => void;
+  onManageSources: () => void;
 }
 
 const SOURCE_ORDER = ['youtube', 'x', 'news'];
@@ -22,6 +23,7 @@ export function SourceFilter({
   source,
   onSourceChange,
   onMarkedAllRead,
+  onManageSources,
 }: Props) {
   const unreadCount = unreadFor(stats, source);
   const dynamicSources = Array.from(new Set([
@@ -59,6 +61,9 @@ export function SourceFilter({
       </div>
 
       <div class="source-filter__actions">
+        <button class="btn btn--ghost btn--sm" onClick={onManageSources}>
+          Manage sources
+        </button>
         <button
           class="btn btn--ghost btn--sm"
           onClick={handleMarkAllRead}

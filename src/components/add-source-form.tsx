@@ -64,25 +64,28 @@ export function AddSourceForm({ onAdded }: Props) {
     <form class="settings__section add-source-form" onSubmit={handleSubmit}>
       <h2 class="settings__heading">Add Source</h2>
 
-      <label class="form-label" for="source-name">Name</label>
-      <input
-        id="source-name"
-        class="form-input"
-        type="text"
-        value={name}
-        onInput={(e) => setName((e.target as HTMLInputElement).value)}
-        placeholder="e.g. youtube, reddit, custom-blog"
-      />
+      <div class="add-source-form__identity">
+        <label class="form-label" for="source-name">Name</label>
+        <input
+          id="source-name"
+          class="form-input"
+          type="text"
+          value={name}
+          onInput={(e) => setName((e.target as HTMLInputElement).value)}
+          placeholder="e.g. youtube, reddit, custom-blog"
+        />
 
-      <label class="form-label" for="source-urls">URLs (one per line)</label>
-      <textarea
-        id="source-urls"
-        class="form-textarea"
-        value={urls}
-        onInput={(e) => setUrls((e.target as HTMLTextAreaElement).value)}
-        rows={3}
-        placeholder="https://example.com/feed"
-      />
+        <label class="form-label" for="source-urls">URLs (one per line)</label>
+        <textarea
+          id="source-urls"
+          class="form-textarea"
+          value={urls}
+          onInput={(e) => setUrls((e.target as HTMLTextAreaElement).value)}
+          rows={3}
+          placeholder="https://example.com/feed"
+        />
+        <p class="form-help">Use full URLs starting with http:// or https://. Add one URL per line.</p>
+      </div>
 
       <label class="form-label" for="source-max">Max items (optional)</label>
       <input

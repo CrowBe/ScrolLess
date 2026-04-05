@@ -168,6 +168,7 @@ export function App() {
             source={source}
             onSourceChange={setSource}
             onMarkedAllRead={handleMarkedAllRead}
+            onManageSources={() => setView('settings')}
           />
         )}
 
@@ -175,12 +176,14 @@ export function App() {
           <Settings />
         ) : (
           <FeedList
+            view={view}
             items={items}
             loading={loading}
             hasMore={items.length < total}
             onLoadMore={() => loadFeed(false)}
             onMarkRead={handleMarkRead}
             onToggleSave={handleToggleSave}
+            onOpenSettings={() => setView('settings')}
           />
         )}
       </main>
