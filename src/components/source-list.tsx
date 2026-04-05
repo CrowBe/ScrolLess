@@ -11,8 +11,10 @@ interface Props {
 export function SourceList({ sources, onRefresh }: Props) {
   if (sources.length === 0) {
     return (
-      <div class="settings__section">
-        <p class="settings__help">No sources configured yet. Add one below.</p>
+      <div class="settings__empty-state" role="status">
+        <span class="material-symbols-outlined settings__empty-icon">rss_feed</span>
+        <p class="settings__empty-title">No sources connected yet</p>
+        <p class="settings__help">Add your first source below to start building your personal feed.</p>
       </div>
     );
   }

@@ -5,15 +5,26 @@ import { NewsCard } from './news-card';
 import { ContentCard } from './content-card';
 
 interface Props {
+  view: 'feed' | 'discover' | 'saved' | 'settings';
   items: FeedItemResponse[];
   loading: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
   onMarkRead: (id: string) => void;
   onToggleSave: (id: string, currentlySaved: boolean) => void;
+  onOpenSettings: () => void;
 }
 
-export function FeedList({ items, loading, hasMore, onLoadMore, onMarkRead, onToggleSave }: Props) {
+export function FeedList({
+  view,
+  items,
+  loading,
+  hasMore,
+  onLoadMore,
+  onMarkRead,
+  onToggleSave,
+  onOpenSettings,
+}: Props) {
   if (loading && items.length === 0) {
     return (
       <div class="feed-empty">
@@ -24,11 +35,29 @@ export function FeedList({ items, loading, hasMore, onLoadMore, onMarkRead, onTo
   }
 
   if (!loading && items.length === 0) {
+    const isFeed = view === 'feed';
+    const isDiscover = view === 'discover';
+    const title = isFeed
+      ? 'Your feed is empty'
+      : isDiscover
+        ? 'Nothing to discover yet'
+        : 'No saved items yet';
+    const subtitle = isFeed
+      ? 'Add your first source in Settings to start building a personalized feed.'
+      : isDiscover
+        ? 'Add a few sources to unlock recommendations and trending picks.'
+        : 'Save stories from Feed or Discover so they are easy to revisit.';
+
     return (
       <div class="feed-empty">
         <span class="material-symbols-outlined feed-empty__icon">inbox</span>
-        <p>No items yet</p>
-        <p class="feed-empty__sub">Items will appear here once the agent syncs</p>
+        <p class="feed-empty__title">{title}</p>
+        <p class="feed-empty__sub">{subtitle}</p>
+        {(isFeed || isDiscover) && (
+          <button class="btn btn--ghost btn--sm" onClick={onOpenSettings}>
+            Manage sources
+          </button>
+        )}
       </div>
     );
   }
