@@ -321,6 +321,46 @@ export function registerApiRoutes(
     sseManager.register(userId, reply);
     db.prepare(`UPDATE device_registrations SET last_seen = datetime('now') WHERE user_id = ?`).run(userId);
 
+    db.prepare(`
+      UPDATE free_queue_deliveries
+      SET status = 'expired'
+      WHERE user_id = ?
+        AND status = 'queued'
+        AND expires_at <= datetime('now')
+    `).run(userId);
+
+    const queuedRows = db.prepare(`
+      SELECT id, payload_envelope
+      FROM free_queue_deliveries
+      WHERE user_id = ?
+        AND status = 'queued'
+        AND expires_at > datetime('now')
+      ORDER BY queued_at ASC
+      LIMIT 25
+    `).all(userId) as Array<{ id: number; payload_envelope: string }>;
+
+    for (const row of queuedRows) {
+      try {
+        const payload = JSON.parse(row.payload_envelope) as Record<string, unknown>;
+        const delivered = sseManager.send(userId, 'feed_items', payload);
+        if (delivered) {
+          db.prepare(`
+            UPDATE free_queue_deliveries
+            SET status = 'delivered', delivered_at = datetime('now')
+            WHERE id = ?
+          `).run(row.id);
+        } else {
+          break;
+        }
+      } catch {
+        db.prepare(`
+          UPDATE free_queue_deliveries
+          SET status = 'expired'
+          WHERE id = ?
+        `).run(row.id);
+      }
+    }
+
     req.raw.on('close', () => {
       sseManager.remove(userId, reply);
     });

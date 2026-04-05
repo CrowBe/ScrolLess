@@ -44,6 +44,7 @@ describe('cleanupOldItems', () => {
     const result = cleanupOldItems(db, 'local', 7);
     expect(result.deletedItems).toBe(0);
     expect(result.deletedLogs).toBe(1);
+    expect(result.deletedQueueRows).toBe(0);
   });
 
   it('only deletes sync attempts for the specified user_id', () => {
@@ -54,9 +55,35 @@ describe('cleanupOldItems', () => {
 
     const result = cleanupOldItems(db, 'local', 7);
     expect(result.deletedLogs).toBe(0);
+    expect(result.deletedQueueRows).toBe(0);
 
     const otherAttempts = db.prepare('SELECT id FROM sync_attempts WHERE user_id = ?').all('other-user') as Array<{ id: string }>;
     expect(otherAttempts.length).toBe(1);
+  });
+
+  it('expires queued free-tier deliveries and purges old delivered/expired queue rows', () => {
+    db.prepare(`
+      INSERT INTO free_queue_deliveries (user_id, payload_envelope, expires_at, status)
+      VALUES (?, ?, datetime('now', '-1 hour'), 'queued')
+    `).run('local', '{"source":"news"}');
+
+    db.prepare(`
+      INSERT INTO free_queue_deliveries (user_id, payload_envelope, expires_at, delivered_at, status)
+      VALUES (?, ?, datetime('now', '+1 day'), datetime('now', '-2 day'), 'delivered')
+    `).run('local', '{"source":"news"}');
+
+    db.prepare(`
+      INSERT INTO free_queue_deliveries (user_id, payload_envelope, expires_at, status)
+      VALUES (?, ?, datetime('now', '-2 day'), 'expired')
+    `).run('local', '{"source":"news"}');
+
+    const result = cleanupOldItems(db, 'local', 7);
+    expect(result.deletedQueueRows).toBe(2);
+
+    const queuedRows = db.prepare(
+      `SELECT status FROM free_queue_deliveries WHERE user_id = ?`
+    ).all('local') as Array<{ status: string }>;
+    expect(queuedRows).toEqual([{ status: 'expired' }]);
   });
 });
 

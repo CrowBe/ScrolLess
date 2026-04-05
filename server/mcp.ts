@@ -28,6 +28,7 @@ try {
 }
 
 const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour
+const FREE_QUEUE_TTL_MINUTES = 15;
 
 const GENERIC_INSTRUCTIONS = `# Scraping Instructions
 
@@ -124,14 +125,7 @@ export function registerMcpHandler(
           items: args.items,
         };
 
-        if (!sseManager) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'device_offline' }) }],
-            isError: true,
-          };
-        }
-
-        const relayed = sseManager.send(userId, 'feed_items', payload);
+        const relayed = sseManager?.send(userId, 'feed_items', payload) ?? false;
         const status = relayed ? 'relayed' : 'device_offline';
         db.prepare(`
           INSERT INTO sync_attempts (user_id, source, item_count, status)
@@ -139,10 +133,13 @@ export function registerMcpHandler(
         `).run(userId, payload.source, payload.items.length, status);
 
         if (!relayed) {
+          db.prepare(`
+            INSERT INTO free_queue_deliveries (user_id, payload_envelope, expires_at, status)
+            VALUES (?, ?, datetime('now', '+' || ? || ' minutes'), 'queued')
+          `).run(userId, JSON.stringify(payload), FREE_QUEUE_TTL_MINUTES);
           pushCallback?.(userId, payload.source, payload.items.length, undefined).catch(() => {});
           return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'device_offline' }) }],
-            isError: true,
+            content: [{ type: 'text', text: JSON.stringify({ queued: payload.items.length, queue_ttl_minutes: FREE_QUEUE_TTL_MINUTES }) }],
           };
         }
 

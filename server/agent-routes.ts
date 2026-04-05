@@ -11,6 +11,7 @@ declare module 'fastify' {
 }
 
 export type PushCallback = (userId: string, source: string, count: number, latestTitle?: string) => Promise<void>;
+const FREE_QUEUE_TTL_MINUTES = 15;
 
 // ── Shared business logic (used by both REST routes and MCP tools) ──
 
@@ -106,11 +107,7 @@ export function registerAgentRoutes(
       }
     }
 
-    if (!sseManager) {
-      return reply.status(503).send({ error: 'device_offline' });
-    }
-
-    const relayed = sseManager.send(userId, 'feed_items', body);
+    const relayed = sseManager?.send(userId, 'feed_items', body) ?? false;
     const status = relayed ? 'relayed' : 'device_offline';
 
     db.prepare(`
@@ -119,8 +116,15 @@ export function registerAgentRoutes(
     `).run(userId, body.source, body.items.length, status);
 
     if (!relayed) {
+      db.prepare(`
+        INSERT INTO free_queue_deliveries (user_id, payload_envelope, expires_at, status)
+        VALUES (?, ?, datetime('now', '+' || ? || ' minutes'), 'queued')
+      `).run(userId, JSON.stringify(body), FREE_QUEUE_TTL_MINUTES);
       onNewItems?.(userId, body.source, body.items.length, undefined).catch(() => {});
-      return reply.status(503).send({ error: 'device_offline' });
+      return reply.status(202).send({
+        queued: body.items.length,
+        queue_ttl_minutes: FREE_QUEUE_TTL_MINUTES,
+      } satisfies AgentFeedResponse);
     }
 
     db.prepare(`
@@ -192,7 +196,7 @@ export function cleanupOldItems(
   db: Database.Database,
   userId: string,
   retentionDays: number
-): { deletedItems: number; deletedLogs: number } {
+): { deletedItems: number; deletedLogs: number; deletedQueueRows: number } {
   const logResult = db.prepare(`
     DELETE FROM sync_attempts
     WHERE user_id = ? AND attempted_at < datetime('now', '-' || ? || ' days')
@@ -208,14 +212,48 @@ export function cleanupOldItems(
     `DELETE FROM oauth_tokens WHERE user_id = ? AND access_expires < datetime('now') AND (refresh_expires IS NULL OR refresh_expires < datetime('now'))`
   ).run(userId);
 
+  // Expire any queued free-tier rows that passed their storage window
+  db.prepare(`
+    UPDATE free_queue_deliveries
+    SET status = 'expired'
+    WHERE user_id = ?
+      AND status = 'queued'
+      AND expires_at <= datetime('now')
+  `).run(userId);
+
+  // Purge delivered/expired queue rows after a short grace period to keep DB size bounded
+  const freeQueueResult = db.prepare(`
+    DELETE FROM free_queue_deliveries
+    WHERE user_id = ?
+      AND (
+        (status = 'delivered' AND delivered_at IS NOT NULL AND delivered_at < datetime('now', '-1 day'))
+        OR
+        (status = 'expired' AND expires_at < datetime('now', '-1 day'))
+      )
+  `).run(userId);
+
+  // Purge old paid queue rows once they are acked or expired
+  const paidQueueResult = db.prepare(`
+    DELETE FROM paid_queue_deliveries
+    WHERE user_id = ?
+      AND (
+        (status = 'acked' AND acked_at IS NOT NULL AND acked_at < datetime('now', '-1 day'))
+        OR
+        (status = 'expired' AND expires_at < datetime('now', '-1 day'))
+      )
+  `).run(userId);
+
   const deletedItems = 0;
   const deletedLogs = logResult.changes;
+  const deletedQueueRows = freeQueueResult.changes + paidQueueResult.changes;
 
-  console.log(`[cleanup] Deleted ${deletedLogs} sync attempt entries, ${authCodesResult.changes} expired auth codes, ${oauthTokensResult.changes} expired OAuth tokens`);
-  return { deletedItems, deletedLogs };
+  console.log(`[cleanup] Deleted ${deletedLogs} sync attempt entries, ${authCodesResult.changes} expired auth codes, ${oauthTokensResult.changes} expired OAuth tokens, ${deletedQueueRows} queue rows`);
+  return { deletedItems, deletedLogs, deletedQueueRows };
 }
 
 export function scheduleCleanup(db: Database.Database, userId: string): void {
+  const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
+
   function runCleanup() {
     const retentionRow = db.prepare(
       `SELECT value FROM user_preferences WHERE user_id = ? AND key = 'retention_days'`
@@ -224,20 +262,8 @@ export function scheduleCleanup(db: Database.Database, userId: string): void {
     cleanupOldItems(db, userId, retentionDays);
   }
 
-  function scheduleNextRun() {
-    const now = new Date();
-    const next3am = new Date(now);
-    next3am.setHours(3, 0, 0, 0);
-    if (next3am <= now) {
-      next3am.setDate(next3am.getDate() + 1);
-    }
-    const msUntil3am = next3am.getTime() - now.getTime();
-    console.log(`[cleanup] Next run scheduled at ${next3am.toISOString()}`);
-    setTimeout(() => {
-      runCleanup();
-      setInterval(runCleanup, 24 * 60 * 60 * 1000); // subsequent runs every 24h
-    }, msUntil3am);
-  }
-
-  scheduleNextRun();
+  runCleanup();
+  console.log(`[cleanup] Next run scheduled in ${Math.round(CLEANUP_INTERVAL_MS / (60 * 60 * 1000))} hours`);
+  const interval = setInterval(runCleanup, CLEANUP_INTERVAL_MS);
+  interval.unref();
 }

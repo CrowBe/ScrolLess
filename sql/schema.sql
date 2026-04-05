@@ -178,3 +178,16 @@ CREATE TABLE IF NOT EXISTS paid_queue_cursor (
     last_acked_delivery_id TEXT,
     last_acked_at          TEXT
 );
+
+-- Free-tier short-lived relay queue for PWA background push constraints
+CREATE TABLE IF NOT EXISTS free_queue_deliveries (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id          TEXT NOT NULL,
+    payload_envelope TEXT NOT NULL, -- JSON encrypted relay payload
+    queued_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    expires_at       TEXT NOT NULL,
+    delivered_at     TEXT,
+    status           TEXT NOT NULL DEFAULT 'queued' -- queued | delivered | expired
+);
+
+CREATE INDEX IF NOT EXISTS idx_free_queue_user_status ON free_queue_deliveries(user_id, status, queued_at);
