@@ -3,6 +3,8 @@ import { getVapidKey, subscribePush, unsubscribePush } from '../api';
 
 const DISMISSED_KEY = 'scrolless_push_dismissed';
 
+type PromptState = 'loading' | 'hidden' | 'prompt' | 'granted' | 'denied';
+
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -11,39 +13,85 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 }
 
 export function NotificationPrompt() {
-  const [state, setState] = useState<'loading' | 'hidden' | 'prompt' | 'granted' | 'denied'>('loading');
+  const [state, setState] = useState<PromptState>('loading');
   const [endpoint, setEndpoint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!('Notification' in window) || !('serviceWorker' in navigator)) {
-      setState('hidden');
-      return;
-    }
-    // Push API requires a secure context (HTTPS or localhost)
-    if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
-      setState('hidden');
-      return;
+    let cancelled = false;
+    let notificationPermissionStatus: PermissionStatus | null = null;
+
+    async function syncPermissionState() {
+      if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+        if (!cancelled) setState('hidden');
+        return;
+      }
+      // Push API requires a secure context (HTTPS or localhost)
+      if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+        if (!cancelled) setState('hidden');
+        return;
+      }
+
+      const perm = Notification.permission;
+      if (perm === 'granted') {
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          const sub = await reg.pushManager.getSubscription();
+          if (cancelled) return;
+          if (sub) {
+            setEndpoint(sub.endpoint);
+            setState('granted');
+          } else {
+            setEndpoint(null);
+            setState('prompt');
+          }
+        } catch (err) {
+          console.error('Failed to read push subscription state:', err);
+          if (!cancelled) setState('hidden');
+        }
+        return;
+      }
+
+      setEndpoint(null);
+      if (perm === 'denied') {
+        if (!cancelled) setState('hidden');
+        return;
+      }
+
+      if (localStorage.getItem(DISMISSED_KEY)) {
+        if (!cancelled) setState('hidden');
+        return;
+      }
+
+      if (!cancelled) setState('prompt');
     }
 
-    const perm = Notification.permission;
-    if (perm === 'granted') {
-      setState('granted');
-      // Try to get the existing subscription endpoint
-      navigator.serviceWorker.ready.then((reg) => reg.pushManager.getSubscription()).then((sub) => {
-        if (sub) setEndpoint(sub.endpoint);
-      });
-      return;
+    const onVisibilityOrFocus = () => {
+      void syncPermissionState();
+    };
+
+    void syncPermissionState();
+
+    window.addEventListener('focus', onVisibilityOrFocus);
+    document.addEventListener('visibilitychange', onVisibilityOrFocus);
+    if ('permissions' in navigator) {
+      navigator.permissions
+        .query({ name: 'notifications' as PermissionName })
+        .then((status) => {
+          notificationPermissionStatus = status;
+          notificationPermissionStatus.addEventListener('change', onVisibilityOrFocus);
+        })
+        .catch(() => {
+          // Some browsers may reject querying notifications permission; focus/visibility listeners still cover state sync.
+        });
     }
-    if (perm === 'denied') {
-      setState('hidden');
-      return;
-    }
-    if (localStorage.getItem(DISMISSED_KEY)) {
-      setState('hidden');
-      return;
-    }
-    setState('prompt');
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', onVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', onVisibilityOrFocus);
+      notificationPermissionStatus?.removeEventListener('change', onVisibilityOrFocus);
+    };
   }, []);
 
   async function handleEnable() {
