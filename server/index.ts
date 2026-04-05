@@ -58,7 +58,7 @@ function loadConfig(): AppConfig {
     admin_password: process.env.ADMIN_PASSWORD,
     server: {
       port: parseNumber(process.env.PORT, 3333),
-      host: process.env.HOST ?? '127.0.0.1',
+      host: process.env.HOST ?? '0.0.0.0',
     },
     push: {
       vapid_public_key: process.env.VAPID_PUBLIC_KEY,
@@ -209,7 +209,7 @@ async function start() {
     });
   }
 
-  const host = config.server?.host ?? '127.0.0.1';
+  const host = config.server?.host ?? '0.0.0.0';
   const port = config.server?.port ?? 3333;
 
   await fastify.listen({ host, port });
