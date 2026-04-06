@@ -9,3 +9,8 @@ skill/config.json
 dry-run-output.json
 .claude/worktrees
 .mcp.json
+public/favicon-16.png
+public/favicon-32.png
+public/apple-touch-icon.png
+public/icons/icon-192.png
+public/icons/icon-512.png

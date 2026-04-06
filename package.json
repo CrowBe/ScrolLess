@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "generate:icons": "node scripts/generate-icons.mjs",
+    "prebuild": "npm run generate:icons",
+    "predev": "npm run generate:icons",
+    "predev:client": "npm run generate:icons",
     "dev:server": "tsx --watch server/index.ts",
     "dev:client": "vite",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
