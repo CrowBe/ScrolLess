@@ -24,6 +24,12 @@ const VIEW_TO_HASH: Record<View, string> = {
   saved: '#/saved',
   settings: '#/settings',
 };
+const VIEW_TO_TITLE: Record<View, string> = {
+  feed: 'Feed',
+  discover: 'Discover',
+  saved: 'Saved',
+  settings: 'Settings',
+};
 
 function viewFromHash(): View {
   return HASH_TO_VIEW[location.hash] ?? 'feed';
@@ -58,6 +64,10 @@ export function App() {
     }
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
+
+  useEffect(() => {
+    document.title = `ScrolLess — ${VIEW_TO_TITLE[view]}`;
+  }, [view]);
   const [source, setSource] = useState('');
   const [items, setItems] = useState<FeedItemResponse[]>([]);
   const [total, setTotal] = useState(0);
@@ -159,7 +169,7 @@ export function App() {
         </div>
       </header>
 
-      <main class="app-main">
+      <main id="main-content" class="app-main" tabindex={-1}>
         <NotificationPrompt />
 
         {(view === 'feed' || view === 'discover') && (
@@ -189,7 +199,7 @@ export function App() {
       </main>
 
       {/* Bottom navigation */}
-      <nav class="bottom-nav glass">
+      <nav class="bottom-nav glass" aria-label="Primary">
         {NAV_ITEMS.map(({ id, icon, label }) => (
           <button
             key={id}
