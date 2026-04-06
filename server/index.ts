@@ -112,6 +112,10 @@ async function start() {
 
   const fastify = Fastify({ logger: { level: isProd ? 'warn' : 'info' } });
 
+
+  // Platform health probe endpoint (Render/other hosts)
+  fastify.get('/health', async () => ({ ok: true }));
+
   // CORS — allow PWA dev origin in dev; always allow the MCP endpoint to be reached
   // by Claude Desktop / claude.ai (they make direct HTTP, not browser-CORS requests,
   // but we add the header for any web-based MCP client)

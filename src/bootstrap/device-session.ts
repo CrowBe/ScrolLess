@@ -1,4 +1,5 @@
 import type { FeedItemResponse } from '../types';
+import { apiUrl } from '../config';
 
 const DEVICE_ID_KEY = 'scrolless_device_id';
 const DEVICE_KEY_PAIR_KEY = 'scrolless_device_keypair_jwk';
@@ -146,7 +147,7 @@ async function loadOrCreateKeyMaterial(): Promise<DeviceSessionKeyMaterial> {
 }
 
 async function registerDevice(deviceId: string, publicKeySpki: string): Promise<void> {
-  const res = await fetch('/api/v1/device/register', {
+  const res = await fetch(apiUrl('/api/v1/device/register'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ device_id: deviceId, public_key: publicKeySpki }),
@@ -250,7 +251,7 @@ export async function startDeviceSession(options: DeviceSessionOptions = {}): Pr
     clearReconnectTimer();
     stream?.close();
 
-    stream = new EventSource(`/api/stream?device_id=${encodeURIComponent(deviceId)}`);
+    stream = new EventSource(`${apiUrl('/api/stream')}?device_id=${encodeURIComponent(deviceId)}`);
 
     stream.onopen = () => {
       emitStatus({

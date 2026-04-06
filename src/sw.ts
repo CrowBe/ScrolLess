@@ -3,8 +3,8 @@
 
 const sw = globalThis as unknown as ServiceWorkerGlobalScope;
 
-const CACHE = 'scrolless-v1';
-const APP_SHELL = ['/', '/manifest.json', '/icons/icon-192.png'];
+const CACHE = 'scrolless-v2';
+const APP_SHELL = ['/', '/index.html', '/manifest.json', '/icons/icon-192.png'];
 
 // Install: cache app shell
 sw.addEventListener('install', (event: ExtendableEvent) => {
@@ -23,20 +23,36 @@ sw.addEventListener('activate', (event: ExtendableEvent) => {
   );
 });
 
-// Fetch: serve shell from cache for navigations, network-first for API
+// Fetch: network-first for navigations (avoids stale shell), pass-through for API, cache-first for static
 sw.addEventListener('fetch', (event: FetchEvent) => {
   const url = new URL(event.request.url);
 
-  // Pass API and agent requests through to network
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/agent/')) {
+  // Pass API and backend-specific routes through to network
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/agent/') ||
+    url.pathname.startsWith('/oauth/') ||
+    url.pathname.startsWith('/mcp')
+  ) {
     event.respondWith(fetch(event.request));
     return;
   }
 
-  // Navigation: serve cached index.html
+  // Navigation: network-first and refresh cached shell copy
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      caches.match('/').then((cached) => cached ?? fetch(event.request))
+      fetch(event.request)
+        .then((response) => {
+          if (response.ok) {
+            void caches.open(CACHE).then((cache) => cache.put('/', response.clone()));
+          }
+          return response;
+        })
+        .catch(async () => {
+          const cached = await caches.match('/');
+          if (cached) return cached;
+          throw new Error('No cached app shell available');
+        })
     );
     return;
   }
