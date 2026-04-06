@@ -75,6 +75,21 @@ button { cursor: pointer; border: none; background: none; font: inherit; color: 
 
 img { display: block; max-width: 100%; }
 
+.skip-link {
+  position: absolute;
+  left: 0.75rem;
+  top: -3rem;
+  z-index: 200;
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+}
+
+.skip-link:focus {
+  top: 0.75rem;
+}
+
 /* ── Glass ──────────────────────────────────────────────── */
 .glass {
   background: rgba(18, 18, 18, 0.85);
@@ -186,7 +201,8 @@ img { display: block; max-width: 100%; }
 .bottom-nav__item:focus-visible,
 .btn:focus-visible,
 .chip:focus-visible,
-.card__save:focus-visible {
+.card__save:focus-visible,
+.skip-link:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px rgba(77, 182, 172, 0.65);
 }
