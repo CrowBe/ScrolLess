@@ -39,7 +39,6 @@ const NAV_ITEMS: Array<{ id: View; icon: string; label: string }> = [
   { id: 'feed', icon: 'feed', label: 'Feed' },
   { id: 'discover', icon: 'explore', label: 'Discover' },
   { id: 'saved', icon: 'bookmark', label: 'Saved' },
-  { id: 'settings', icon: 'settings', label: 'Settings' },
 ];
 
 export function App() {
@@ -154,18 +153,6 @@ export function App() {
         <div class="app-header__right">
           <DeviceSessionStatusBadge />
           <SyncStatus />
-          <button
-            class="app-header__settings"
-            onClick={() => setView('settings')}
-            aria-label="Settings"
-          >
-            <span
-              class="material-symbols-outlined"
-              style={view === 'settings' ? 'font-variation-settings: "FILL" 1' : ''}
-            >
-              settings
-            </span>
-          </button>
         </div>
       </header>
 

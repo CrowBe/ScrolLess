@@ -16,6 +16,7 @@ export function NotificationPrompt() {
   const [state, setState] = useState<PromptState>('loading');
   const [endpoint, setEndpoint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -96,10 +97,12 @@ export function NotificationPrompt() {
 
   async function handleEnable() {
     setBusy(true);
+    setError(null);
     try {
       const perm = await Notification.requestPermission();
       if (perm !== 'granted') {
         setState('denied');
+        setError('Notifications were not enabled. Check your browser permission settings.');
         return;
       }
 
@@ -117,6 +120,7 @@ export function NotificationPrompt() {
       setState('granted');
     } catch (err) {
       console.error('Push subscription failed:', err);
+      setError('Could not enable notifications. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -171,6 +175,7 @@ export function NotificationPrompt() {
           Not now
         </button>
       </div>
+      {error && <span class="notif-prompt__error">{error}</span>}
     </div>
   );
 }
