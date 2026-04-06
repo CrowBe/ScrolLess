@@ -58,6 +58,26 @@ function writePng(filePath, width, height, rgba) {
   fs.writeFileSync(filePath, png);
 }
 
+function writeIco(filePath, pngData) {
+  // ICO with one PNG image entry (32x32).
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0); // reserved
+  header.writeUInt16LE(1, 2); // type = icon
+  header.writeUInt16LE(1, 4); // image count
+
+  const entry = Buffer.alloc(16);
+  entry.writeUInt8(32, 0); // width
+  entry.writeUInt8(32, 1); // height
+  entry.writeUInt8(0, 2); // palette size
+  entry.writeUInt8(0, 3); // reserved
+  entry.writeUInt16LE(1, 4); // color planes
+  entry.writeUInt16LE(32, 6); // bpp
+  entry.writeUInt32LE(pngData.length, 8); // bytes in resource
+  entry.writeUInt32LE(header.length + entry.length, 12); // offset
+
+  fs.writeFileSync(filePath, Buffer.concat([header, entry, pngData]));
+}
+
 function renderIcon(size) {
   const data = Buffer.alloc(size * size * 4);
   const radiusRect = size * 0.22;
@@ -131,3 +151,8 @@ for (const target of targets) {
   writePng(target.file, target.size, target.size, rgba);
   console.log(`Generated ${path.relative(root, target.file)}`);
 }
+
+const faviconPngPath = path.join(root, 'public', 'favicon-32.png');
+const faviconIcoPath = path.join(root, 'public', 'favicon.ico');
+writeIco(faviconIcoPath, fs.readFileSync(faviconPngPath));
+console.log(`Generated ${path.relative(root, faviconIcoPath)}`);
