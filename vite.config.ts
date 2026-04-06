@@ -6,6 +6,7 @@ import { resolve } from 'path';
 export default defineConfig({
   plugins: [preact()],
   root: './src',
+  publicDir: '../public',
   build: {
     outDir: '../dist/client',
     emptyOutDir: true,
