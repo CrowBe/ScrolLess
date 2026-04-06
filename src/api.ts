@@ -1,6 +1,5 @@
 import type { FeedResponse, Stats, SyncLogEntry, FeedItemResponse, UserSource } from './types';
-
-const base = '';
+import { apiUrl } from './config';
 
 async function req<T>(url: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers ?? {});
@@ -8,7 +7,7 @@ async function req<T>(url: string, options?: RequestInit): Promise<T> {
   if (deviceId) {
     headers.set('X-Device-Id', deviceId);
   }
-  const res = await fetch(base + url, { ...options, headers });
+  const res = await fetch(apiUrl(url), { ...options, headers });
   if (!res.ok) throw new Error(`${options?.method ?? 'GET'} ${url} → ${res.status}`);
   return res.json() as Promise<T>;
 }
