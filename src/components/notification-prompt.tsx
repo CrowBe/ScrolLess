@@ -3,7 +3,7 @@ import { getVapidKey, subscribePush, unsubscribePush } from '../api';
 
 const DISMISSED_KEY = 'scrolless_push_dismissed';
 
-type PromptState = 'loading' | 'hidden' | 'prompt' | 'granted' | 'denied';
+type PromptState = 'loading' | 'hidden' | 'prompt' | 'granted';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -101,7 +101,7 @@ export function NotificationPrompt() {
     try {
       const perm = await Notification.requestPermission();
       if (perm !== 'granted') {
-        setState('denied');
+        setState('prompt');
         setError('Notifications were not enabled. Check your browser permission settings.');
         return;
       }
@@ -149,7 +149,7 @@ export function NotificationPrompt() {
     }
   }
 
-  if (state === 'loading' || state === 'hidden' || state === 'denied') return null;
+  if (state === 'loading' || state === 'hidden') return null;
 
   if (state === 'granted') {
     return (
