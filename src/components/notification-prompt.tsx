@@ -35,20 +35,19 @@ export function NotificationPrompt() {
 
       const perm = Notification.permission;
       if (perm === 'granted') {
+        if (!cancelled) setState('granted');
         try {
           const reg = await navigator.serviceWorker.ready;
           const sub = await reg.pushManager.getSubscription();
           if (cancelled) return;
           if (sub) {
             setEndpoint(sub.endpoint);
-            setState('granted');
+            await subscribePush(sub.toJSON() as PushSubscriptionJSON);
           } else {
             setEndpoint(null);
-            setState('prompt');
           }
         } catch (err) {
           console.error('Failed to read push subscription state:', err);
-          if (!cancelled) setState('hidden');
         }
         return;
       }
@@ -106,6 +105,8 @@ export function NotificationPrompt() {
         return;
       }
 
+      setState('granted');
+
       const { key } = await getVapidKey();
       if (!key) throw new Error('No VAPID key configured');
 
@@ -117,10 +118,9 @@ export function NotificationPrompt() {
 
       await subscribePush(sub.toJSON() as PushSubscriptionJSON);
       setEndpoint(sub.endpoint);
-      setState('granted');
     } catch (err) {
       console.error('Push subscription failed:', err);
-      setError('Could not enable notifications. Please try again.');
+      setError('Notifications are enabled, but push setup failed. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -156,9 +156,11 @@ export function NotificationPrompt() {
       <div class="notif-prompt notif-prompt--on">
         <span class="material-symbols-outlined">notifications_active</span>
         <span>Notifications: On</span>
-        <button class="btn btn--ghost btn--sm" onClick={handleDisable} disabled={busy}>
+        <button class="btn btn--ghost btn--sm" onClick={handleDisable} disabled={busy || !endpoint}>
           Disable
         </button>
+        {!endpoint && <span class="notif-prompt__error">Finishing setup…</span>}
+        {error && <span class="notif-prompt__error">{error}</span>}
       </div>
     );
   }

@@ -56,7 +56,20 @@ function AgentTokens() {
   async function handleCopyToken() {
     if (!newToken) return;
     try {
-      await navigator.clipboard.writeText(newToken);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(newToken);
+      } else {
+        const input = document.createElement('textarea');
+        input.value = newToken;
+        input.setAttribute('readonly', '');
+        input.style.position = 'absolute';
+        input.style.left = '-9999px';
+        document.body.appendChild(input);
+        input.select();
+        const copied = document.execCommand('copy');
+        document.body.removeChild(input);
+        if (!copied) throw new Error('execCommand copy failed');
+      }
       setCopyState('copied');
     } catch (err) {
       console.error('Failed to copy token:', err);
