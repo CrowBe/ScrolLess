@@ -152,7 +152,7 @@ describe('versioned auth/token route aliases', () => {
     });
 
     expect(res.statusCode).toBe(201);
-    expect(res.json()).toEqual({ user_id: 'dev_v1' });
+    expect(res.json()).toEqual({ user_id: 'dev_v1', ok: true });
   });
 
   it('supports /api/v1/tokens create/list/delete', async () => {
@@ -318,11 +318,17 @@ describe('POST /api/v1/queue/ack', () => {
 
   beforeEach(async () => {
     db = createTestDb();
+    // Register devices so the ownership check in queue/ack passes
+    db.prepare(`INSERT INTO device_registrations (user_id, public_key) VALUES (?, ?)`).run('usr_1', 'pk_a');
+    db.prepare(`INSERT INTO device_registrations (user_id, public_key) VALUES (?, ?)`).run('usr_1_b', 'pk_b');
+    // Note: device_registrations uses user_id as PK; dev_A and dev_B are user_ids here
+    db.prepare(`INSERT OR REPLACE INTO device_registrations (user_id, public_key) VALUES (?, ?)`).run('dev_A', 'pk_a');
+    db.prepare(`INSERT OR REPLACE INTO device_registrations (user_id, public_key) VALUES (?, ?)`).run('dev_B', 'pk_b');
     db.prepare(`
       INSERT INTO paid_queue_deliveries (delivery_id, user_id, device_id, payload_envelope, expires_at, status)
       VALUES
-        ('del_1', 'usr_1', 'dev_A', '{"ciphertext":"a"}', datetime('now', '+1 day'), 'delivered_unacked'),
-        ('del_1', 'usr_1', 'dev_B', '{"ciphertext":"a"}', datetime('now', '+1 day'), 'queued')
+        ('del_1', 'dev_A', 'dev_A', '{"ciphertext":"a"}', datetime('now', '+1 day'), 'delivered_unacked'),
+        ('del_1', 'dev_B', 'dev_B', '{"ciphertext":"a"}', datetime('now', '+1 day'), 'queued')
     `).run();
     app = Fastify();
     registerApiRoutes(app, db);
@@ -335,9 +341,11 @@ describe('POST /api/v1/queue/ack', () => {
   });
 
   it('is idempotent per device and advances cursor when at least one device ACKs', async () => {
+    // Send X-Device-Id so the auth resolves to dev_A (registered above)
     const firstAck = await app.inject({
       method: 'POST',
       url: '/api/v1/queue/ack',
+      headers: { 'x-device-id': 'dev_A' },
       payload: { delivery_id: 'del_1', device_id: 'dev_A' },
     });
     expect(firstAck.statusCode).toBe(200);
@@ -351,12 +359,14 @@ describe('POST /api/v1/queue/ack', () => {
 
     const cursor = db.prepare(
       `SELECT last_acked_delivery_id FROM paid_queue_cursor WHERE user_id = ?`
-    ).get('usr_1') as { last_acked_delivery_id: string } | undefined;
+    ).get('dev_A') as { last_acked_delivery_id: string } | undefined;
     expect(cursor?.last_acked_delivery_id).toBe('del_1');
 
+    // Second ack on same delivery is idempotent
     const secondAck = await app.inject({
       method: 'POST',
       url: '/api/v1/queue/ack',
+      headers: { 'x-device-id': 'dev_A' },
       payload: { delivery_id: 'del_1', device_id: 'dev_A' },
     });
     expect(secondAck.statusCode).toBe(200);
@@ -364,59 +374,4 @@ describe('POST /api/v1/queue/ack', () => {
   });
 });
 
-describe('paid feed gating feature flag', () => {
-  let db: Database.Database;
-  let app: FastifyInstance;
-  const previousPaidOnly = process.env.ENFORCE_PAID_FEED;
-
-  beforeEach(async () => {
-    process.env.ENFORCE_PAID_FEED = '1';
-    db = createTestDb();
-    db.prepare(`
-      INSERT INTO feed_items (
-        id, user_id, source, title, url, url_hash, published_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      'news:item-1',
-      'usr_paid',
-      'news',
-      'Paid item',
-      'https://example.com/paid',
-      'paid_hash',
-      '2026-04-04T00:00:00Z'
-    );
-    db.prepare(
-      `INSERT INTO device_registrations (user_id, public_key) VALUES (?, ?)`
-    ).run('dev_free', 'pk');
-
-    app = Fastify();
-    registerApiRoutes(app, db);
-    await app.ready();
-  });
-
-  afterEach(async () => {
-    await app.close();
-    db.close();
-    if (previousPaidOnly == null) {
-      delete process.env.ENFORCE_PAID_FEED;
-    } else {
-      process.env.ENFORCE_PAID_FEED = previousPaidOnly;
-    }
-  });
-
-  it('allows paid identities and blocks free device identities when enabled', async () => {
-    const paidRes = await app.inject({
-      method: 'GET',
-      url: '/api/feed',
-      headers: { 'x-device-id': 'usr_paid' },
-    });
-    expect(paidRes.statusCode).toBe(200);
-
-    const freeRes = await app.inject({
-      method: 'GET',
-      url: '/api/feed',
-      headers: { 'x-device-id': 'dev_free' },
-    });
-    expect(freeRes.statusCode).toBe(403);
-  });
-});
+// Note: GET /api/feed is removed — feed content lives in device IndexedDB only.

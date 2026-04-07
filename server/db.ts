@@ -3,15 +3,11 @@ import { createHash } from 'crypto';
 import { existsSync, mkdirSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { homedir } from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export function initDb(dbPath?: string): Database.Database {
-  const resolvedPath = (dbPath ?? '~/.feed-aggregator/feed.db').replace(
-    /^~/,
-    homedir()
-  );
+  const resolvedPath = dbPath ?? join(__dirname, '../data/scrolless.db');
 
   const dir = dirname(resolvedPath);
   if (!existsSync(dir)) {
@@ -28,6 +24,19 @@ export function initDb(dbPath?: string): Database.Database {
   const schema = readFileSync(join(__dirname, '../sql/schema.sql'), 'utf8');
   db.exec(schema);
 
+  // One-time destructive migrations — idempotent (IF EXISTS is a no-op when table is gone)
+  // feed_items must not exist on the server (content lives in device IndexedDB only)
+  db.exec(`DROP TABLE IF EXISTS feed_items`);
+  db.exec(`DROP INDEX IF EXISTS idx_feed_url_hash`);
+  db.exec(`DROP INDEX IF EXISTS idx_feed_published`);
+  db.exec(`DROP INDEX IF EXISTS idx_feed_source`);
+  db.exec(`DROP INDEX IF EXISTS idx_feed_read`);
+  db.exec(`DROP INDEX IF EXISTS idx_feed_saved`);
+  db.exec(`DROP INDEX IF EXISTS idx_feed_user`);
+  db.exec(`DROP INDEX IF EXISTS idx_feed_discovery`);
+  // sync_log superseded by sync_attempts
+  db.exec(`DROP TABLE IF EXISTS sync_log`);
+
   // Idempotent migrations for columns added after initial schema
   try {
     db.exec(`ALTER TABLE user_sources ADD COLUMN scraping_notes TEXT`);
@@ -38,26 +47,6 @@ export function initDb(dbPath?: string): Database.Database {
     db.exec(`ALTER TABLE user_sources ADD COLUMN last_sync_at TEXT`);
   } catch {
     // Column already exists — safe to ignore
-  }
-  try {
-    db.exec(`ALTER TABLE feed_items ADD COLUMN is_saved INTEGER NOT NULL DEFAULT 0`);
-  } catch {
-    // Column already exists — safe to ignore
-  }
-  const feedColumns = [
-    'source_type TEXT',
-    'content_type TEXT',
-    'card_type TEXT',
-    'action_label TEXT',
-    'action_icon TEXT',
-    'metadata_json TEXT',
-  ];
-  for (const column of feedColumns) {
-    try {
-      db.exec(`ALTER TABLE feed_items ADD COLUMN ${column}`);
-    } catch {
-      // Column already exists — safe to ignore
-    }
   }
 
   // Seed default user_preferences if not present

@@ -4,15 +4,6 @@ import type Database from 'better-sqlite3';
 import { z } from 'zod';
 import type { SseManager } from './sse-manager.js';
 
-interface FeedQuery {
-  limit?: string;
-  offset?: string;
-  source?: string;
-  unread_only?: string;
-  discovery?: string;
-  saved?: string;
-}
-
 interface ApiRouteOptions {
   deviceEnrollmentToken?: string;
 }
@@ -47,6 +38,13 @@ const queueAckSchema = z.object({
   delivery_id: z.string().trim().min(1, 'delivery_id is required'),
   device_id: deviceIdSchema,
 });
+const pushSubscribeSchema = z.object({
+  endpoint: z.string().url('endpoint must be a valid URL'),
+  keys: z.object({
+    p256dh: z.string().min(1, 'keys.p256dh is required'),
+    auth: z.string().min(1, 'keys.auth is required'),
+  }),
+});
 
 function parseBody<T>(
   schema: z.ZodType<T>,
@@ -60,24 +58,6 @@ function parseBody<T>(
     return null;
   }
   return parsed.data;
-}
-
-function parseTags(raw: string | null): string[] {
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
-
-function parseMetadata(raw: string | null): Record<string, string | number | boolean | null> | undefined {
-  if (!raw) return undefined;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
 }
 
 function getRequestUserId(req: FastifyRequest, db: Database.Database): string | null {
@@ -126,7 +106,6 @@ function getRequestUserId(req: FastifyRequest, db: Database.Database): string | 
   return null;
 }
 
-
 function getStreamUserId(req: FastifyRequest, db: Database.Database): string | null {
   const fromHeader = getRequestUserId(req, db);
   if (fromHeader) return fromHeader;
@@ -148,8 +127,6 @@ export function registerApiRoutes(
   sseManager?: SseManager,
   options?: ApiRouteOptions
 ): void {
-  const isPaidTier = (userId: string): boolean => userId.startsWith('usr_');
-  const paidFeedOnly = process.env.ENFORCE_PAID_FEED === '1';
   const enrollmentToken = options?.deviceEnrollmentToken?.trim() || null;
 
   const hasValidEnrollmentToken = (providedRaw: string | undefined): boolean => {
@@ -205,7 +182,7 @@ export function registerApiRoutes(
         last_seen = NULL
     `).run(body.device_id, body.public_key);
 
-    return reply.status(201).send({ user_id: body.device_id });
+    return reply.status(201).send({ user_id: body.device_id, ok: true });
   };
   // POST /api/v1/device/register
   fastify.post('/api/v1/device/register', registerDeviceHandler);
@@ -308,7 +285,7 @@ export function registerApiRoutes(
     return reply.send({ ok: true, user_id: body.device_id, grace_expires_at: graceExpiresAt });
   });
 
-  // GET /api/stream
+  // GET /api/stream — SSE relay endpoint
   fastify.get('/api/stream', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = getStreamUserId(req, db);
     if (!userId || !userId.startsWith('dev_')) {
@@ -321,6 +298,7 @@ export function registerApiRoutes(
     sseManager.register(userId, reply);
     db.prepare(`UPDATE device_registrations SET last_seen = datetime('now') WHERE user_id = ?`).run(userId);
 
+    // Expire stale queued rows
     db.prepare(`
       UPDATE free_queue_deliveries
       SET status = 'expired'
@@ -329,6 +307,7 @@ export function registerApiRoutes(
         AND expires_at <= datetime('now')
     `).run(userId);
 
+    // Drain any queued payloads immediately on reconnect
     const queuedRows = db.prepare(`
       SELECT id, payload_envelope
       FROM free_queue_deliveries
@@ -366,174 +345,6 @@ export function registerApiRoutes(
     });
   });
 
-  // GET /api/feed
-  fastify.get('/api/feed', async (req: FastifyRequest, reply: FastifyReply) => {
-    const q = req.query as FeedQuery;
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
-    if (paidFeedOnly && !isPaidTier(userId)) {
-      return reply.status(403).send({ error: 'feed endpoint disabled for free tier; use paid queue workflow' });
-    }
-    const limit = Math.min(Math.max(1, parseInt(q.limit ?? '50', 10) || 50), 200);
-    const offset = Math.max(0, parseInt(q.offset ?? '0', 10) || 0);
-
-    let where = 'WHERE user_id = ?';
-    const params: unknown[] = [userId];
-
-    if (q.source) {
-      where += ' AND source = ?';
-      params.push(q.source);
-    }
-    if (q.unread_only === 'true' || q.unread_only === '1') {
-      where += ' AND is_read = 0';
-    }
-    if (q.saved === 'true' || q.saved === '1') {
-      where += ' AND is_saved = 1';
-    }
-    if (q.discovery === 'true' || q.discovery === '1') {
-      where += ' AND is_discovery = 1';
-    } else if (q.discovery === 'false' || q.discovery === '0') {
-      where += ' AND is_discovery = 0';
-    }
-
-    const countRow = db.prepare(
-      `SELECT COUNT(*) as total FROM feed_items ${where}`
-    ).get(...params) as { total: number };
-
-    const rows = db.prepare(`
-      SELECT id, user_id, source, source_type, content_type, card_type, title, author, url, content_preview,
-             thumbnail_url, tags, is_discovery, published_at, fetched_at, is_read, is_saved, action_label, action_icon, metadata_json
-      FROM feed_items
-      ${where}
-      ORDER BY published_at DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, limit, offset) as Array<{
-      id: string;
-      source: string;
-      source_type: string | null;
-      content_type: string | null;
-      card_type: string | null;
-      title: string;
-      author: string | null;
-      url: string;
-      content_preview: string | null;
-      thumbnail_url: string | null;
-      tags: string | null;
-      is_discovery: number;
-      published_at: string;
-      fetched_at: string;
-      is_read: number;
-      is_saved: number;
-      action_label: string | null;
-      action_icon: string | null;
-      metadata_json: string | null;
-    }>;
-
-    const items = rows.map((row) => ({
-      ...row,
-      tags: parseTags(row.tags),
-      is_discovery: row.is_discovery === 1,
-      is_read: row.is_read === 1,
-      is_saved: row.is_saved === 1,
-      metadata: parseMetadata(row.metadata_json),
-    }));
-
-    return reply.send({ items, total: countRow.total, limit, offset });
-  });
-
-  // PATCH /api/feed/:id/read
-  fastify.patch('/api/feed/:id/read', async (req: FastifyRequest, reply: FastifyReply) => {
-    const { id } = req.params as { id: string };
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
-    const result = db.prepare(
-      `UPDATE feed_items SET is_read = 1 WHERE id = ? AND user_id = ?`
-    ).run(decodeURIComponent(id), userId);
-    return reply.send({ ok: result.changes > 0 });
-  });
-
-  // PATCH /api/feed/:id/unread
-  fastify.patch('/api/feed/:id/unread', async (req: FastifyRequest, reply: FastifyReply) => {
-    const { id } = req.params as { id: string };
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
-    const result = db.prepare(
-      `UPDATE feed_items SET is_read = 0 WHERE id = ? AND user_id = ?`
-    ).run(decodeURIComponent(id), userId);
-    return reply.send({ ok: result.changes > 0 });
-  });
-
-  // PATCH /api/feed/:id/save
-  fastify.patch('/api/feed/:id/save', async (req: FastifyRequest, reply: FastifyReply) => {
-    const { id } = req.params as { id: string };
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
-    const result = db.prepare(
-      `UPDATE feed_items SET is_saved = 1 WHERE id = ? AND user_id = ?`
-    ).run(decodeURIComponent(id), userId);
-    return reply.send({ ok: result.changes > 0 });
-  });
-
-  // PATCH /api/feed/:id/unsave
-  fastify.patch('/api/feed/:id/unsave', async (req: FastifyRequest, reply: FastifyReply) => {
-    const { id } = req.params as { id: string };
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
-    const result = db.prepare(
-      `UPDATE feed_items SET is_saved = 0 WHERE id = ? AND user_id = ?`
-    ).run(decodeURIComponent(id), userId);
-    return reply.send({ ok: result.changes > 0 });
-  });
-
-  // POST /api/feed/mark-all-read
-  fastify.post('/api/feed/mark-all-read', async (req: FastifyRequest, reply: FastifyReply) => {
-    const q = req.query as { source?: string };
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
-    if (q.source) {
-      db.prepare(
-        `UPDATE feed_items SET is_read = 1 WHERE user_id = ? AND source = ? AND is_read = 0`
-      ).run(userId, q.source);
-    } else {
-      db.prepare(
-        `UPDATE feed_items SET is_read = 1 WHERE user_id = ? AND is_read = 0`
-      ).run(userId);
-    }
-    return reply.send({ ok: true });
-  });
-
-  // GET /api/stats
-  fastify.get('/api/stats', async (req: FastifyRequest, reply: FastifyReply) => {
-    const q = req.query as { discovery?: string };
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
-    let discoveryFilter = '';
-    if (q.discovery === 'true' || q.discovery === '1') {
-      discoveryFilter = ' AND is_discovery = 1';
-    } else if (q.discovery === 'false' || q.discovery === '0') {
-      discoveryFilter = ' AND is_discovery = 0';
-    }
-
-    const total = (db.prepare(
-      `SELECT COUNT(*) as n FROM feed_items WHERE user_id = ?${discoveryFilter}`
-    ).get(userId) as { n: number }).n;
-
-    const unread = (db.prepare(
-      `SELECT COUNT(*) as n FROM feed_items WHERE user_id = ? AND is_read = 0${discoveryFilter}`
-    ).get(userId) as { n: number }).n;
-
-    const bySource = db.prepare(`
-      SELECT source,
-             COUNT(*) as count,
-             SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) as unread
-      FROM feed_items
-      WHERE user_id = ?${discoveryFilter}
-      GROUP BY source
-    `).all(userId) as Array<{ source: string; count: number; unread: number }>;
-
-    return reply.send({ total, unread, by_source: bySource });
-  });
-
   // GET /api/sync/status
   fastify.get('/api/sync/status', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = getRequestUserId(req, db);
@@ -558,9 +369,7 @@ export function registerApiRoutes(
       WHERE user_id = ? AND status = 'relayed'
       ORDER BY attempted_at DESC
       LIMIT 10
-    `).all(userId) as Array<{
-      attempted_at: string;
-    }>;
+    `).all(userId) as Array<{ attempted_at: string }>;
 
     let nextSyncEstimate: string | null = null;
     if (relayedRows.length >= 2) {
@@ -579,14 +388,13 @@ export function registerApiRoutes(
     return reply.send({ missed, next_sync_estimate: nextSyncEstimate });
   });
 
-  // GET /api/push/vapid-key
+  // GET /api/push/vapid-key — VAPID key is global server config, not per-user
   fastify.get('/api/push/vapid-key', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = getRequestUserId(req, db);
     if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const row = db.prepare(
-      `SELECT value FROM user_preferences WHERE user_id = ? AND key = 'vapid_public_key'`
-    ).get(userId) as { value: string } | undefined;
-    // Vapid key comes from config, exposed via a stored pref set at startup
+      `SELECT value FROM user_preferences WHERE user_id = 'local' AND key = 'vapid_public_key'`
+    ).get() as { value: string } | undefined;
     return reply.send({ key: row?.value ?? null });
   });
 
@@ -594,14 +402,8 @@ export function registerApiRoutes(
   fastify.post('/api/push/subscribe', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = getRequestUserId(req, db);
     if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
-    const body = req.body as {
-      endpoint: string;
-      keys: { p256dh: string; auth: string };
-    };
-
-    if (!body?.endpoint || !body?.keys?.p256dh || !body?.keys?.auth) {
-      return reply.status(400).send({ error: 'endpoint and keys.p256dh and keys.auth are required' });
-    }
+    const body = parseBody(pushSubscribeSchema, req.body, reply);
+    if (!body) return;
 
     db.prepare(`
       INSERT OR REPLACE INTO push_subscriptions (user_id, endpoint, keys_p256dh, keys_auth)
@@ -724,18 +526,18 @@ export function registerApiRoutes(
     return reply.send({ ok: true });
   });
 
-  const listTokensHandler = async (req: FastifyRequest, reply: FastifyReply) => {
+  // GET /api/v1/tokens
+  fastify.get('/api/v1/tokens', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = getRequestUserId(req, db);
     if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const rows = db.prepare(
       `SELECT token_hash, label, created_at, last_used FROM agent_tokens WHERE user_id = ? ORDER BY created_at DESC`
     ).all(userId) as Array<{ token_hash: string; label: string | null; created_at: string; last_used: string | null }>;
     return reply.send(rows);
-  };
-  // GET /api/v1/tokens
-  fastify.get('/api/v1/tokens', listTokensHandler);
+  });
 
-  const createTokenHandler = async (req: FastifyRequest, reply: FastifyReply) => {
+  // POST /api/v1/tokens
+  fastify.post('/api/v1/tokens', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = getRequestUserId(req, db);
     if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const body = req.body as { label?: string } | null;
@@ -746,11 +548,10 @@ export function registerApiRoutes(
       `INSERT INTO agent_tokens (token_hash, user_id, label) VALUES (?, ?, ?)`
     ).run(hash, userId, label);
     return reply.status(201).send({ token: plain, token_hash: hash, label });
-  };
-  // POST /api/v1/tokens
-  fastify.post('/api/v1/tokens', createTokenHandler);
+  });
 
-  const revokeTokenHandler = async (req: FastifyRequest, reply: FastifyReply) => {
+  // DELETE /api/v1/tokens/:hash
+  fastify.delete('/api/v1/tokens/:hash', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = getRequestUserId(req, db);
     if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
     const { hash } = req.params as { hash: string };
@@ -761,14 +562,24 @@ export function registerApiRoutes(
       return reply.status(404).send({ error: 'token not found' });
     }
     return reply.send({ ok: true });
-  };
-  // DELETE /api/v1/tokens/:hash
-  fastify.delete('/api/v1/tokens/:hash', revokeTokenHandler);
+  });
 
   // POST /api/v1/queue/ack
   fastify.post('/api/v1/queue/ack', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+
     const body = parseBody(queueAckSchema, req.body, reply);
     if (!body) return;
+
+    // Verify the device_id in the body belongs to the authenticated user
+    const deviceRow = db.prepare(
+      `SELECT user_id FROM device_registrations WHERE user_id = ?`
+    ).get(body.device_id) as { user_id: string } | undefined;
+
+    if (!deviceRow || deviceRow.user_id !== userId) {
+      return reply.status(403).send({ error: 'device_id does not belong to authenticated user' });
+    }
 
     const existing = db.prepare(`
       SELECT user_id, acked_at

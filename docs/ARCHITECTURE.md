@@ -20,8 +20,10 @@
 - `user_id` = `dev_<uuid>` (generated on device, stored in IndexedDB).
 - Agent encrypts all content fields (ECIES P-256 + AES-256-GCM) using the registered public key before POSTing.
 - Server relays the encrypted payload to the device via SSE (`GET /api/stream`) if the connection is open.
-- If the device is offline (no active SSE connection): server logs a `sync_attempt` with `status = 'device_offline'`, returns HTTP 503 `{ "error": "device_offline" }` to the agent, and does **not** update `last_sync_at` on `user_sources`.
-- Content lives in IndexedDB only — the server never stores feed items.
+- If the device is offline (no active SSE connection): server logs a `sync_attempt` with `status = 'device_offline'`, queues the encrypted payload in `free_queue_deliveries` (TTL: 15 min), returns HTTP 202 `{ "queued": N, "queue_ttl_minutes": 15 }` to the agent, and sends a Web Push notification to prompt the user to open the app. When the device reconnects its SSE stream, queued payloads are drained immediately.
+- `last_sync_at` on `user_sources` is only updated on successful direct relay (200). It is **never** updated when a payload is queued (202).
+- The server stores only **ciphertext** in `free_queue_deliveries` — it cannot read the content.
+- Content lives in IndexedDB only — the server never stores decrypted feed items.
 
 ### Paid Tier
 
@@ -115,19 +117,22 @@ Authenticated via device token (free tier) or session (paid tier).
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/api/device/register` | Register device public key, get `dev_` user_id |
+| `POST` | `/api/v1/device/register` | Register device public key, get `dev_` user_id |
+| `POST` | `/api/v1/device/challenge` | Request a proof-of-possession challenge |
+| `POST` | `/api/v1/device/verify` | Verify challenge signature and complete registration |
 | `GET` | `/api/stream` | SSE stream — relay encrypted payloads to device |
 | `GET` | `/api/sync/status` | Missed sync banner data (sync_attempts metadata) |
 | `GET` | `/api/sources` | List user's configured sources |
 | `POST` | `/api/sources` | Add a new source |
 | `PATCH` | `/api/sources/:name` | Update a source (toggle enabled, edit URLs) |
 | `DELETE` | `/api/sources/:name` | Remove a source |
-| `GET` | `/api/push/vapid-key` | Public VAPID key for push subscription |
+| `GET` | `/api/push/vapid-key` | Public VAPID key for push subscription (global server config) |
 | `POST` | `/api/push/subscribe` | Store a push subscription |
 | `POST` | `/api/push/unsubscribe` | Remove a push subscription |
-| `GET` | `/api/agent-tokens` | List agent tokens for the device/user |
-| `POST` | `/api/agent-tokens` | Create a new agent token |
-| `DELETE` | `/api/agent-tokens/:id` | Revoke an agent token |
+| `GET` | `/api/v1/tokens` | List agent tokens for the device/user |
+| `POST` | `/api/v1/tokens` | Create a new agent token |
+| `DELETE` | `/api/v1/tokens/:hash` | Revoke an agent token by hash |
+| `POST` | `/api/v1/queue/ack` | Acknowledge delivery of a paid-tier queued payload |
 
 **Removed routes** (replaced by IndexedDB client reads):
 - `GET /api/feed` — feed is read from IndexedDB
@@ -220,7 +225,7 @@ For each feed item:
 
 1. **Generate ephemeral keypair**: Agent generates a fresh P-256 keypair for this POST batch (`ephemeral_private_key`, `ephemeral_public_key`).
 2. **ECDH shared secret**: `shared_secret = ECDH(ephemeral_private_key, device_public_key)`
-3. **Key derivation**: `aes_key = HKDF-SHA256(shared_secret, salt="scrolless-v1", length=32)`
+3. **Key derivation**: `aes_key = HKDF-SHA256(shared_secret, salt=[] (empty), info="scrolless-v1", length=32)`
 4. **Encrypt per item**: For each item's content fields (`title`, `author`, `content_preview`, `thumbnail_url`, `tags`):
    - Serialize fields as UTF-8 JSON
    - Generate 12-byte random IV
@@ -252,7 +257,7 @@ Metadata fields (`source_id`, `url`, `published_at`, `is_discovery`) remain plai
 
 1. Retrieve device private key from IndexedDB
 2. `shared_secret = ECDH(device_private_key, ephemeral_public_key)`
-3. `aes_key = HKDF-SHA256(shared_secret, salt="scrolless-v1", length=32)`
+3. `aes_key = HKDF-SHA256(shared_secret, salt=[] (empty), info="scrolless-v1", length=32)`
 4. For each item: `iv = encrypted_fields[0:12]`, `ciphertext = encrypted_fields[12:-16]`, `authTag = encrypted_fields[-16:]`
 5. `plaintext = AES-256-GCM-Decrypt(aes_key, iv, ciphertext, authTag)`
 6. Parse plaintext JSON → `{ title, author, content_preview, thumbnail_url, tags }`
@@ -281,8 +286,14 @@ The server **never decrypts**. It:
    YES → emit SSE event with full encrypted payload → return 200 to agent
          update last_sync_at on user_sources
    NO  → log sync_attempt(status='device_offline')
-         return 503 { "error": "device_offline" } to agent
-         attempt Web Push notification (push without content)
+         queue encrypted payload in free_queue_deliveries (TTL: 15 min)
+         attempt Web Push notification (prompt user to open app)
+         return 202 { queued: N, queue_ttl_minutes: 15 } to agent
+         last_sync_at is NOT updated (payload not yet delivered)
+
+5. On device reconnect (GET /api/stream):
+         server drains pending free_queue_deliveries rows via SSE
+         marks drained rows as 'delivered'
 ```
 
 ### SSE Event Shape
@@ -468,12 +479,27 @@ CREATE TABLE push_subscriptions (
 );
 ```
 
+### `free_queue_deliveries`
+
+Short-lived encrypted relay queue for free-tier devices. Server stores **ciphertext only**. Entries have a 15-minute TTL and are purged after delivery or expiry.
+
+```sql
+CREATE TABLE free_queue_deliveries (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id          TEXT NOT NULL,
+    payload_envelope TEXT NOT NULL, -- JSON of the encrypted relay payload (ciphertext)
+    queued_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    expires_at       TEXT NOT NULL,
+    delivered_at     TEXT,
+    status           TEXT NOT NULL DEFAULT 'queued' -- queued | delivered | expired
+);
+```
+
 ### `agent_tokens`
 
 ```sql
 CREATE TABLE agent_tokens (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    token_hash  TEXT NOT NULL UNIQUE,
+    token_hash  TEXT PRIMARY KEY,
     user_id     TEXT NOT NULL,
     label       TEXT,
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
@@ -704,7 +730,7 @@ interface AgentFeedItem {
 
 ### Agent Errors
 
-- Device offline → 503 `{ "error": "device_offline" }` — agent should retry on next scheduled run
+- Device offline → 202 `{ "queued": N, "queue_ttl_minutes": 15 }` — payload queued, agent may advance `last_sync` window
 - Invalid payload → 400 with descriptive message
 - Invalid token → 401
 - Server 429 → rate limited, stop and wait for next run
@@ -726,13 +752,16 @@ await fastify.register(async (agentScope) => {
 });
 ```
 
-### 503 device_offline Semantics
+### 202 device_offline Semantics (Free Tier)
 
 - Returned to agent when there is no active SSE connection for the target `user_id`
-- `last_sync_at` on `user_sources` is NOT updated
+- `last_sync_at` on `user_sources` is **not** updated (payload not yet delivered to device)
 - `sync_attempts` row is inserted with `status = 'device_offline'`
+- Encrypted payload queued in `free_queue_deliveries` with 15-minute TTL
 - Web Push notification is attempted (notify user to open app)
-- Agent treats 503 as "try again later" — not a permanent failure
+- When device reconnects via SSE, queued rows are drained immediately
+- Queued rows are marked `expired` after TTL and purged within 24 h
+- Agent may advance its `last_sync` window on 202 (payload is safely queued)
 
 ---
 

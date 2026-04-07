@@ -99,6 +99,12 @@ export function registerAgentRoutes(
       if (!item.url || typeof item.url !== 'string') {
         return reply.status(400).send({ error: `items[${i}].url is required` });
       }
+      // Validate URL format
+      try {
+        new URL(item.url);
+      } catch {
+        return reply.status(400).send({ error: `items[${i}].url must be a valid URL` });
+      }
       if (!item.published_at || typeof item.published_at !== 'string' || Number.isNaN(Date.parse(item.published_at))) {
         return reply.status(400).send({ error: `items[${i}].published_at must be a valid ISO 8601 date string` });
       }
@@ -192,78 +198,58 @@ export function registerAgentRoutes(
   });
 }
 
-export function cleanupOldItems(
-  db: Database.Database,
-  userId: string,
-  retentionDays: number
-): { deletedItems: number; deletedLogs: number; deletedQueueRows: number } {
-  const logResult = db.prepare(`
-    DELETE FROM sync_attempts
-    WHERE user_id = ? AND attempted_at < datetime('now', '-' || ? || ' days')
-  `).run(userId, retentionDays);
-
-  // Clean up expired OAuth auth codes
-  const authCodesResult = db.prepare(
-    `DELETE FROM oauth_auth_codes WHERE user_id = ? AND expires_at < datetime('now')`
-  ).run(userId);
-
-  // Clean up expired OAuth tokens (access expired AND no valid refresh)
-  const oauthTokensResult = db.prepare(
-    `DELETE FROM oauth_tokens WHERE user_id = ? AND access_expires < datetime('now') AND (refresh_expires IS NULL OR refresh_expires < datetime('now'))`
-  ).run(userId);
-
-  // Expire any queued free-tier rows that passed their storage window
+/**
+ * Global cleanup — runs across all users.
+ * Purges expired OAuth codes/tokens, stale free queue rows, and old sync_attempts.
+ */
+export function cleanupGlobal(db: Database.Database): void {
+  // Expire and purge stale free queue rows
   db.prepare(`
     UPDATE free_queue_deliveries
     SET status = 'expired'
-    WHERE user_id = ?
-      AND status = 'queued'
-      AND expires_at <= datetime('now')
-  `).run(userId);
+    WHERE status = 'queued' AND expires_at <= datetime('now')
+  `).run();
 
-  // Purge delivered/expired queue rows after a short grace period to keep DB size bounded
   const freeQueueResult = db.prepare(`
     DELETE FROM free_queue_deliveries
-    WHERE user_id = ?
-      AND (
-        (status = 'delivered' AND delivered_at IS NOT NULL AND delivered_at < datetime('now', '-1 day'))
-        OR
-        (status = 'expired' AND expires_at < datetime('now', '-1 day'))
-      )
-  `).run(userId);
+    WHERE (status = 'delivered' AND delivered_at < datetime('now', '-1 day'))
+       OR (status = 'expired' AND expires_at < datetime('now', '-1 day'))
+  `).run();
 
-  // Purge old paid queue rows once they are acked or expired
+  // Purge acked/expired paid queue rows
   const paidQueueResult = db.prepare(`
     DELETE FROM paid_queue_deliveries
-    WHERE user_id = ?
-      AND (
-        (status = 'acked' AND acked_at IS NOT NULL AND acked_at < datetime('now', '-1 day'))
-        OR
-        (status = 'expired' AND expires_at < datetime('now', '-1 day'))
-      )
-  `).run(userId);
+    WHERE (status = 'acked' AND acked_at IS NOT NULL AND acked_at < datetime('now', '-1 day'))
+       OR (status = 'expired' AND expires_at < datetime('now', '-1 day'))
+  `).run();
 
-  const deletedItems = 0;
-  const deletedLogs = logResult.changes;
-  const deletedQueueRows = freeQueueResult.changes + paidQueueResult.changes;
+  // Purge expired OAuth codes (global — not scoped per user)
+  const authCodesResult = db.prepare(
+    `DELETE FROM oauth_auth_codes WHERE expires_at < datetime('now')`
+  ).run();
 
-  console.log(`[cleanup] Deleted ${deletedLogs} sync attempt entries, ${authCodesResult.changes} expired auth codes, ${oauthTokensResult.changes} expired OAuth tokens, ${deletedQueueRows} queue rows`);
-  return { deletedItems, deletedLogs, deletedQueueRows };
+  // Purge OAuth tokens where both access and refresh have expired
+  const oauthTokensResult = db.prepare(
+    `DELETE FROM oauth_tokens WHERE access_expires < datetime('now') AND (refresh_expires IS NULL OR refresh_expires < datetime('now'))`
+  ).run();
+
+  // Purge old sync_attempts (30-day server-side retention across all users)
+  const logsResult = db.prepare(
+    `DELETE FROM sync_attempts WHERE attempted_at < datetime('now', '-30 days')`
+  ).run();
+
+  console.log(
+    `[cleanup] free_queue=${freeQueueResult.changes} paid_queue=${paidQueueResult.changes}` +
+    ` auth_codes=${authCodesResult.changes} oauth_tokens=${oauthTokensResult.changes}` +
+    ` sync_attempts=${logsResult.changes}`
+  );
 }
 
-export function scheduleCleanup(db: Database.Database, userId: string): void {
+export function scheduleCleanup(db: Database.Database): void {
   const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
 
-  function runCleanup() {
-    const retentionRow = db.prepare(
-      `SELECT value FROM user_preferences WHERE user_id = ? AND key = 'retention_days'`
-    ).get(userId) as { value: string } | undefined;
-    const retentionDays = parseInt(JSON.parse(retentionRow?.value ?? '7'), 10);
-    cleanupOldItems(db, userId, retentionDays);
-  }
-
-  runCleanup();
+  cleanupGlobal(db);
   console.log(`[cleanup] Next run scheduled in ${Math.round(CLEANUP_INTERVAL_MS / (60 * 60 * 1000))} hours`);
-  const interval = setInterval(runCleanup, CLEANUP_INTERVAL_MS);
+  const interval = setInterval(() => cleanupGlobal(db), CLEANUP_INTERVAL_MS);
   interval.unref();
 }
