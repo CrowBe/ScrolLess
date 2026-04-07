@@ -4,6 +4,7 @@ import type { UserSource } from './types';
 import type { AgentToken } from './api';
 import { SourceList } from './components/source-list';
 import { AddSourceForm } from './components/add-source-form';
+import { openScrollessDb } from './idb';
 
 function AgentTokens() {
   const [tokens, setTokens] = useState<AgentToken[]>([]);
@@ -162,10 +163,72 @@ export function Settings() {
 
       <AddSourceForm onAdded={loadSources} />
 
-      <section class="settings__section settings__section--danger">
-        <h2 class="settings__heading">About</h2>
-        <p class="settings__help">ScrolLess — personal feed aggregator PoC</p>
-      </section>
+      <DangerZone />
+    </div>
+  );
+}
+
+function DangerZone() {
+  const [clearing, setClearing] = useState(false);
+  const [cleared, setCleared] = useState(false);
+
+  async function handleClearFeedData() {
+    if (!confirm('Delete all locally stored feed items and sync history? This cannot be undone.')) return;
+    setClearing(true);
+    try {
+      const db = await openScrollessDb();
+      await db.clear('feed_items');
+      await db.clear('sync_log');
+      window.dispatchEvent(new CustomEvent('scrolless:idb-updated'));
+      setCleared(true);
+    } catch (err) {
+      console.error('Failed to clear feed data:', err);
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  async function handleUnregisterDevice() {
+    if (!confirm('Unregister this device? Your keypair will be deleted and you will need to re-register. This cannot be undone.')) return;
+    setClearing(true);
+    try {
+      const db = await openScrollessDb();
+      await db.clear('feed_items');
+      await db.clear('sync_log');
+      await db.clear('device');
+      await db.clear('preferences');
+      window.dispatchEvent(new CustomEvent('scrolless:idb-updated'));
+      // Reload to trigger fresh device registration
+      location.reload();
+    } catch (err) {
+      console.error('Failed to unregister device:', err);
+      setClearing(false);
+    }
+  }
+
+  return (
+    <section class="settings__section settings__section--danger">
+      <h2 class="settings__heading">Danger Zone</h2>
+      <p class="settings__help">These actions are permanent and cannot be undone.</p>
+      {cleared && <p class="settings__help" style="color:var(--color-success)">Feed data cleared.</p>}
+      <div class="settings__danger-actions">
+        <button
+          class="btn btn--ghost btn--sm"
+          onClick={handleClearFeedData}
+          disabled={clearing}
+        >
+          {clearing ? '…' : 'Clear local feed data'}
+        </button>
+        <button
+          class="btn btn--ghost btn--sm settings__danger-btn"
+          onClick={handleUnregisterDevice}
+          disabled={clearing}
+        >
+          Unregister this device
+        </button>
+      </div>
+    </section>
+  );
     </div>
   );
 }

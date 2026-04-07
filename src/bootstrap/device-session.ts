@@ -1,11 +1,16 @@
-import type { FeedItemResponse } from '../types';
+import { openScrollessDb, type DeviceRecord, type FeedItem } from '../idb';
+import { generateKeypair, exportPublicKeyBase64, decryptFields, normaliseUrl, hashUrl } from '../crypto';
 import { apiUrl } from '../config';
 
-const DEVICE_ID_KEY = 'scrolless_device_id';
-const DEVICE_KEY_PAIR_KEY = 'scrolless_device_keypair_jwk';
-const INGESTED_EVENT_KEY = 'scrolless_ingested_feed_events';
 const STREAM_RETRY_BASE_MS = 1_000;
 const STREAM_RETRY_MAX_MS = 30_000;
+
+// Module-level cache so api.ts req() can read the device ID synchronously
+let cachedDeviceId: string | null = null;
+
+export function getCachedDeviceId(): string | null {
+  return cachedDeviceId;
+}
 
 type SessionUiState = 'not_registered' | 'stream_disconnected' | 'stream_active';
 
@@ -15,11 +20,6 @@ export interface DeviceSessionStatus {
   connectedAt: string | null;
   lastError: string | null;
   reconnectAttempt: number;
-}
-
-interface DeviceSessionKeyMaterial {
-  privateKeyJwk: JsonWebKey;
-  publicKeySpki: string;
 }
 
 interface EncryptedRelayItem {
@@ -36,17 +36,9 @@ interface FeedItemsEventPayload {
   items: EncryptedRelayItem[];
 }
 
-interface IngestionRecord {
-  id: string;
-  device_id: string;
-  source: string;
-  received_at: string;
-  item_count: number;
-  payload: FeedItemsEventPayload;
-}
-
-interface DeviceSessionOptions {
-  onFeedItems?: (items: FeedItemResponse[]) => void | Promise<void>;
+export interface DeviceSessionOptions {
+  onReady?: (deviceId: string) => void;
+  onFeedItems?: (items: FeedItem[]) => void | Promise<void>;
 }
 
 type Listener = (status: DeviceSessionStatus) => void;
@@ -81,138 +73,105 @@ export function subscribeDeviceSessionStatus(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
-function toBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary);
+/** Load an existing device record or create and register a new one. */
+async function loadOrCreateDevice(): Promise<DeviceRecord> {
+  const db = await openScrollessDb();
+  const existing = await db.get('device', 'singleton');
+  if (existing) return existing;
+
+  // Generate a non-extractable keypair — private key stored in IndexedDB via structured clone
+  const { publicKey, privateKey } = await generateKeypair();
+  const publicKeyB64 = await exportPublicKeyBase64(publicKey);
+  const userId = `dev_${crypto.randomUUID()}`;
+
+  const record: DeviceRecord = {
+    id: 'singleton',
+    user_id: userId,
+    public_key_b64: publicKeyB64,
+    private_key: privateKey,
+    registered_at: new Date().toISOString(),
+  };
+
+  await db.put('device', record);
+  return record;
 }
 
-function fromBase64(input: string): Uint8Array {
-  const normalized = input.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
-  const binary = atob(padded);
-  const out = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
-  return out;
-}
-
-function createDeviceId(): string {
-  return `dev_${crypto.randomUUID()}`;
-}
-
-function loadOrCreateDeviceId(): string {
-  const existing = localStorage.getItem(DEVICE_ID_KEY);
-  if (existing?.startsWith('dev_')) return existing;
-
-  const created = createDeviceId();
-  localStorage.setItem(DEVICE_ID_KEY, created);
-  return created;
-}
-
-async function generateKeyMaterial(): Promise<DeviceSessionKeyMaterial> {
-  const pair = await crypto.subtle.generateKey(
-    { name: 'ECDH', namedCurve: 'P-256' },
-    true,
-    ['deriveBits']
-  );
-  const privateKeyJwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
-  const publicKeySpki = toBase64(new Uint8Array(await crypto.subtle.exportKey('spki', pair.publicKey)));
-
-  return { privateKeyJwk, publicKeySpki };
-}
-
-async function loadOrCreateKeyMaterial(): Promise<DeviceSessionKeyMaterial> {
-  const cached = localStorage.getItem(DEVICE_KEY_PAIR_KEY);
-  if (cached) {
-    try {
-      const parsed = JSON.parse(cached) as DeviceSessionKeyMaterial;
-      if (parsed.privateKeyJwk && typeof parsed.publicKeySpki === 'string') {
-        await crypto.subtle.importKey(
-          'jwk',
-          parsed.privateKeyJwk,
-          { name: 'ECDH', namedCurve: 'P-256' },
-          false,
-          ['deriveBits']
-        );
-        return parsed;
-      }
-    } catch {
-      // fall through and rotate material
-    }
-  }
-
-  const generated = await generateKeyMaterial();
-  localStorage.setItem(DEVICE_KEY_PAIR_KEY, JSON.stringify(generated));
-  return generated;
-}
-
-async function registerDevice(deviceId: string, publicKeySpki: string): Promise<void> {
+async function registerDevice(deviceRecord: DeviceRecord): Promise<void> {
   const res = await fetch(apiUrl('/api/v1/device/register'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ device_id: deviceId, public_key: publicKeySpki }),
+    body: JSON.stringify({
+      device_id: deviceRecord.user_id,
+      public_key: deviceRecord.public_key_b64,
+    }),
   });
   if (!res.ok) {
     throw new Error(`register failed (${res.status})`);
   }
 }
 
-async function decryptRelayPayload(payload: FeedItemsEventPayload): Promise<FeedItemResponse[]> {
-  const decrypted: FeedItemResponse[] = [];
+/**
+ * Decrypt incoming relay payload and write new items into IndexedDB.
+ * Skips items that already exist (url_hash dedup).
+ * Returns only the newly added items.
+ */
+async function decryptAndStore(
+  payload: FeedItemsEventPayload,
+  deviceRecord: DeviceRecord,
+): Promise<FeedItem[]> {
+  const db = await openScrollessDb();
+  const added: FeedItem[] = [];
+  let duped = 0;
 
   for (const item of payload.items ?? []) {
-    const fallbackTitle = `Encrypted item from ${payload.source}`;
-    let contentPreview = 'Encrypted payload received';
-
     try {
-      const bytes = fromBase64(item.encrypted_fields);
-      const maybeText = new TextDecoder().decode(bytes);
-      contentPreview = maybeText.slice(0, 280);
-    } catch {
-      // keep fallback preview until full cryptographic decode is wired
+      const fields = await decryptFields(
+        item.encrypted_fields,
+        payload.ephemeral_public_key,
+        deviceRecord.private_key,
+      );
+
+      const normUrl = normaliseUrl(item.url);
+      const urlHash = await hashUrl(normUrl);
+
+      // Client-side dedup: skip if url_hash already in IndexedDB
+      const existing = await db.getFromIndex('feed_items', 'by_url_hash', urlHash);
+      if (existing) {
+        duped++;
+        continue;
+      }
+
+      const feedItem: FeedItem = {
+        id: `${payload.source}:${item.source_id}`,
+        user_id: deviceRecord.user_id,
+        source: payload.source,
+        source_id: item.source_id,
+        url: normUrl,
+        url_hash: urlHash,
+        published_at: item.published_at,
+        fetched_at: new Date().toISOString(),
+        is_discovery: Boolean(item.is_discovery),
+        is_read: false,
+        is_saved: false,
+        ...fields,
+      };
+
+      await db.add('feed_items', feedItem);
+      added.push(feedItem);
+    } catch (err) {
+      console.warn('[device-session] Failed to decrypt/store item:', item.source_id, err);
     }
-
-    decrypted.push({
-      id: item.source_id,
-      source: payload.source,
-      source_type: undefined,
-      content_type: undefined,
-      card_type: undefined,
-      title: fallbackTitle,
-      author: undefined,
-      url: item.url,
-      content_preview: contentPreview,
-      thumbnail_url: undefined,
-      tags: [],
-      is_discovery: Boolean(item.is_discovery),
-      published_at: item.published_at,
-      fetched_at: new Date().toISOString(),
-      is_read: false,
-      is_saved: false,
-      action_label: undefined,
-      action_icon: undefined,
-      metadata: { encrypted: true },
-    });
   }
 
-  return decrypted;
-}
+  // Append sync log entry
+  await db.add('sync_log', {
+    source: payload.source,
+    synced_at: new Date().toISOString(),
+    items_added: added.length,
+    items_duped: duped,
+  });
 
-function readIngestedRecords(): IngestionRecord[] {
-  try {
-    const raw = localStorage.getItem(INGESTED_EVENT_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as IngestionRecord[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function persistIngestionRecord(record: IngestionRecord): void {
-  const existing = readIngestedRecords();
-  const capped = [record, ...existing].slice(0, 50);
-  localStorage.setItem(INGESTED_EVENT_KEY, JSON.stringify(capped));
+  return added;
 }
 
 function clearReconnectTimer(): void {
@@ -228,30 +187,33 @@ function scheduleReconnect(connect: () => void): void {
   const jitter = Math.floor(Math.random() * 300);
   const delay = Math.min(STREAM_RETRY_MAX_MS, STREAM_RETRY_BASE_MS * 2 ** (attempt - 1)) + jitter;
   emitStatus({ state: 'stream_disconnected', reconnectAttempt: attempt });
-
-  reconnectTimer = window.setTimeout(() => {
-    connect();
-  }, delay);
+  reconnectTimer = window.setTimeout(connect, delay);
 }
 
 export async function startDeviceSession(options: DeviceSessionOptions = {}): Promise<void> {
-  const deviceId = loadOrCreateDeviceId();
-  emitStatus({ deviceId, state: 'not_registered', lastError: null, connectedAt: null });
+  emitStatus({ state: 'not_registered', lastError: null, connectedAt: null });
 
+  let deviceRecord: DeviceRecord;
   try {
-    const keyMaterial = await loadOrCreateKeyMaterial();
-    await registerDevice(deviceId, keyMaterial.publicKeySpki);
+    deviceRecord = await loadOrCreateDevice();
+    cachedDeviceId = deviceRecord.user_id;
+    emitStatus({ deviceId: deviceRecord.user_id });
+    await registerDevice(deviceRecord);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'registration error';
     emitStatus({ state: 'not_registered', lastError: message });
     return;
   }
 
+  options.onReady?.(deviceRecord.user_id);
+
   const connect = () => {
     clearReconnectTimer();
     stream?.close();
 
-    stream = new EventSource(`${apiUrl('/api/stream')}?device_id=${encodeURIComponent(deviceId)}`);
+    stream = new EventSource(
+      `${apiUrl('/api/stream')}?device_id=${encodeURIComponent(deviceRecord.user_id)}`
+    );
 
     stream.onopen = () => {
       emitStatus({
@@ -271,18 +233,12 @@ export async function startDeviceSession(options: DeviceSessionOptions = {}): Pr
     stream.addEventListener('feed_items', async (event) => {
       try {
         const payload = JSON.parse((event as MessageEvent).data) as FeedItemsEventPayload;
-        const decrypted = await decryptRelayPayload(payload);
+        const newItems = await decryptAndStore(payload, deviceRecord);
 
-        persistIngestionRecord({
-          id: crypto.randomUUID(),
-          device_id: deviceId,
-          source: payload.source,
-          received_at: new Date().toISOString(),
-          item_count: payload.items?.length ?? 0,
-          payload,
-        });
+        // Signal app to refresh; items already in IndexedDB
+        window.dispatchEvent(new CustomEvent('scrolless:idb-updated'));
 
-        await options.onFeedItems?.(decrypted);
+        await options.onFeedItems?.(newItems);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'ingestion failed';
         emitStatus({ lastError: message });

@@ -1,39 +1,6 @@
--- Feed Aggregator Schema
+-- ScrolLess Schema
 -- Idempotent — safe to run on every startup.
-
--- Core unified feed, populated by agent POSTs
-CREATE TABLE IF NOT EXISTS feed_items (
-    id              TEXT PRIMARY KEY,          -- "source:source_id"
-    user_id         TEXT NOT NULL DEFAULT 'local',
-    source          TEXT NOT NULL,             -- "youtube" | "x" | "news" | custom
-    source_type     TEXT,                      -- broad taxonomy: "video" | "social" | "news" | custom
-    content_type    TEXT,                      -- specific content: "video" | "article" | "post" | custom
-    card_type       TEXT,                      -- optional UI rendering hint
-    title           TEXT,
-    author          TEXT,
-    url             TEXT NOT NULL,
-    url_hash        TEXT NOT NULL,             -- SHA-256 of normalised URL
-    content_preview TEXT,
-    thumbnail_url   TEXT,
-    tags            TEXT,                      -- JSON array: '["tech","ai"]'
-    is_discovery    INTEGER NOT NULL DEFAULT 0,
-    published_at    TEXT NOT NULL,             -- ISO 8601
-    fetched_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    is_read         INTEGER NOT NULL DEFAULT 0,
-    is_saved        INTEGER NOT NULL DEFAULT 0,
-    action_label    TEXT,
-    action_icon     TEXT,
-    metadata_json   TEXT,
-    raw_json        TEXT
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_url_hash ON feed_items(user_id, url_hash);
-CREATE INDEX IF NOT EXISTS idx_feed_published ON feed_items(published_at DESC);
-CREATE INDEX IF NOT EXISTS idx_feed_source ON feed_items(source);
-CREATE INDEX IF NOT EXISTS idx_feed_read ON feed_items(is_read);
-CREATE INDEX IF NOT EXISTS idx_feed_saved ON feed_items(is_saved);
-CREATE INDEX IF NOT EXISTS idx_feed_user ON feed_items(user_id);
-CREATE INDEX IF NOT EXISTS idx_feed_discovery ON feed_items(is_discovery);
+-- Feed content lives in IndexedDB on the device, NOT on the server.
 
 -- Device registrations (edge device identity + public key)
 CREATE TABLE IF NOT EXISTS device_registrations (
@@ -69,17 +36,6 @@ CREATE TABLE IF NOT EXISTS agent_tokens (
     label       TEXT,
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     last_used   TEXT
-);
-
--- Append-only sync audit trail
-CREATE TABLE IF NOT EXISTS sync_log (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id     TEXT NOT NULL DEFAULT 'local',
-    source      TEXT NOT NULL,
-    synced_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    items_added INTEGER NOT NULL DEFAULT 0,
-    items_duped INTEGER NOT NULL DEFAULT 0,
-    error       TEXT
 );
 
 -- Edge relay sync attempts (no feed content)

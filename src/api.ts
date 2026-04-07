@@ -1,61 +1,16 @@
-import type { FeedResponse, Stats, SyncLogEntry, FeedItemResponse, UserSource } from './types';
+import type { SyncLogEntry, UserSource } from './types';
 import { apiUrl } from './config';
+import { getCachedDeviceId } from './bootstrap/device-session';
 
 async function req<T>(url: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers ?? {});
-  const deviceId = localStorage.getItem('scrolless_device_id');
+  const deviceId = getCachedDeviceId();
   if (deviceId) {
     headers.set('X-Device-Id', deviceId);
   }
   const res = await fetch(apiUrl(url), { ...options, headers });
   if (!res.ok) throw new Error(`${options?.method ?? 'GET'} ${url} → ${res.status}`);
   return res.json() as Promise<T>;
-}
-
-export interface FeedParams {
-  limit?: number;
-  offset?: number;
-  source?: string;
-  unread_only?: boolean;
-  discovery?: boolean;
-  saved?: boolean;
-}
-
-export function getFeed(params: FeedParams = {}): Promise<FeedResponse> {
-  const q = new URLSearchParams();
-  if (params.limit != null) q.set('limit', String(params.limit));
-  if (params.offset != null) q.set('offset', String(params.offset));
-  if (params.source) q.set('source', params.source);
-  if (params.unread_only != null) q.set('unread_only', String(params.unread_only));
-  if (params.discovery != null) q.set('discovery', String(params.discovery));
-  if (params.saved != null) q.set('saved', String(params.saved));
-  return req<FeedResponse>(`/api/feed?${q}`);
-}
-
-export function markRead(id: string): Promise<{ ok: boolean }> {
-  return req(`/api/feed/${encodeURIComponent(id)}/read`, { method: 'PATCH' });
-}
-
-export function markUnread(id: string): Promise<{ ok: boolean }> {
-  return req(`/api/feed/${encodeURIComponent(id)}/unread`, { method: 'PATCH' });
-}
-
-export function saveItem(id: string): Promise<{ ok: boolean }> {
-  return req(`/api/feed/${encodeURIComponent(id)}/save`, { method: 'PATCH' });
-}
-
-export function unsaveItem(id: string): Promise<{ ok: boolean }> {
-  return req(`/api/feed/${encodeURIComponent(id)}/unsave`, { method: 'PATCH' });
-}
-
-export function markAllRead(source?: string): Promise<{ ok: boolean }> {
-  const q = source ? `?source=${encodeURIComponent(source)}` : '';
-  return req(`/api/feed/mark-all-read${q}`, { method: 'POST' });
-}
-
-export function getStats(discovery?: boolean): Promise<Stats> {
-  const q = discovery != null ? `?discovery=${discovery}` : '';
-  return req<Stats>(`/api/stats${q}`);
 }
 
 export function getSyncStatus(): Promise<{ missed: SyncLogEntry[]; next_sync_estimate: string | null }> {
@@ -137,5 +92,5 @@ export function revokeToken(hash: string): Promise<{ ok: boolean }> {
   return req(`/api/v1/tokens/${encodeURIComponent(hash)}`, { method: 'DELETE' });
 }
 
-// Re-export FeedItemResponse for convenience
-export type { FeedItemResponse };
+// Re-export for convenience
+export type { FeedItemResponse } from './types';

@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { cleanupOldItems, getSyncContext } from './agent-routes.js';
+import { cleanupGlobal, getSyncContext } from './agent-routes.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -24,66 +24,69 @@ function createTestDb(): Database.Database {
   return db;
 }
 
-describe('cleanupOldItems', () => {
+describe('cleanupGlobal', () => {
   let db: Database.Database;
 
   beforeEach(() => { db = createTestDb(); });
   afterEach(() => { db.close(); });
 
-  it('deletes old sync attempts based on retention days', () => {
+  it('deletes old sync attempts (global, 30-day retention)', () => {
+    // Old row: will be deleted
     db.prepare(`INSERT INTO sync_attempts (user_id, source, attempted_at, item_count, status)
       VALUES (?, ?, ?, ?, ?)`).run(
       'local', 'news', '2020-01-01T00:00:00Z', 1, 'device_offline'
     );
-
+    // Recent row: kept
     db.prepare(`INSERT INTO sync_attempts (user_id, source, attempted_at, item_count, status)
       VALUES (?, ?, datetime('now'), ?, ?)`).run(
       'local', 'news', 1, 'relayed'
     );
 
-    const result = cleanupOldItems(db, 'local', 7);
-    expect(result.deletedItems).toBe(0);
-    expect(result.deletedLogs).toBe(1);
-    expect(result.deletedQueueRows).toBe(0);
+    cleanupGlobal(db);
+
+    const remaining = db.prepare('SELECT id FROM sync_attempts').all();
+    expect(remaining).toHaveLength(1);
   });
 
-  it('only deletes sync attempts for the specified user_id', () => {
+  it('deletes old sync_attempts across all users (global cleanup)', () => {
+    // Old row for a different user — global cleanup should delete it too
     db.prepare(`INSERT INTO sync_attempts (user_id, source, attempted_at, item_count, status)
       VALUES (?, ?, ?, ?, ?)`).run(
-      'other-user', 'news', '2020-01-01T00:00:00Z', 1, 'device_offline'
+      'dev_other', 'news', '2020-01-01T00:00:00Z', 1, 'device_offline'
     );
 
-    const result = cleanupOldItems(db, 'local', 7);
-    expect(result.deletedLogs).toBe(0);
-    expect(result.deletedQueueRows).toBe(0);
+    cleanupGlobal(db);
 
-    const otherAttempts = db.prepare('SELECT id FROM sync_attempts WHERE user_id = ?').all('other-user') as Array<{ id: string }>;
-    expect(otherAttempts.length).toBe(1);
+    const remaining = db.prepare('SELECT id FROM sync_attempts WHERE user_id = ?').all('dev_other');
+    expect(remaining).toHaveLength(0);
   });
 
   it('expires queued free-tier deliveries and purges old delivered/expired queue rows', () => {
+    // Expired queued row (past TTL)
     db.prepare(`
       INSERT INTO free_queue_deliveries (user_id, payload_envelope, expires_at, status)
       VALUES (?, ?, datetime('now', '-1 hour'), 'queued')
     `).run('local', '{"source":"news"}');
 
+    // Old delivered row (eligible for purge)
     db.prepare(`
       INSERT INTO free_queue_deliveries (user_id, payload_envelope, expires_at, delivered_at, status)
       VALUES (?, ?, datetime('now', '+1 day'), datetime('now', '-2 day'), 'delivered')
     `).run('local', '{"source":"news"}');
 
+    // Old expired row (eligible for purge)
     db.prepare(`
       INSERT INTO free_queue_deliveries (user_id, payload_envelope, expires_at, status)
       VALUES (?, ?, datetime('now', '-2 day'), 'expired')
     `).run('local', '{"source":"news"}');
 
-    const result = cleanupOldItems(db, 'local', 7);
-    expect(result.deletedQueueRows).toBe(2);
+    cleanupGlobal(db);
 
-    const queuedRows = db.prepare(
+    const remaining = db.prepare(
       `SELECT status FROM free_queue_deliveries WHERE user_id = ?`
     ).all('local') as Array<{ status: string }>;
-    expect(queuedRows).toEqual([{ status: 'expired' }]);
+    // The '-1 hour' queued row gets marked expired (not purged yet — purge requires 1 day old)
+    expect(remaining).toEqual([{ status: 'expired' }]);
   });
 });
 

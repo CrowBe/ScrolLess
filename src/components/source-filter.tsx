@@ -1,49 +1,55 @@
-import type { Stats } from '../types';
-import { markAllRead } from '../api';
+import type { UnreadCounts } from '../hooks/useUnreadCounts';
+import { openScrollessDb } from '../idb';
 import { displayName } from '../source-labels';
 
 interface Props {
-  stats: Stats | null;
+  counts: UnreadCounts;
   source: string;
   onSourceChange: (source: string) => void;
-  onMarkedAllRead: () => void;
   onManageSources: () => void;
 }
 
 const SOURCE_ORDER = ['youtube', 'x', 'news'];
 
-function unreadFor(stats: Stats | null, source: string): number {
-  if (!stats) return 0;
-  if (!source) return stats.unread;
-  return stats.by_source.find((s) => s.source === source)?.unread ?? 0;
+function unreadFor(counts: UnreadCounts, source: string): number {
+  if (!source) return counts.unread;
+  return counts.by_source[source]?.unread ?? 0;
 }
 
 export function SourceFilter({
-  stats,
+  counts,
   source,
   onSourceChange,
-  onMarkedAllRead,
   onManageSources,
 }: Props) {
-  const unreadCount = unreadFor(stats, source);
+  const unreadCount = unreadFor(counts, source);
+  const knownSources = Object.keys(counts.by_source);
   const dynamicSources = Array.from(new Set([
     ...SOURCE_ORDER,
-    ...(stats?.by_source.map((s) => s.source) ?? []),
+    ...knownSources,
     ...(source ? [source] : []),
   ]));
   const sources = [{ id: '', label: 'All' }, ...dynamicSources.map((id) => ({ id, label: displayName(id) }))];
 
   async function handleMarkAllRead() {
     if (unreadCount === 0) return;
-    await markAllRead(source || undefined);
-    onMarkedAllRead();
+    const db = await openScrollessDb();
+    const all = await db.getAll('feed_items');
+    const tx = db.transaction('feed_items', 'readwrite');
+    for (const item of all) {
+      if (item.is_read) continue;
+      if (source && item.source !== source) continue;
+      await tx.store.put({ ...item, is_read: true });
+    }
+    await tx.done;
+    window.dispatchEvent(new CustomEvent('scrolless:idb-updated'));
   }
 
   return (
     <div class="source-filter">
       <div class="source-filter__chips" role="toolbar" aria-label="Feed source filters">
         {sources.map((s) => {
-          const unread = unreadFor(stats, s.id);
+          const unread = unreadFor(counts, s.id);
           return (
             <button
               key={s.id}

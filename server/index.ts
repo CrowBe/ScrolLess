@@ -219,7 +219,7 @@ async function start() {
   await fastify.listen({ host, port });
   console.log(`[server] ScrolLess running at http://${host}:${port}`);
 
-  scheduleCleanup(db, 'local');
+  scheduleCleanup(db);
 }
 
 start().catch((err) => {

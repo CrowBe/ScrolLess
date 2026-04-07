@@ -93,13 +93,13 @@ describe('initDb', () => {
     const schema = readFileSync(join(__dirname, '../sql/schema.sql'), 'utf8');
     db.exec(schema);
 
-    // Insert a row and check the fetched_at default
-    db.prepare(`INSERT INTO feed_items (id, user_id, source, title, url, url_hash, published_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-      'test:1', 'local', 'test', 'Test', 'https://example.com', 'abc', '2026-01-01T00:00:00Z'
+    // Insert a sync_attempts row and check the attempted_at default
+    db.prepare(`INSERT INTO sync_attempts (user_id, source, item_count, status) VALUES (?, ?, ?, ?)`).run(
+      'local', 'test', 1, 'relayed'
     );
 
-    const row = db.prepare('SELECT fetched_at FROM feed_items WHERE id = ?').get('test:1') as { fetched_at: string };
-    expect(row.fetched_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    const row = db.prepare('SELECT attempted_at FROM sync_attempts WHERE user_id = ?').get('local') as { attempted_at: string };
+    expect(row.attempted_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
 
     db.close();
   });

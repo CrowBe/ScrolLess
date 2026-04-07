@@ -1,6 +1,8 @@
-import { useState, useEffect, useCallback } from 'preact/hooks';
-import { getFeed, getStats, markRead, saveItem, unsaveItem } from './api';
-import type { FeedItemResponse, Stats } from './types';
+import { useState, useEffect } from 'preact/hooks';
+import { useFeedItems } from './hooks/useFeedItems';
+import { useUnreadCounts } from './hooks/useUnreadCounts';
+import { openScrollessDb, type FeedItem } from './idb';
+import type { FeedItemResponse } from './types';
 import { SourceFilter } from './components/source-filter';
 import { FeedList } from './components/feed-list';
 import { SyncStatus } from './components/sync-status';
@@ -9,8 +11,6 @@ import { NotificationPrompt } from './components/notification-prompt';
 import { Settings } from './settings';
 
 type View = 'feed' | 'discover' | 'saved' | 'settings';
-
-const LIMIT = 50;
 
 const HASH_TO_VIEW: Record<string, View> = {
   '#/feed': 'feed',
@@ -41,8 +41,28 @@ const NAV_ITEMS: Array<{ id: View; icon: string; label: string }> = [
   { id: 'saved', icon: 'bookmark', label: 'Saved' },
 ];
 
+/** Map IndexedDB FeedItem to the FeedItemResponse shape expected by card components. */
+function toResponse(item: FeedItem): FeedItemResponse {
+  return {
+    id: item.id,
+    source: item.source,
+    title: item.title,
+    author: item.author,
+    url: item.url,
+    content_preview: item.content_preview,
+    thumbnail_url: item.thumbnail_url,
+    tags: item.tags,
+    is_discovery: item.is_discovery,
+    published_at: item.published_at,
+    fetched_at: item.fetched_at,
+    is_read: item.is_read,
+    is_saved: item.is_saved,
+  };
+}
+
 export function App() {
   const [view, setViewState] = useState<View>(viewFromHash);
+  const [source, setSource] = useState('');
 
   function setView(v: View) {
     setViewState(v);
@@ -57,7 +77,6 @@ export function App() {
       setViewState(viewFromHash());
     }
     window.addEventListener('hashchange', onHashChange);
-    // Set initial hash if empty
     if (!location.hash) {
       location.hash = VIEW_TO_HASH.feed;
     }
@@ -67,87 +86,32 @@ export function App() {
   useEffect(() => {
     document.title = `ScrolLess — ${VIEW_TO_TITLE[view]}`;
   }, [view]);
-  const [source, setSource] = useState('');
-  const [items, setItems] = useState<FeedItemResponse[]>([]);
-  const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [stats, setStats] = useState<Stats | null>(null);
 
-  async function loadStats() {
-    try {
-      const discoveryParam = view === 'discover' ? true : view === 'feed' ? false : undefined;
-      setStats(await getStats(discoveryParam));
-    } catch {
-      // ignore
+  const { items, loading } = useFeedItems({ source, view });
+  const counts = useUnreadCounts();
+
+  async function handleMarkRead(id: string) {
+    const db = await openScrollessDb();
+    const item = await db.get('feed_items', id);
+    if (item) {
+      await db.put('feed_items', { ...item, is_read: true });
+      window.dispatchEvent(new CustomEvent('scrolless:idb-updated'));
     }
   }
 
-  const loadFeed = useCallback(async (reset = false) => {
-    setLoading(true);
-    const currentOffset = reset ? 0 : offset;
-    try {
-      const res = await getFeed({
-        limit: LIMIT,
-        offset: currentOffset,
-        source: source || undefined,
-        discovery: view === 'discover' ? true : view === 'feed' ? false : undefined,
-        saved: view === 'saved' ? true : undefined,
-      });
-      setTotal(res.total);
-      setOffset(currentOffset + LIMIT);
-      setItems((prev) => (reset ? res.items : [...prev, ...res.items]));
-    } catch (err) {
-      console.error('Failed to load feed:', err);
-    } finally {
-      setLoading(false);
+  async function handleToggleSave(id: string, currentlySaved: boolean) {
+    const db = await openScrollessDb();
+    const item = await db.get('feed_items', id);
+    if (item) {
+      await db.put('feed_items', { ...item, is_saved: !currentlySaved });
+      window.dispatchEvent(new CustomEvent('scrolless:idb-updated'));
     }
-  }, [source, view, offset]);
-
-  // Reload on filter changes
-  useEffect(() => {
-    setOffset(0);
-    setItems([]);
-    loadFeed(true);
-    loadStats();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, view]);
-
-  function handleMarkRead(id: string) {
-    markRead(id).catch(console.error);
-    setItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, is_read: true } : item))
-    );
-    loadStats();
   }
 
-  function handleMarkedAllRead() {
-    setItems((prev) => prev.map((item) => ({ ...item, is_read: true })));
-    loadStats();
-  }
-
-
-  useEffect(() => {
-    function onFeedItems() {
-      setOffset(0);
-      loadFeed(true);
-      loadStats();
-    }
-
-    window.addEventListener('scrolless:feed-items', onFeedItems);
-    return () => window.removeEventListener('scrolless:feed-items', onFeedItems);
-  }, [loadFeed]);
-
-  function handleToggleSave(id: string, saved: boolean) {
-    (saved ? unsaveItem(id) : saveItem(id)).catch(console.error);
-    setItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, is_saved: !saved } : item))
-    );
-  }
+  const displayItems = items.map(toResponse);
 
   return (
     <div class="app">
-      {/* Glass header */}
       <header class="app-header glass">
         <span class="app-header__logo">ScrolLess</span>
         <div class="app-header__right">
@@ -161,10 +125,9 @@ export function App() {
 
         {(view === 'feed' || view === 'discover') && (
           <SourceFilter
-            stats={stats}
+            counts={counts}
             source={source}
             onSourceChange={setSource}
-            onMarkedAllRead={handleMarkedAllRead}
             onManageSources={() => setView('settings')}
           />
         )}
@@ -174,10 +137,10 @@ export function App() {
         ) : (
           <FeedList
             view={view}
-            items={items}
+            items={displayItems}
             loading={loading}
-            hasMore={items.length < total}
-            onLoadMore={() => loadFeed(false)}
+            hasMore={false}
+            onLoadMore={() => {}}
             onMarkRead={handleMarkRead}
             onToggleSave={handleToggleSave}
             onOpenSettings={() => setView('settings')}
@@ -185,7 +148,6 @@ export function App() {
         )}
       </main>
 
-      {/* Bottom navigation */}
       <nav class="bottom-nav glass" aria-label="Primary">
         {NAV_ITEMS.map(({ id, icon, label }) => (
           <button
