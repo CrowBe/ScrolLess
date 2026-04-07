@@ -132,17 +132,6 @@ img { display: block; max-width: 100%; }
   gap: 0.75rem;
 }
 
-.app-header__settings {
-  color: var(--on-surface-variant);
-  padding: 0.25rem;
-  border-radius: var(--radius-pill);
-  transition: color 0.15s;
-}
-
-.app-header__settings:hover {
-  color: var(--primary);
-}
-
 .app-main {
   flex: 1;
   padding: 0.75rem 0.75rem calc(var(--nav-height) + 1.75rem);
@@ -197,7 +186,6 @@ img { display: block; max-width: 100%; }
   font-weight: 500;
 }
 
-.app-header__settings:focus-visible,
 .bottom-nav__item:focus-visible,
 .btn:focus-visible,
 .chip:focus-visible,
@@ -630,6 +618,12 @@ img { display: block; max-width: 100%; }
 .notif-prompt__actions {
   display: flex;
   gap: 0.5rem;
+}
+
+.notif-prompt__error {
+  flex-basis: 100%;
+  font-size: 0.75rem;
+  color: var(--error);
 }
 
 /* ── Settings ───────────────────────────────────────────── */

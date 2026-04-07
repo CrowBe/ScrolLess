@@ -11,6 +11,10 @@ function AgentTokens() {
   const [newToken, setNewToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  const trimmedLabel = newLabel.trim();
+  const canCreate = trimmedLabel.length >= 3 && !busy;
 
   const load = useCallback(async () => {
     try { setTokens(await getTokens()); } catch { /* ignore */ }
@@ -19,15 +23,22 @@ function AgentTokens() {
   useEffect(() => { load(); }, [load]);
 
   async function handleCreate() {
+    if (trimmedLabel.length < 3) {
+      setCreateError('Token name must be at least 3 characters.');
+      return;
+    }
+
     setBusy(true);
+    setCreateError(null);
     try {
-      const res = await createToken(newLabel || 'agent');
+      const res = await createToken(trimmedLabel);
       setNewToken(res.token);
       setCopyState('idle');
       setNewLabel('');
       await load();
     } catch (err) {
       console.error('Failed to create token:', err);
+      setCreateError('Could not create token. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -93,12 +104,16 @@ function AgentTokens() {
           type="text"
           placeholder="Token label (e.g. my-agent)"
           value={newLabel}
-          onInput={(e) => setNewLabel((e.target as HTMLInputElement).value)}
+          onInput={(e) => {
+            setNewLabel((e.target as HTMLInputElement).value);
+            if (createError) setCreateError(null);
+          }}
         />
-        <button class="btn btn--primary btn--sm" onClick={handleCreate} disabled={busy}>
+        <button class="btn btn--primary btn--sm" type="button" onClick={handleCreate} disabled={!canCreate}>
           {busy ? '…' : 'Create token'}
         </button>
       </div>
+      {createError && <p class="settings__token-copy-state settings__token-copy-state--error">{createError}</p>}
     </section>
   );
 }
