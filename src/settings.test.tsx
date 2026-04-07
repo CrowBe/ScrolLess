@@ -71,4 +71,31 @@ describe('Settings', () => {
 
     expect(screen.getByText('tok_live_123')).toBeInTheDocument();
   });
+
+  it('copies token using clipboard fallback when navigator.clipboard is unavailable', async () => {
+    (createToken as ReturnType<typeof vi.fn>).mockResolvedValue({
+      token: 'tok_live_123',
+      token_hash: 'hash123',
+      label: 'my-agent',
+    });
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: undefined,
+    });
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn().mockReturnValue(true),
+    });
+    const execSpy = vi.spyOn(document, 'execCommand');
+
+    render(<Settings />);
+    const input = await screen.findByPlaceholderText('Token label (e.g. my-agent)');
+    fireEvent.input(input, { target: { value: 'my-agent' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create token' }));
+    await screen.findByText('tok_live_123');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy token' }));
+    expect(await screen.findByText('Copied to clipboard.')).toBeInTheDocument();
+    expect(execSpy).toHaveBeenCalledWith('copy');
+  });
 });
