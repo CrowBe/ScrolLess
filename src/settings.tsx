@@ -229,6 +229,4 @@ function DangerZone() {
       </div>
     </section>
   );
-    </div>
-  );
 }

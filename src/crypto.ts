@@ -36,9 +36,10 @@ export async function exportPublicKeyBase64(key: CryptoKey): Promise<string> {
 
 /** Import a base64-encoded SPKI public key for verification/ECDH use. */
 export async function importPublicKeySpki(b64: string): Promise<CryptoKey> {
+  const bytes = fromBase64(b64);
   return crypto.subtle.importKey(
     'spki',
-    fromBase64(b64),
+    bytes.buffer as ArrayBuffer,
     { name: 'ECDH', namedCurve: 'P-256' },
     false,
     []
@@ -47,9 +48,10 @@ export async function importPublicKeySpki(b64: string): Promise<CryptoKey> {
 
 /** Import a base64-encoded raw (uncompressed, 65-byte 0x04-prefixed) P-256 public key. */
 export async function importEphemeralPublicKeyRaw(b64: string): Promise<CryptoKey> {
+  const bytes = fromBase64(b64);
   return crypto.subtle.importKey(
     'raw',
-    fromBase64(b64),
+    bytes.buffer as ArrayBuffer,
     { name: 'ECDH', namedCurve: 'P-256' },
     false,
     []
