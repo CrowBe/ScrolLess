@@ -202,7 +202,7 @@ export async function startDeviceSession(options: DeviceSessionOptions = {}): Pr
   } catch (err) {
     const message = err instanceof Error ? err.message : 'registration error';
     emitStatus({ state: 'not_registered', lastError: message });
-    return;
+    throw err;
   }
 
   options.onReady?.(deviceRecord.user_id);
