@@ -3,8 +3,8 @@
 
 const sw = globalThis as unknown as ServiceWorkerGlobalScope;
 
-const CACHE = 'scrolless-v2';
-const APP_SHELL = ['/', '/index.html', '/manifest.json', '/icons/icon-192.png'];
+const CACHE = 'scrolless-v3';
+const APP_SHELL = ['/', '/icons/icon-192.png'];
 
 // Install: cache app shell
 sw.addEventListener('install', (event: ExtendableEvent) => {
