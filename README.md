@@ -130,6 +130,7 @@ Set optional values as needed:
 | `BASE_URL` | OAuth flow, cloud tunnel access, and CORS allowlist |
 | `ADMIN_PASSWORD` | OAuth consent screen |
 | `DEVICE_ENROLLMENT_TOKEN` | Protecting `/api/v1/device/register` and `/api/v1/device/challenge` from unauthorized enrollment |
+| `VITE_DEVICE_ENROLLMENT_TOKEN` | Frontend header used for device enrollment when backend `DEVICE_ENROLLMENT_TOKEN` is enabled |
 | `AGENT_RATE_LIMIT_PER_HOUR` | Agent/MCP rate limit (default: `60`) |
 | `OAUTH_CLIENTS_JSON` | OAuth client seed list (JSON array) |
 

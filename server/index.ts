@@ -134,7 +134,7 @@ async function start() {
       }
     },
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type', 'Mcp-Session-Id', 'X-Device-Id'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Mcp-Session-Id', 'X-Device-Id', 'X-Device-Enroll-Token'],
     exposedHeaders: ['Mcp-Session-Id'],
   });
 

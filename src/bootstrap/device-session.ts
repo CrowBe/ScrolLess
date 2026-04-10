@@ -1,6 +1,6 @@
 import { openScrollessDb, type DeviceRecord, type FeedItem } from '../idb';
 import { generateKeypair, exportPublicKeyBase64, decryptFields, normaliseUrl, hashUrl } from '../crypto';
-import { apiUrl } from '../config';
+import { apiUrl, getDeviceEnrollmentToken } from '../config';
 
 const STREAM_RETRY_BASE_MS = 1_000;
 const STREAM_RETRY_MAX_MS = 30_000;
@@ -97,9 +97,15 @@ async function loadOrCreateDevice(): Promise<DeviceRecord> {
 }
 
 async function registerDevice(deviceRecord: DeviceRecord): Promise<void> {
+  const enrollmentToken = getDeviceEnrollmentToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (enrollmentToken) {
+    headers['X-Device-Enroll-Token'] = enrollmentToken;
+  }
+
   const res = await fetch(apiUrl('/api/v1/device/register'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       device_id: deviceRecord.user_id,
       public_key: deviceRecord.public_key_b64,
@@ -202,7 +208,7 @@ export async function startDeviceSession(options: DeviceSessionOptions = {}): Pr
   } catch (err) {
     const message = err instanceof Error ? err.message : 'registration error';
     emitStatus({ state: 'not_registered', lastError: message });
-    return;
+    throw err;
   }
 
   options.onReady?.(deviceRecord.user_id);
