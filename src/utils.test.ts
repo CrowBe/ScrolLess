@@ -31,7 +31,12 @@ describe('relativeTime', () => {
 
   it('returns formatted date beyond 7 days', () => {
     vi.setSystemTime(new Date('2026-04-10T12:00:00Z'));
-    expect(relativeTime('2026-03-30T12:00:00Z')).toMatch(/Mar 30/);
+    expect(relativeTime('2026-03-30T12:00:00Z')).toBe(
+      new Date('2026-03-30T12:00:00Z').toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+      })
+    );
   });
 
   it('boundary: exactly 60 seconds returns 1m ago', () => {
@@ -41,7 +46,12 @@ describe('relativeTime', () => {
 
   it('boundary: exactly 7 days returns formatted date', () => {
     vi.setSystemTime(new Date('2026-04-06T12:00:00Z'));
-    expect(relativeTime('2026-03-30T12:00:00Z')).toMatch(/Mar 30/);
+    expect(relativeTime('2026-03-30T12:00:00Z')).toBe(
+      new Date('2026-03-30T12:00:00Z').toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+      })
+    );
   });
 
   // ── BUG-R2-6: Timezone handling tests ──
@@ -84,6 +94,11 @@ describe('relativeTime', () => {
   it('formatted date fallback uses correct UTC date', () => {
     vi.setSystemTime(new Date('2026-04-10T12:00:00Z'));
     // Bare datetime without Z — should still show correct UTC date
-    expect(relativeTime('2026-03-30 12:00:00')).toMatch(/Mar 30/);
+    expect(relativeTime('2026-03-30 12:00:00')).toBe(
+      new Date('2026-03-30T12:00:00Z').toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+      })
+    );
   });
 });
