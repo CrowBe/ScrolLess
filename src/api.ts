@@ -17,6 +17,24 @@ export function getSyncStatus(): Promise<{ missed: SyncLogEntry[]; next_sync_est
   return req<{ missed: SyncLogEntry[]; next_sync_estimate: string | null }>('/api/sync/status');
 }
 
+export interface AppPreferences {
+  blocked_keywords: string[];
+  retention_days: number;
+  max_items_per_source: number;
+}
+
+export function getPreferences(): Promise<AppPreferences> {
+  return req<AppPreferences>('/api/preferences');
+}
+
+export function updatePreferences(data: Partial<AppPreferences>): Promise<AppPreferences> {
+  return req<AppPreferences>('/api/preferences', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+}
+
 export function getVapidKey(): Promise<{ key: string }> {
   return req<{ key: string }>('/api/push/vapid-key');
 }

@@ -7,15 +7,27 @@ vi.mock('./api', () => ({
   getTokens: vi.fn(),
   createToken: vi.fn(),
   revokeToken: vi.fn(),
+  getPreferences: vi.fn(),
+  updatePreferences: vi.fn(),
 }));
 
-import { createToken, getSources, getTokens } from './api';
+import { createToken, getSources, getTokens, getPreferences, updatePreferences } from './api';
 
 describe('Settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (getSources as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (getTokens as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (getPreferences as ReturnType<typeof vi.fn>).mockResolvedValue({
+      blocked_keywords: ['sponsored'],
+      retention_days: 7,
+      max_items_per_source: 50,
+    });
+    (updatePreferences as ReturnType<typeof vi.fn>).mockImplementation(async (payload) => ({
+      blocked_keywords: payload.blocked_keywords ?? ['sponsored'],
+      retention_days: payload.retention_days ?? 7,
+      max_items_per_source: payload.max_items_per_source ?? 50,
+    }));
   });
 
   it('renders token label input with form-input styling class', async () => {
@@ -32,9 +44,11 @@ describe('Settings', () => {
     await waitFor(() => {
       expect(getSources).toHaveBeenCalledTimes(1);
       expect(getTokens).toHaveBeenCalledTimes(1);
+      expect(getPreferences).toHaveBeenCalledTimes(1);
     });
 
     expect(screen.getByRole('heading', { name: 'Add Source' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Preferences' })).toBeInTheDocument();
   });
 
   it('keeps create token disabled until the label is at least 3 characters', async () => {
@@ -97,5 +111,30 @@ describe('Settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy token' }));
     expect(await screen.findByText('Copied to clipboard.')).toBeInTheDocument();
     expect(execSpy).toHaveBeenCalledWith('copy');
+  });
+
+  it('saves preferences from the settings UI', async () => {
+    render(<Settings />);
+
+    const blockedKeywords = await screen.findByPlaceholderText('sponsored, giveaway');
+    fireEvent.input(blockedKeywords, { target: { value: 'sponsored, giveaway' } });
+
+    const retentionInput = screen.getByDisplayValue('7');
+    fireEvent.input(retentionInput, { target: { value: '14' } });
+
+    const maxItemsInput = screen.getByDisplayValue('50');
+    fireEvent.input(maxItemsInput, { target: { value: '75' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save preferences' }));
+
+    await waitFor(() => {
+      expect(updatePreferences).toHaveBeenCalledWith({
+        blocked_keywords: ['sponsored', 'giveaway'],
+        retention_days: 14,
+        max_items_per_source: 75,
+      });
+    });
+
+    expect(await screen.findByText('Preferences saved.')).toBeInTheDocument();
   });
 });

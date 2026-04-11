@@ -779,6 +779,35 @@ img { display: block; max-width: 100%; }
   min-width: 0;
 }
 
+.settings__prefs-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.settings__prefs-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.settings__prefs-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.settings__prefs-number {
+  max-width: 9rem;
+}
+
+.settings__prefs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 @media (max-width: 640px) {
   .settings__section {
     padding: 1rem;

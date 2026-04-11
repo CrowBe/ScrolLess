@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 import { z } from 'zod';
 import type { SseManager } from './sse-manager.js';
+import { DEFAULT_PREFERENCES, readPreferences, sanitizeBlockedKeywords } from './preferences.js';
 
 interface ApiRouteOptions {
   deviceEnrollmentToken?: string;
@@ -45,6 +46,17 @@ const pushSubscribeSchema = z.object({
     auth: z.string().min(1, 'keys.auth is required'),
   }),
 });
+const preferencesPatchSchema = z.object({
+  blocked_keywords: z.array(z.string()).optional(),
+  retention_days: z.number().int().min(1).max(365).optional(),
+  max_items_per_source: z.number().int().min(1).max(500).optional(),
+}).refine(
+  (body) =>
+    body.blocked_keywords !== undefined ||
+    body.retention_days !== undefined ||
+    body.max_items_per_source !== undefined,
+  { message: 'nothing to update' }
+);
 
 function parseBody<T>(
   schema: z.ZodType<T>,
@@ -386,6 +398,45 @@ export function registerApiRoutes(
     }
 
     return reply.send({ missed, next_sync_estimate: nextSyncEstimate });
+  });
+
+  // GET /api/preferences
+  fastify.get('/api/preferences', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    return reply.send(readPreferences(db, userId));
+  });
+
+  // PATCH /api/preferences
+  fastify.patch('/api/preferences', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = getRequestUserId(req, db);
+    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
+    const body = parseBody(preferencesPatchSchema, req.body, reply);
+    if (!body) return;
+
+    const current = readPreferences(db, userId);
+    const next = {
+      blocked_keywords:
+        body.blocked_keywords !== undefined
+          ? sanitizeBlockedKeywords(body.blocked_keywords)
+          : current.blocked_keywords,
+      retention_days: body.retention_days ?? current.retention_days,
+      max_items_per_source: body.max_items_per_source ?? current.max_items_per_source,
+    };
+
+    const save = db.transaction(() => {
+      const upsert = db.prepare(
+        `INSERT INTO user_preferences (user_id, key, value)
+         VALUES (?, ?, ?)
+         ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`
+      );
+      upsert.run(userId, 'blocked_keywords', JSON.stringify(next.blocked_keywords));
+      upsert.run(userId, 'retention_days', JSON.stringify(next.retention_days));
+      upsert.run(userId, 'max_items_per_source', JSON.stringify(next.max_items_per_source));
+    });
+
+    save();
+    return reply.send(next);
   });
 
   // GET /api/push/vapid-key — VAPID key is global server config, not per-user

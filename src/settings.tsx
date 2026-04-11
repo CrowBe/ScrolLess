@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
-import { getSources, getTokens, createToken, revokeToken } from './api';
+import { getSources, getTokens, createToken, revokeToken, getPreferences, updatePreferences } from './api';
 import type { UserSource } from './types';
-import type { AgentToken } from './api';
+import type { AgentToken, AppPreferences } from './api';
 import { SourceList } from './components/source-list';
 import { AddSourceForm } from './components/add-source-form';
 import { openScrollessDb } from './idb';
@@ -132,6 +132,149 @@ function AgentTokens() {
   );
 }
 
+function PreferencesSection() {
+  const [preferences, setPreferences] = useState<AppPreferences | null>(null);
+  const [blockedKeywordsInput, setBlockedKeywordsInput] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const loadPreferences = useCallback(async () => {
+    try {
+      const prefs = await getPreferences();
+      setPreferences(prefs);
+      setBlockedKeywordsInput(prefs.blocked_keywords.join(', '));
+    } catch (err) {
+      console.error('Failed to load preferences:', err);
+      setError('Could not load preferences.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPreferences();
+  }, [loadPreferences]);
+
+  async function handleSave(event: Event) {
+    event.preventDefault();
+    if (!preferences) return;
+
+    setSaving(true);
+    setSaved(false);
+    setError(null);
+
+    const nextBlockedKeywords = blockedKeywordsInput
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    try {
+      const updated = await updatePreferences({
+        blocked_keywords: nextBlockedKeywords,
+        retention_days: preferences.retention_days,
+        max_items_per_source: preferences.max_items_per_source,
+      });
+      setPreferences(updated);
+      setBlockedKeywordsInput(updated.blocked_keywords.join(', '));
+      setSaved(true);
+    } catch (err) {
+      console.error('Failed to save preferences:', err);
+      setError('Could not save preferences. Check your values and try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <section class="settings__section">
+        <h2 class="settings__heading">Preferences</h2>
+        <p class="settings__help">Loading preferences…</p>
+      </section>
+    );
+  }
+
+  if (!preferences) {
+    return (
+      <section class="settings__section">
+        <h2 class="settings__heading">Preferences</h2>
+        {error && <p class="settings__token-copy-state settings__token-copy-state--error">{error}</p>}
+      </section>
+    );
+  }
+
+  return (
+    <section class="settings__section">
+      <h2 class="settings__heading">Preferences</h2>
+      <p class="settings__help">Control feed filtering and storage behavior.</p>
+      <form class="settings__prefs-form" onSubmit={handleSave}>
+        <label class="settings__prefs-field">
+          <span class="settings__prefs-label">Blocked keywords</span>
+          <input
+            class="form-input"
+            type="text"
+            value={blockedKeywordsInput}
+            placeholder="sponsored, giveaway"
+            onInput={(e) => {
+              setBlockedKeywordsInput((e.target as HTMLInputElement).value);
+              setSaved(false);
+            }}
+          />
+          <span class="settings__help">Comma-separated. Matching items are filtered from agent sync results.</span>
+        </label>
+
+        <label class="settings__prefs-field">
+          <span class="settings__prefs-label">Retention days</span>
+          <input
+            class="form-input settings__prefs-number"
+            type="number"
+            min="1"
+            max="365"
+            value={String(preferences.retention_days)}
+            onInput={(e) => {
+              setPreferences({
+                ...preferences,
+                retention_days: Number((e.target as HTMLInputElement).value),
+              });
+              setSaved(false);
+            }}
+          />
+          <span class="settings__help">Older unsaved feed items are deleted after this many days.</span>
+        </label>
+
+        <label class="settings__prefs-field">
+          <span class="settings__prefs-label">Max items per source</span>
+          <input
+            class="form-input settings__prefs-number"
+            type="number"
+            min="1"
+            max="500"
+            value={String(preferences.max_items_per_source)}
+            onInput={(e) => {
+              setPreferences({
+                ...preferences,
+                max_items_per_source: Number((e.target as HTMLInputElement).value),
+              });
+              setSaved(false);
+            }}
+          />
+          <span class="settings__help">Default limit used by the agent when a source does not override it.</span>
+        </label>
+
+        <div class="settings__prefs-actions">
+          <button class="btn btn--primary btn--sm" type="submit" disabled={saving}>
+            {saving ? '…' : 'Save preferences'}
+          </button>
+          {saved && <span class="settings__token-copy-state">Preferences saved.</span>}
+          {error && <span class="settings__token-copy-state settings__token-copy-state--error">{error}</span>}
+        </div>
+      </form>
+    </section>
+  );
+}
+
 export function Settings() {
   const [sources, setSources] = useState<UserSource[]>([]);
   const [loading, setLoading] = useState(true);
@@ -150,6 +293,8 @@ export function Settings() {
 
   return (
     <div class="settings">
+      <PreferencesSection />
+
       <AgentTokens />
 
       <section class="settings__section">
