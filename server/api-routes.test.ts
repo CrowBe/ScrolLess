@@ -30,6 +30,69 @@ function getSourceRow(db: Database.Database, name = 'youtube'): SourceRow {
   ).get('local', name) as SourceRow;
 }
 
+describe('GET/PATCH /api/preferences', () => {
+  let db: Database.Database;
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    db = createTestDb();
+    db.prepare(`INSERT OR IGNORE INTO user_preferences (user_id, key, value) VALUES ('local', ?, ?)`).run('blocked_keywords', JSON.stringify(['sponsored']));
+    db.prepare(`INSERT OR IGNORE INTO user_preferences (user_id, key, value) VALUES ('local', ?, ?)`).run('retention_days', JSON.stringify(7));
+    db.prepare(`INSERT OR IGNORE INTO user_preferences (user_id, key, value) VALUES ('local', ?, ?)`).run('max_items_per_source', JSON.stringify(50));
+
+    app = Fastify();
+    registerApiRoutes(app, db);
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app.close();
+    db.close();
+  });
+
+  it('returns current preferences with defaults', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/preferences',
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      blocked_keywords: ['sponsored'],
+      retention_days: 7,
+      max_items_per_source: 50,
+    });
+  });
+
+  it('accepts partial updates and persists them', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/preferences',
+      payload: {
+        blocked_keywords: ['sponsored', 'giveaway'],
+        retention_days: 14,
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      blocked_keywords: ['sponsored', 'giveaway'],
+      retention_days: 14,
+      max_items_per_source: 50,
+    });
+
+    const rows = db.prepare(
+      `SELECT key, value FROM user_preferences WHERE user_id = 'local' AND key IN ('blocked_keywords', 'retention_days', 'max_items_per_source') ORDER BY key`
+    ).all() as Array<{ key: string; value: string }>;
+
+    expect(rows).toEqual([
+      { key: 'blocked_keywords', value: JSON.stringify(['sponsored', 'giveaway']) },
+      { key: 'max_items_per_source', value: JSON.stringify(50) },
+      { key: 'retention_days', value: JSON.stringify(14) },
+    ]);
+  });
+});
+
 describe('PATCH /api/sources/:name', () => {
   let db: Database.Database;
   let app: FastifyInstance;
