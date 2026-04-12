@@ -160,11 +160,15 @@ The source filter "All" tab has no unread badge. The aggregate unread total is f
 
 ### `vercel.json` Rewrite Pattern
 
-The current pattern `/((?!api/).*)` excludes only `/api/` paths. In split-hosting the Vercel frontend never receives `/agent/`, `/mcp`, or `/oauth/` requests (those go to Render), so this is cosmetic rather than a bug. Clean it up for correctness:
+The Vercel rewrite pattern should exclude backend-handled route groups so only SPA frontend paths fall through to `index.html`.
+
+Current desired form:
 
 ```json
-{ "rewrites": [{ "source": "/((?!api/|agent/|mcp|oauth/).*)", "destination": "/index.html" }] }
+{ "rewrites": [{ "source": "/((?!api/|agent/|mcp|oauth/|.*\\..*).*)", "destination": "/index.html" }] }
 ```
+
+This preserves split-hosting boundaries and also avoids rewriting asset requests that contain file extensions.
 
 ---
 
