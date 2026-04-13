@@ -46,7 +46,7 @@ export function FeedList({
       ? 'Add your first source in Settings to start building a personalized feed.'
       : isDiscover
         ? 'Add a few sources to unlock recommendations and trending picks.'
-        : 'Save stories from Feed or Discover so they are easy to revisit.';
+        : 'Tap the bookmark icon on any card in Feed or Discover to save it for later.';
 
     return (
       <div class="feed-empty">
