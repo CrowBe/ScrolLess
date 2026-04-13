@@ -23,12 +23,15 @@ VAPID_PUBLIC_KEY=<your VAPID public key>
 VAPID_PRIVATE_KEY=<your VAPID private key>
 VAPID_SUBJECT=mailto:you@example.com
 BASE_URL=https://yourapp.onrender.com
+CORS_ORIGIN=https://yourapp.vercel.app
 DB_PATH=/data/feed.db
 ```
 
 6. Set `DB_PATH=/data/feed.db` so SQLite data is persisted on the Render disk
 
 > **Note**: Render free tier instances spin down after 15 minutes of inactivity. Push notifications won't fire while spun down. Upgrade to Starter ($7/mo) for always-on.
+
+`BASE_URL` is the backend's own public URL. `CORS_ORIGIN` is the frontend origin allowed to call the API from the browser.
 
 Verify these routes respond from the Render URL:
 - `GET /api/stream` — 401 without `X-Device-Id`, 200 with registered device header
@@ -42,10 +45,12 @@ Verify these routes respond from the Render URL:
 2. Set framework preset: **Vite**
 3. Build command: `npm run build`
 4. Output directory: `dist/client`
-5. Add environment variable:
+5. Add environment variables:
 
 ```
 VITE_API_BASE_URL=https://yourapp.onrender.com
+# only needed if backend enrollment protection is enabled
+VITE_DEVICE_ENROLLMENT_TOKEN=<match Render DEVICE_ENROLLMENT_TOKEN>
 ```
 
 6. Add `vercel.json` at the repo root (see below)

@@ -49,12 +49,22 @@ function parseOauthClients(value: string | undefined): OAuthClientConfig[] {
   }
 }
 
+function parseOriginList(value: string | undefined): string[] {
+  if (!value) return [];
+
+  return value
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+}
+
 // Load config from environment variables.
 function loadConfig(): AppConfig {
   const config: AppConfig = {
     agent_token_hash: process.env.AGENT_TOKEN_HASH ?? '',
     db_path: process.env.DB_PATH,
     base_url: process.env.BASE_URL,
+    cors_origins: parseOriginList(process.env.CORS_ORIGIN),
     admin_password: process.env.ADMIN_PASSWORD,
     server: {
       port: parseNumber(process.env.PORT, 3333),
@@ -112,22 +122,27 @@ async function start() {
 
   const fastify = Fastify({ logger: { level: isProd ? 'warn' : 'info' } });
 
+  const allowedCorsOrigins = [
+    'https://claude.ai',
+    'https://www.claude.ai',
+    ...(isProd ? [] : ['http://localhost:5173']),
+    ...(config.cors_origins ?? []),
+  ];
+
+  if ((config.cors_origins?.length ?? 0) === 0 && config.base_url) {
+    allowedCorsOrigins.push(config.base_url.replace(/\/$/, ''));
+    console.warn('[config] CORS_ORIGIN is not set. Falling back to BASE_URL for browser CORS allowlist.');
+  }
 
   // Platform health probe endpoint (Render/other hosts)
   fastify.get('/health', async () => ({ ok: true }));
 
-  // CORS — allow PWA dev origin in dev; always allow the MCP endpoint to be reached
-  // by Claude Desktop / claude.ai (they make direct HTTP, not browser-CORS requests,
-  // but we add the header for any web-based MCP client)
+  // CORS — browser-facing frontend origins should come from CORS_ORIGIN.
+  // BASE_URL is reserved for the backend's own public URL (OAuth issuer / public metadata).
+  // claude.ai is kept in the allowlist for web-based MCP clients.
   await fastify.register(fastifyCors, {
     origin: (origin, done) => {
-      const allowed = [
-        'https://claude.ai',
-        'https://www.claude.ai',
-        ...(isProd ? [] : ['http://localhost:5173']),
-        ...(config.base_url ? [config.base_url.replace(/\/$/, '')] : []),
-      ];
-      if (!origin || allowed.includes(origin)) {
+      if (!origin || allowedCorsOrigins.includes(origin)) {
         done(null, true);
       } else {
         done(null, false);
