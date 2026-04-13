@@ -246,6 +246,30 @@ describe('versioned auth/token route aliases', () => {
     expect(deleteRes.json()).toEqual({ ok: true });
   });
 
+  it('supports /api/v1/tokens for a registered dev device via X-Device-Id', async () => {
+    db.prepare(`INSERT INTO device_registrations (user_id, public_key) VALUES (?, ?)`)
+      .run('dev_test_device', 'test-public-key');
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tokens',
+      headers: { 'x-device-id': 'dev_test_device' },
+      payload: { label: 'device token' },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const created = createRes.json() as { token_hash: string; label: string };
+    expect(created.label).toBe('device token');
+
+    const listRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/tokens',
+      headers: { 'x-device-id': 'dev_test_device' },
+    });
+    expect(listRes.statusCode).toBe(200);
+    const listed = listRes.json() as Array<{ token_hash: string; label: string | null }>;
+    expect(listed.some((row) => row.token_hash === created.token_hash && row.label === 'device token')).toBe(true);
+  });
+
   it('rejects removed unversioned routes', async () => {
     const registerRes = await app.inject({
       method: 'POST',

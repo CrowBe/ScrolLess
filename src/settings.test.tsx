@@ -99,6 +99,18 @@ describe('Settings', () => {
     expect(screen.getByText('tok_live_123')).toBeInTheDocument();
   });
 
+  it('shows the actual token creation error instead of a generic message', async () => {
+    (createToken as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('POST /api/v1/tokens → 401: Unauthorized device'));
+
+    render(<Settings />);
+
+    const input = await screen.findByPlaceholderText('Token label (e.g. my-agent)');
+    fireEvent.input(input, { target: { value: 'my-agent' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create token' }));
+
+    expect(await screen.findByText('POST /api/v1/tokens → 401: Unauthorized device')).toBeInTheDocument();
+  });
+
   it('copies token using clipboard fallback when navigator.clipboard is unavailable', async () => {
     (createToken as ReturnType<typeof vi.fn>).mockResolvedValue({
       token: 'tok_live_123',

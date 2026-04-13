@@ -41,7 +41,8 @@ function AgentTokens() {
       await load();
     } catch (err) {
       console.error('Failed to create token:', err);
-      setCreateError('Could not create token. Please try again.');
+      const message = err instanceof Error ? err.message : 'Could not create token. Please try again.';
+      setCreateError(message);
     } finally {
       setBusy(false);
     }

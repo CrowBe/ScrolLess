@@ -9,7 +9,22 @@ async function req<T>(url: string, options?: RequestInit): Promise<T> {
     headers.set('X-Device-Id', deviceId);
   }
   const res = await fetch(apiUrl(url), { ...options, headers });
-  if (!res.ok) throw new Error(`${options?.method ?? 'GET'} ${url} → ${res.status}`);
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const contentType = res.headers.get('content-type') ?? '';
+      if (contentType.includes('application/json')) {
+        const body = await res.json() as { error?: string };
+        detail = body.error ? `: ${body.error}` : '';
+      } else {
+        const text = (await res.text()).trim();
+        if (text) detail = `: ${text.slice(0, 200)}`;
+      }
+    } catch {
+      // ignore body parse failures, status is still useful
+    }
+    throw new Error(`${options?.method ?? 'GET'} ${url} → ${res.status}${detail}`);
+  }
   return res.json() as Promise<T>;
 }
 
