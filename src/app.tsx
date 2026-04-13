@@ -39,6 +39,7 @@ const NAV_ITEMS: Array<{ id: View; icon: string; label: string }> = [
   { id: 'feed', icon: 'feed', label: 'Feed' },
   { id: 'discover', icon: 'explore', label: 'Discover' },
   { id: 'saved', icon: 'bookmark', label: 'Saved' },
+  { id: 'settings', icon: 'settings', label: 'Settings' },
 ];
 
 /** Map IndexedDB FeedItem to the FeedItemResponse shape expected by card components. */
@@ -128,7 +129,6 @@ export function App() {
             counts={counts}
             source={source}
             onSourceChange={setSource}
-            onManageSources={() => setView('settings')}
           />
         )}
 

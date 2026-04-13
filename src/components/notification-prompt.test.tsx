@@ -45,7 +45,7 @@ describe('NotificationPrompt', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows enabled state when browser permission is granted even before subscription exists', async () => {
+  it('shows enabled state without stray setup text when permission is granted but no subscription exists', async () => {
     Object.defineProperty(window, 'Notification', {
       configurable: true,
       value: {
@@ -57,7 +57,8 @@ describe('NotificationPrompt', () => {
     render(<NotificationPrompt />);
 
     expect(await screen.findByText('Notifications: On')).toBeInTheDocument();
-    expect(screen.getByText('Finishing setup…')).toBeInTheDocument();
+    expect(screen.queryByText('Finishing setup…')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Disable' })).not.toBeInTheDocument();
     expect(subscribePush).not.toHaveBeenCalled();
   });
 });

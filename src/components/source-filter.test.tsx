@@ -20,7 +20,6 @@ const defaultProps = {
   counts,
   source: '',
   onSourceChange: vi.fn(),
-  onManageSources: vi.fn(),
 };
 
 describe('SourceFilter', () => {
@@ -69,13 +68,6 @@ describe('SourceFilter', () => {
   it('shows Mark all read button', () => {
     render(<SourceFilter {...defaultProps} />);
     expect(screen.getByText('Mark all read')).toBeInTheDocument();
-  });
-
-  it('calls onManageSources when manage sources is clicked', () => {
-    const onManageSources = vi.fn();
-    render(<SourceFilter {...defaultProps} onManageSources={onManageSources} />);
-    fireEvent.click(screen.getByText('Manage sources'));
-    expect(onManageSources).toHaveBeenCalledTimes(1);
   });
 
   it('disables Mark all read when there are no unread items', () => {

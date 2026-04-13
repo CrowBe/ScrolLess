@@ -53,7 +53,7 @@ export function FeedList({
         <span class="material-symbols-outlined feed-empty__icon">inbox</span>
         <p class="feed-empty__title">{title}</p>
         <p class="feed-empty__sub">{subtitle}</p>
-        {(isFeed || isDiscover) && (
+        {isFeed && (
           <button class="btn btn--ghost btn--sm" onClick={onOpenSettings}>
             Manage sources
           </button>

@@ -156,10 +156,11 @@ export function NotificationPrompt() {
       <div class="notif-prompt notif-prompt--on">
         <span class="material-symbols-outlined">notifications_active</span>
         <span>Notifications: On</span>
-        <button class="btn btn--ghost btn--sm" onClick={handleDisable} disabled={busy || !endpoint}>
-          Disable
-        </button>
-        {!endpoint && <span class="notif-prompt__error">Finishing setup…</span>}
+        {endpoint && (
+          <button class="btn btn--ghost btn--sm" onClick={handleDisable} disabled={busy}>
+            Disable
+          </button>
+        )}
         {error && <span class="notif-prompt__error">{error}</span>}
       </div>
     );
