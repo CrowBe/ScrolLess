@@ -6,7 +6,6 @@ interface Props {
   counts: UnreadCounts;
   source: string;
   onSourceChange: (source: string) => void;
-  onManageSources: () => void;
 }
 
 const SOURCE_ORDER = ['youtube', 'x', 'news'];
@@ -20,7 +19,6 @@ export function SourceFilter({
   counts,
   source,
   onSourceChange,
-  onManageSources,
 }: Props) {
   const unreadCount = unreadFor(counts, source);
   const knownSources = Object.keys(counts.by_source);
@@ -67,9 +65,6 @@ export function SourceFilter({
       </div>
 
       <div class="source-filter__actions">
-        <button class="btn btn--ghost btn--sm" onClick={onManageSources}>
-          Manage sources
-        </button>
         <button
           class="btn btn--ghost btn--sm"
           onClick={handleMarkAllRead}
