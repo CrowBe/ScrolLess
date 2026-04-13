@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
-import { getSources, getTokens, createToken, revokeToken, getPreferences, updatePreferences } from './api';
-import type { UserSource } from './types';
+import { getSources, getTokens, createToken, revokeToken, getPreferences, updatePreferences, getSyncStatus } from './api';
+import type { UserSource, SyncLogEntry as MissedSyncLogEntry } from './types';
 import type { AgentToken, AppPreferences } from './api';
 import { SourceList } from './components/source-list';
 import { AddSourceForm } from './components/add-source-form';
-import { openScrollessDb } from './idb';
+import { openScrollessDb, type SyncLogEntry as LocalSyncLogEntry } from './idb';
+import { displayName } from './source-labels';
+import { relativeTime } from './utils';
 
 function AgentTokens() {
   const [tokens, setTokens] = useState<AgentToken[]>([]);
@@ -128,6 +130,113 @@ function AgentTokens() {
         </button>
       </div>
       {createError && <p class="settings__token-copy-state settings__token-copy-state--error">{createError}</p>}
+    </section>
+  );
+}
+
+interface SourceHealthRow {
+  source: string;
+  latestSuccess: LocalSyncLogEntry | null;
+  latestMissed: MissedSyncLogEntry | null;
+}
+
+function newestBy<T extends { source: string }>(rows: T[], getTs: (row: T) => string): Map<string, T> {
+  const map = new Map<string, T>();
+  for (const row of rows) {
+    const prev = map.get(row.source);
+    if (!prev || Date.parse(getTs(row)) > Date.parse(getTs(prev))) {
+      map.set(row.source, row);
+    }
+  }
+  return map;
+}
+
+function SyncHealthSection() {
+  const [rows, setRows] = useState<SourceHealthRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      const [sources, syncStatus, localSyncLog] = await Promise.all([
+        getSources(),
+        getSyncStatus(),
+        openScrollessDb().then((db) => db.getAll('sync_log')).catch(() => [] as LocalSyncLogEntry[]),
+      ]);
+
+      const successBySource = newestBy(localSyncLog, (row) => row.synced_at);
+      const missedBySource = newestBy(syncStatus.missed, (row) => row.attempted_at);
+      const sourceNames = Array.from(new Set([
+        ...sources.map((source) => source.name),
+        ...localSyncLog.map((row) => row.source),
+        ...syncStatus.missed.map((row) => row.source),
+      ])).sort();
+
+      setRows(
+        sourceNames.map((source) => ({
+          source,
+          latestSuccess: successBySource.get(source) ?? null,
+          latestMissed: missedBySource.get(source) ?? null,
+        }))
+      );
+    } catch (err) {
+      console.error('Failed to load sync health:', err);
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <section class="settings__section">
+      <h2 class="settings__heading">Sync Health</h2>
+      <p class="settings__help">Inspect source-level sync health instead of relying only on the global header status.</p>
+      {loading ? (
+        <p class="settings__help">Loading sync health…</p>
+      ) : rows.length === 0 ? (
+        <p class="settings__help">No sync activity yet.</p>
+      ) : (
+        <ul class="settings__sync-list">
+          {rows.map(({ source, latestSuccess, latestMissed }) => {
+            const lastSuccessAt = latestSuccess ? Date.parse(latestSuccess.synced_at) : -Infinity;
+            const lastMissedAt = latestMissed ? Date.parse(latestMissed.attempted_at) : -Infinity;
+            const latestIssueWins = lastMissedAt > lastSuccessAt;
+            const state = latestIssueWins
+              ? 'issue'
+              : latestSuccess
+                ? 'ok'
+                : 'idle';
+
+            return (
+              <li key={source} class={`settings__sync-item settings__sync-item--${state}`}>
+                <div class="settings__sync-header">
+                  <span class="settings__sync-source">{displayName(source)}</span>
+                  <span class={`settings__sync-badge settings__sync-badge--${state}`}>
+                    {state === 'issue' ? 'Needs attention' : state === 'ok' ? 'Healthy' : 'Not synced yet'}
+                  </span>
+                </div>
+
+                {latestSuccess ? (
+                  <p class="settings__help">
+                    Last successful sync {relativeTime(latestSuccess.synced_at)} · added {latestSuccess.items_added} item{latestSuccess.items_added === 1 ? '' : 's'}
+                  </p>
+                ) : (
+                  <p class="settings__help">No successful sync recorded on this device yet.</p>
+                )}
+
+                {latestMissed && (
+                  <p class="settings__token-copy-state settings__token-copy-state--error">
+                    Last issue: {latestMissed.status === 'device_offline' ? 'device offline' : 'sync error'} {relativeTime(latestMissed.attempted_at)}
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 }
@@ -294,6 +403,8 @@ export function Settings() {
   return (
     <div class="settings">
       <PreferencesSection />
+
+      <SyncHealthSection />
 
       <AgentTokens />
 
