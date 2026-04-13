@@ -127,7 +127,8 @@ Set optional values as needed:
 | `DB_PATH` | Custom SQLite location (default: `~/.feed-aggregator/feed.db`) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web Push notifications |
 | `VAPID_SUBJECT` | Web Push contact (set to `mailto:you@example.com`) |
-| `BASE_URL` | OAuth flow, cloud tunnel access, and CORS allowlist |
+| `BASE_URL` | Backend public URL for OAuth issuer metadata and tunnel/external access |
+| `CORS_ORIGIN` | Browser origin allowlist for the frontend in split-hosting deployments |
 | `ADMIN_PASSWORD` | OAuth consent screen |
 | `DEVICE_ENROLLMENT_TOKEN` | Protecting `/api/v1/device/register` and `/api/v1/device/challenge` from unauthorized enrollment |
 | `VITE_DEVICE_ENROLLMENT_TOKEN` | Frontend header used for device enrollment when backend `DEVICE_ENROLLMENT_TOKEN` is enabled |
@@ -203,8 +204,8 @@ For a stable named tunnel tied to a domain you control, follow the [Cloudflare T
 
 ### After setting up the tunnel
 
-1. Set `BASE_URL` to your public HTTPS URL (e.g. `https://random-name.trycloudflare.com`). This is required for the OAuth flow when connecting via claude.ai.
-2. `BASE_URL` is automatically added to the CORS allowlist.
+1. Set `BASE_URL` to your public HTTPS backend URL (e.g. `https://random-name.trycloudflare.com`). This is required for the OAuth flow when connecting via claude.ai.
+2. If the frontend is served from a different origin, set `CORS_ORIGIN` to that browser origin.
 3. Update your `.mcp.json` URL to the tunnel URL if using a remote MCP client.
 
 ---
