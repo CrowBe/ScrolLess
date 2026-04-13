@@ -9,9 +9,16 @@ vi.mock('./api', () => ({
   revokeToken: vi.fn(),
   getPreferences: vi.fn(),
   updatePreferences: vi.fn(),
+  getSyncStatus: vi.fn(),
 }));
 
-import { createToken, getSources, getTokens, getPreferences, updatePreferences } from './api';
+vi.mock('./idb', () => ({
+  openScrollessDb: vi.fn().mockResolvedValue({
+    getAll: vi.fn().mockResolvedValue([]),
+  }),
+}));
+
+import { createToken, getSources, getTokens, getPreferences, updatePreferences, getSyncStatus } from './api';
 
 describe('Settings', () => {
   beforeEach(() => {
@@ -28,6 +35,10 @@ describe('Settings', () => {
       retention_days: payload.retention_days ?? 7,
       max_items_per_source: payload.max_items_per_source ?? 50,
     }));
+    (getSyncStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      missed: [],
+      next_sync_estimate: null,
+    });
   });
 
   it('renders token label input with form-input styling class', async () => {
@@ -42,13 +53,15 @@ describe('Settings', () => {
     render(<Settings />);
 
     await waitFor(() => {
-      expect(getSources).toHaveBeenCalledTimes(1);
+      expect(getSources).toHaveBeenCalled();
       expect(getTokens).toHaveBeenCalledTimes(1);
       expect(getPreferences).toHaveBeenCalledTimes(1);
+      expect(getSyncStatus).toHaveBeenCalledTimes(1);
     });
 
     expect(screen.getByRole('heading', { name: 'Add Source' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Preferences' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Sync Health' })).toBeInTheDocument();
   });
 
   it('keeps create token disabled until the label is at least 3 characters', async () => {
