@@ -25,6 +25,12 @@ export function XCard({ item, onMarkRead, onToggleSave }: Props) {
       tabIndex={0}
       onKeyDown={(e) => e.key === 'Enter' && toggle()}
     >
+      {item.thumbnail_url && (
+        <div class={`card__thumb${expanded ? ' card__thumb--expanded' : ''}`}>
+          <img src={item.thumbnail_url} alt="" loading="lazy" />
+          <div class="card__source-badge card__source-badge--x">𝕏</div>
+        </div>
+      )}
       <div class="card__header">
         <div class="card__avatar">
           <span class="material-symbols-outlined">person</span>
@@ -34,7 +40,6 @@ export function XCard({ item, onMarkRead, onToggleSave }: Props) {
           <span class="card__time">{relativeTime(item.published_at)}</span>
         </div>
         <SaveButton saved={item.is_saved} onToggle={() => onToggleSave(item.id, item.is_saved)} />
-        <div class="card__source-badge card__source-badge--x">𝕏</div>
       </div>
       <div class="card__body">
         <p class="card__text">{truncated}</p>

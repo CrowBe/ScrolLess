@@ -57,6 +57,13 @@ describe('XCard', () => {
     expect(screen.getByText('View on X')).toBeInTheDocument();
   });
 
+  it('renders thumbnail when thumbnail_url is present', () => {
+    const { container } = render(<XCard item={{ ...base, thumbnail_url: 'https://img.example.com/thumb.jpg' }} onMarkRead={vi.fn()} onToggleSave={vi.fn()} />);
+    const img = container.querySelector('img');
+    expect(img).toBeInTheDocument();
+    expect(img).toHaveAttribute('src', 'https://img.example.com/thumb.jpg');
+  });
+
   it('has unread class when unread', () => {
     const { container } = render(<XCard item={base} onMarkRead={vi.fn()} onToggleSave={vi.fn()} />);
     expect(container.querySelector('.card--unread')).toBeInTheDocument();
