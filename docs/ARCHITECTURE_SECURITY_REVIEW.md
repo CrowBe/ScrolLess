@@ -17,11 +17,16 @@ Each finding is self-contained so it can be picked up individually in a future s
   - `src/api.ts` switched from `X-Device-Id` to `Authorization: Bearer`.
 - **Seam alignment**: matches `docs/TIER_CONTRACT.md §4` — "cryptographic proof is authoritative, X-Device-Id is a routing hint."
 
-### 2. Unauthenticated `usr_*` acceptance
+### ~~2. Unauthenticated `usr_*` acceptance~~ ✅ Fixed
 
 - **File**: `server/api-routes.ts:82-84`
 - **Problem**: if the `X-Device-Id` header starts with `usr_`, the request is authorized with no DB check. Pre-wires the paid tier but is an auth bypass today.
-- **Fix sketch**: require `usr_*` ids to resolve against a real account/session (Clerk integration from `docs/pre-release-tasks.md` Tier 1).
+- **Fix applied** (branch `claude/complete-security-review-task-4BASs`):
+  - Removed the `usr_*` bypass entirely from `getRequestUserId`. `X-Device-Id` is now ignored as an auth credential for all identity prefixes; only `Authorization: Bearer dsess_*` tokens are accepted.
+  - In non-production, unauthenticated requests still fall back to `'local'` (self-hosted default), so `usr_*` via header silently resolves to `'local'` rather than being granted a fake `usr_*` identity.
+  - An unrecognised `Authorization` header (including `Bearer usr_*`) is rejected with 401 even in non-production.
+  - Two new tests in `server/api-routes.test.ts` verify both behaviours.
+- **Seam note**: full `usr_*` auth requires Clerk integration (`docs/pre-release-tasks.md` Tier 1). This fix ensures no client can self-declare a `usr_*` identity until that integration lands.
 
 ### 3. OAuth access + refresh tokens stored as plaintext
 
