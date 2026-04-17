@@ -398,7 +398,7 @@ describe('device challenge + verify rotation', () => {
     expect(duringGrace.statusCode).toBe(200);
 
     db.prepare(
-      `UPDATE free_device_rotation SET grace_expires_at = datetime('now', '-1 minute') WHERE scope_id = 1`
+      `UPDATE free_device_rotation SET grace_expires_at = datetime('now', '-1 minute') WHERE user_id = 'local'`
     ).run();
 
     // After grace expires, dev_a's session token is rejected

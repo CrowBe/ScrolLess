@@ -72,12 +72,12 @@ function parseBody<T>(
   return parsed.data;
 }
 
-function resolveDeviceRotation(deviceId: string, db: Database.Database): string | null {
+function resolveDeviceRotation(deviceId: string, userId: string, db: Database.Database): string | null {
   const rotation = db.prepare(
     `SELECT active_device_id, previous_active_device_id, grace_expires_at
      FROM free_device_rotation
-     WHERE scope_id = 1`
-  ).get() as {
+     WHERE user_id = ?`
+  ).get(userId) as {
     active_device_id: string;
     previous_active_device_id: string | null;
     grace_expires_at: string | null;
@@ -101,7 +101,7 @@ function lookupSessionToken(plain: string, db: Database.Database): string | null
     `SELECT device_id FROM device_sessions WHERE token_hash = ? AND expires_at > datetime('now')`
   ).get(tokenHash) as { device_id: string } | undefined;
   if (!session) return null;
-  return resolveDeviceRotation(session.device_id, db);
+  return resolveDeviceRotation(session.device_id, 'local', db);
 }
 
 function getRequestUserId(req: FastifyRequest, db: Database.Database): string | null {
@@ -270,14 +270,14 @@ export function registerApiRoutes(
     `).run(body.device_id, challenge.public_key);
 
     const existingRotation = db.prepare(
-      `SELECT active_device_id FROM free_device_rotation WHERE scope_id = 1`
+      `SELECT active_device_id FROM free_device_rotation WHERE user_id = 'local'`
     ).get() as { active_device_id: string } | undefined;
 
     let graceExpiresAt: string | null = null;
     if (!existingRotation) {
       db.prepare(`
-        INSERT INTO free_device_rotation (scope_id, active_device_id, previous_active_device_id, grace_expires_at)
-        VALUES (1, ?, NULL, NULL)
+        INSERT INTO free_device_rotation (user_id, active_device_id, previous_active_device_id, grace_expires_at)
+        VALUES ('local', ?, NULL, NULL)
       `).run(body.device_id);
     } else if (existingRotation.active_device_id !== body.device_id) {
       graceExpiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
@@ -286,7 +286,7 @@ export function registerApiRoutes(
         SET previous_active_device_id = active_device_id,
             active_device_id = ?,
             grace_expires_at = ?
-        WHERE scope_id = 1
+        WHERE user_id = 'local'
       `).run(body.device_id, graceExpiresAt);
     }
 
