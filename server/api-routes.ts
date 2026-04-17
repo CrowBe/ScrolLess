@@ -114,11 +114,6 @@ function getRequestUserId(req: FastifyRequest, db: Database.Database): string | 
     return null;
   }
 
-  // usr_* via X-Device-Id — auth bypass tracked in finding #2
-  const userIdHeader = req.headers['x-device-id'];
-  const userId = Array.isArray(userIdHeader) ? userIdHeader[0] : userIdHeader;
-  if (userId?.startsWith('usr_')) return userId;
-
   // No auth headers: fall back to 'local' in non-production only
   return process.env.NODE_ENV === 'production' ? null : 'local';
 }

@@ -420,6 +420,32 @@ describe('device challenge + verify rotation', () => {
     // The response is 200 (resolves to 'local') rather than granting the unknown device identity
     expect(res.statusCode).toBe(200);
   });
+
+  it('does not grant usr_* identity via X-Device-Id (finding #2 fix)', async () => {
+    // Seed a source under 'local' but not under 'usr_alice' to distinguish which identity is resolved
+    db.prepare(`INSERT OR IGNORE INTO user_sources (user_id, name, enabled) VALUES ('local', 'test_src', 1)`).run();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/sources',
+      headers: { 'x-device-id': 'usr_alice' },
+    });
+    // Non-production falls back to 'local', not usr_alice — usr_* bypass is removed
+    expect(res.statusCode).toBe(200);
+    const sources = res.json() as { name: string }[];
+    const names = sources.map((s) => s.name);
+    expect(names).toContain('test_src'); // 'local' data returned, not a blank usr_alice account
+  });
+
+  it('rejects unrecognised Authorization header values including usr_* bearer tokens', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/sources',
+      headers: { authorization: 'Bearer usr_alice' },
+    });
+    // Only dsess_* tokens are accepted; anything else is rejected even in non-production
+    expect(res.statusCode).toBe(401);
+  });
 });
 
 describe('POST /api/v1/queue/ack', () => {
