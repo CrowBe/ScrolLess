@@ -10,9 +10,14 @@ function base64url(buf: Buffer): string {
 
 export function seedOAuthClients(db: Database.Database, config: AppConfig): void {
   const clients = config.oauth?.clients ?? [];
+  // ON CONFLICT preserves `is_active` so operators can disable a client without
+  // having it silently re-enabled on the next restart.
   const stmt = db.prepare(
-    `INSERT OR REPLACE INTO oauth_clients (client_id, client_secret, redirect_uris, label, is_active)
-     VALUES (?, ?, ?, ?, 1)`
+    `INSERT INTO oauth_clients (client_id, client_secret, redirect_uris, label, is_active)
+     VALUES (?, ?, ?, ?, 1)
+     ON CONFLICT(client_id) DO UPDATE SET
+       redirect_uris = excluded.redirect_uris,
+       label = excluded.label`
   );
   const seed = db.transaction(() => {
     for (const c of clients) {

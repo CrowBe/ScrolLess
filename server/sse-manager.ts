@@ -48,7 +48,16 @@ export class SseManager {
 
     const body = JSON.stringify(payload);
     client.reply.raw.write(`event: ${event}\n`);
-    client.reply.raw.write(`data: ${body}\n\n`);
+    const flushed = client.reply.raw.write(`data: ${body}\n\n`);
+
+    // Back-pressure guard: if the kernel buffer is full the client is too slow
+    // to keep up. Drop the connection so the EventSource reconnects cleanly
+    // instead of letting the Node write buffer grow without bound.
+    if (!flushed) {
+      client.reply.raw.end();
+      this.remove(userId);
+      return false;
+    }
     return true;
   }
 }

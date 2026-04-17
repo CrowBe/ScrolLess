@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 import type { AgentFeedResponse, AgentState, AgentPreferences, AgentSyncContext, AgentSyncSource, AgentEncryptedFeedPayload } from './types.js';
 import type { SseManager } from './sse-manager.js';
+import { readPreferences } from './preferences.js';
 
 // Augment FastifyRequest to include userId attached by auth hook
 declare module 'fastify' {
@@ -31,12 +32,9 @@ export function getSyncContext(db: Database.Database, userId: string): AgentSync
     last_sync_at: string | null;
   }>;
 
-  const prefRows = db.prepare(
-    `SELECT key, value FROM user_preferences WHERE user_id = ? AND key IN ('max_items_per_source', 'blocked_keywords')`
-  ).all(userId) as Array<{ key: string; value: string }>;
-  const prefs = new Map(prefRows.map(r => [r.key, r.value]));
-  const globalMaxItems = parseInt(JSON.parse(prefs.get('max_items_per_source') ?? '50'), 10);
-  const blockedKeywords: string[] = JSON.parse(prefs.get('blocked_keywords') ?? '[]');
+  const prefs = readPreferences(db, userId);
+  const globalMaxItems = prefs.max_items_per_source;
+  const blockedKeywords = prefs.blocked_keywords;
 
   const sources: AgentSyncSource[] = sourceRows.map(row => {
     if (!row.enabled) {
@@ -211,20 +209,11 @@ export function registerAgentRoutes(
   // GET /agent/preferences
   fastify.get('/agent/preferences', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = req.userId ?? 'local';
-
-    const getVal = (key: string): string | null => {
-      const row = db.prepare(
-        'SELECT value FROM user_preferences WHERE user_id = ? AND key = ?'
-      ).get(userId, key) as { value: string } | undefined;
-      return row?.value ?? null;
-    };
-
-    const prefs: AgentPreferences = {
-      blocked_keywords: JSON.parse(getVal('blocked_keywords') ?? '[]'),
-      max_items_per_source: parseInt(JSON.parse(getVal('max_items_per_source') ?? '50'), 10),
-    };
-
-    return reply.send(prefs);
+    const prefs = readPreferences(db, userId);
+    return reply.send({
+      blocked_keywords: prefs.blocked_keywords,
+      max_items_per_source: prefs.max_items_per_source,
+    } satisfies AgentPreferences);
   });
 }
 
@@ -268,10 +257,21 @@ export function cleanupGlobal(db: Database.Database): void {
     `DELETE FROM sync_attempts WHERE attempted_at < datetime('now', '-30 days')`
   ).run();
 
+  // Purge expired device session tokens
+  const deviceSessionsResult = db.prepare(
+    `DELETE FROM device_sessions WHERE expires_at < datetime('now')`
+  ).run();
+
+  // Purge consumed or expired device challenges (short-lived, no reason to retain)
+  const deviceChallengesResult = db.prepare(
+    `DELETE FROM device_challenges WHERE consumed_at IS NOT NULL OR expires_at < datetime('now')`
+  ).run();
+
   console.log(
     `[cleanup] free_queue=${freeQueueResult.changes} paid_queue=${paidQueueResult.changes}` +
     ` auth_codes=${authCodesResult.changes} oauth_tokens=${oauthTokensResult.changes}` +
-    ` sync_attempts=${logsResult.changes}`
+    ` sync_attempts=${logsResult.changes} device_sessions=${deviceSessionsResult.changes}` +
+    ` device_challenges=${deviceChallengesResult.changes}`
   );
 }
 
