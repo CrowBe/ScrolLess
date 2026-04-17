@@ -125,5 +125,17 @@ export function revokeToken(hash: string): Promise<{ ok: boolean }> {
   return req(`/api/v1/tokens/${encodeURIComponent(hash)}`, { method: 'DELETE' });
 }
 
+export async function syncPreferencesToIdb(): Promise<void> {
+  const { openScrollessDb } = await import('./idb');
+  const prefs = await getPreferences();
+  const db = await openScrollessDb();
+  const entries: Array<{ key: import('./idb').PreferenceKey; value: unknown }> = [
+    { key: 'blocked_keywords', value: prefs.blocked_keywords },
+    { key: 'retention_days', value: prefs.retention_days },
+    { key: 'max_items_per_source', value: prefs.max_items_per_source },
+  ];
+  await Promise.all(entries.map(e => db.put('preferences', e)));
+}
+
 // Re-export for convenience
 export type { FeedItemResponse } from './types';

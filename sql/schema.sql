@@ -111,15 +111,15 @@ CREATE TABLE IF NOT EXISTS oauth_auth_codes (
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
--- OAuth 2.0 access + refresh tokens
+-- OAuth 2.0 access + refresh tokens (tokens stored as SHA-256 hashes only)
 CREATE TABLE IF NOT EXISTS oauth_tokens (
-    access_token    TEXT PRIMARY KEY,
-    refresh_token   TEXT UNIQUE,
-    client_id       TEXT NOT NULL,
-    user_id         TEXT NOT NULL,
-    access_expires  TEXT NOT NULL,
-    refresh_expires TEXT,
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    access_token_hash   TEXT PRIMARY KEY,
+    refresh_token_hash  TEXT UNIQUE,
+    client_id           TEXT NOT NULL,
+    user_id             TEXT NOT NULL,
+    access_expires      TEXT NOT NULL,
+    refresh_expires     TEXT,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- Paid-tier encrypted queue, tracked per recipient device

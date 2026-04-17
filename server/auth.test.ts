@@ -70,8 +70,8 @@ describe('verifyAgentToken', () => {
     const accessToken = 'oauth-access-token-abc';
     const futureDate = new Date(Date.now() + 3600000).toISOString();
 
-    db.prepare(`INSERT INTO oauth_tokens (access_token, refresh_token, client_id, user_id, access_expires)
-      VALUES (?, ?, ?, ?, ?)`).run(accessToken, 'refresh-1', 'client-1', 'local', futureDate);
+    db.prepare(`INSERT INTO oauth_tokens (access_token_hash, refresh_token_hash, client_id, user_id, access_expires)
+      VALUES (?, ?, ?, ?, ?)`).run(hashToken(accessToken), hashToken('refresh-1'), 'client-1', 'local', futureDate);
 
     const result = verifyAgentToken(db, accessToken);
     expect(result.valid).toBe(true);
@@ -82,8 +82,8 @@ describe('verifyAgentToken', () => {
     const accessToken = 'expired-access-token';
     const pastDate = new Date(Date.now() - 3600000).toISOString();
 
-    db.prepare(`INSERT INTO oauth_tokens (access_token, refresh_token, client_id, user_id, access_expires)
-      VALUES (?, ?, ?, ?, ?)`).run(accessToken, 'refresh-2', 'client-1', 'local', pastDate);
+    db.prepare(`INSERT INTO oauth_tokens (access_token_hash, refresh_token_hash, client_id, user_id, access_expires)
+      VALUES (?, ?, ?, ?, ?)`).run(hashToken(accessToken), hashToken('refresh-2'), 'client-1', 'local', pastDate);
 
     const result = verifyAgentToken(db, accessToken);
     expect(result.valid).toBe(false);

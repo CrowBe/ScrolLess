@@ -7,7 +7,7 @@ import { z } from 'zod';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 import { verifyAgentToken } from './auth.js';
-import { getSyncContext, type PushCallback } from './agent-routes.js';
+import { getSyncContext, submitEncryptedPayload, type PushCallback } from './agent-routes.js';
 import type { AgentEncryptedFeedPayload } from './types.js';
 import type { SseManager } from './sse-manager.js';
 
@@ -28,7 +28,6 @@ try {
 }
 
 const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour
-const FREE_QUEUE_TTL_MINUTES = 15;
 
 const GENERIC_INSTRUCTIONS = `# Scraping Instructions
 
@@ -70,14 +69,14 @@ export function registerMcpHandler(
   pushCallback?: PushCallback,
   sseManager?: SseManager
 ): void {
-  // Map of session ID to transport, owning userId, and creation time
-  const transports = new Map<string, { transport: StreamableHTTPServerTransport; userId: string; createdAt: number }>();
+  // Map of session ID to transport, owning userId, and last-used time
+  const transports = new Map<string, { transport: StreamableHTTPServerTransport; userId: string; lastUsedAt: number }>();
 
-  // Periodically evict stale sessions
+  // Periodically evict sessions idle longer than SESSION_TTL_MS
   const cleanupInterval = setInterval(() => {
     const cutoff = Date.now() - SESSION_TTL_MS;
     for (const [id, entry] of transports) {
-      if (entry.createdAt < cutoff) {
+      if (entry.lastUsedAt < cutoff) {
         entry.transport.close().catch(() => {});
         transports.delete(id);
       }
@@ -125,32 +124,9 @@ export function registerMcpHandler(
           items: args.items,
         };
 
-        const relayed = sseManager?.send(userId, 'feed_items', payload) ?? false;
-        const status = relayed ? 'relayed' : 'device_offline';
-        db.prepare(`
-          INSERT INTO sync_attempts (user_id, source, item_count, status)
-          VALUES (?, ?, ?, ?)
-        `).run(userId, payload.source, payload.items.length, status);
-
-        if (!relayed) {
-          db.prepare(`
-            INSERT INTO free_queue_deliveries (user_id, payload_envelope, expires_at, status)
-            VALUES (?, ?, datetime('now', '+' || ? || ' minutes'), 'queued')
-          `).run(userId, JSON.stringify(payload), FREE_QUEUE_TTL_MINUTES);
-          pushCallback?.(userId, payload.source, payload.items.length, undefined).catch(() => {});
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ queued: payload.items.length, queue_ttl_minutes: FREE_QUEUE_TTL_MINUTES }) }],
-          };
-        }
-
-        db.prepare(`
-          UPDATE user_sources
-          SET last_sync_at = datetime('now')
-          WHERE user_id = ? AND name = ?
-        `).run(userId, payload.source);
-
+        const result = submitEncryptedPayload(db, userId, payload, sseManager, pushCallback);
         return {
-          content: [{ type: 'text', text: JSON.stringify({ relayed: payload.items.length }) }],
+          content: [{ type: 'text', text: JSON.stringify(result) }],
         };
       }
     );
@@ -247,6 +223,7 @@ export function registerMcpHandler(
       if (entry.userId !== userId) {
         return reply.status(403).send({ error: 'Session belongs to a different user' });
       }
+      entry.lastUsedAt = Date.now();
       transport = entry.transport;
     } else if (!sessionId && req.method === 'POST') {
       transport = new StreamableHTTPServerTransport({
@@ -257,7 +234,7 @@ export function registerMcpHandler(
       await mcp.connect(transport);
 
       if (transport.sessionId) {
-        transports.set(transport.sessionId, { transport, userId, createdAt: Date.now() });
+        transports.set(transport.sessionId, { transport, userId, lastUsedAt: Date.now() });
       }
 
       transport.onclose = () => {

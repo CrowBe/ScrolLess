@@ -36,8 +36,8 @@ export function readPreferences(db: Database.Database, userId: string): AppPrefe
     }
   };
 
-  const retentionDays = Number.parseInt(String(getJsonValue('retention_days')), 10);
-  const maxItemsPerSource = Number.parseInt(String(getJsonValue('max_items_per_source')), 10);
+  const retentionDays = Number(getJsonValue('retention_days'));
+  const maxItemsPerSource = Number(getJsonValue('max_items_per_source'));
 
   return {
     blocked_keywords: sanitizeBlockedKeywords(getJsonValue('blocked_keywords')),

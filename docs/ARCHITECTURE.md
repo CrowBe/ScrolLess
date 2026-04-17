@@ -83,7 +83,6 @@
 - Call any upstream API (YouTube, X, NewsAPI, etc.)
 - Store feed items or feed content (free/paid tiers)
 - Decrypt agent payloads — the server handles ciphertext only
-- Store user preferences beyond source configuration (those live in localStorage/IndexedDB)
 
 ### Route Groups
 
@@ -173,7 +172,8 @@ Two supported mechanisms — both resolve to a `userId` for downstream handlers:
 
 **OAuth Access Token** (Claude connector / third-party MCP clients):
 - Short-lived token issued after Authorization Code + PKCE flow
-- Validated against `oauth_tokens` table (expiry + user binding)
+- Token value returned to client; only the SHA-256 hash is stored in `oauth_tokens` (mirrors `agent_tokens.token_hash` model)
+- Validated by hashing the incoming token and looking up `access_token_hash` + checking expiry
 
 Both mechanisms are handled in shared auth middleware. Route handlers receive `userId` only.
 
@@ -529,14 +529,15 @@ CREATE TABLE oauth_auth_codes (
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
+-- Tokens stored as SHA-256 hashes only; plaintext is returned to the client once and never persisted
 CREATE TABLE oauth_tokens (
-    access_token    TEXT PRIMARY KEY,
-    refresh_token   TEXT UNIQUE,
-    client_id       TEXT NOT NULL,
-    user_id         TEXT NOT NULL,
-    access_expires  TEXT NOT NULL,
-    refresh_expires TEXT,
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    access_token_hash   TEXT PRIMARY KEY,
+    refresh_token_hash  TEXT UNIQUE,
+    client_id           TEXT NOT NULL,
+    user_id             TEXT NOT NULL,
+    access_expires      TEXT NOT NULL,
+    refresh_expires     TEXT,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 ```
 
@@ -588,16 +589,14 @@ Append-only. Used to display last-sync time in the UI.
 
 ### `preferences`
 
-Key-value store:
+Key-value store. Preference keys (`blocked_keywords`, `max_items_per_source`, `retention_days`) are synced from the server on each boot so local logic (e.g. retention cleanup) always uses the user's configured values.
 
 | Key | Default | Type |
 |---|---|---|
-| `user_id` | generated `dev_<uuid>` | `string` |
-| `public_key` | generated on first boot | `string` (base64) |
-| `private_key` | generated on first boot | `CryptoKey` |
 | `blocked_keywords` | `[]` | `string[]` |
 | `max_items_per_source` | `50` | `number` |
 | `retention_days` | `7` | `number` |
+| `enrollment_token` | — | `string` |
 
 ### `device`
 
@@ -633,7 +632,7 @@ The server does not dedup. It relays all items received from the agent.
 
 ## Data Retention & Cleanup
 
-**Client-side**: A daily routine (triggered on app open) deletes items from IndexedDB where `fetched_at < now - retention_days`. Default: 7 days. Uses `fetched_at`, not `published_at`.
+**Client-side**: A routine (triggered on app open) deletes items from IndexedDB where `fetched_at < now - retention_days`. Default: 7 days. Uses `fetched_at`, not `published_at`. The `retention_days` value is synced from the server (`GET /api/preferences`) to IndexedDB on each boot so the device always uses the user's configured value.
 
 **Server-side cron** (daily, 3:00 AM):
 - Delete `oauth_auth_codes` older than 10 minutes
@@ -742,15 +741,14 @@ interface AgentFeedItem {
 
 ### Rate Limiting
 
-Applied only on agent and MCP routes (scoped plugin — does not affect `/api/*` PWA routes):
+Two rate-limited scopes:
 
-```typescript
-await fastify.register(async (agentScope) => {
-  await agentScope.register(fastifyRateLimit, { max: 60, timeWindow: '1 hour' });
-  registerAgentRoutes(agentScope, db, sseManager);
-  registerMcpHandler(agentScope, db, sseManager);
-});
-```
+| Scope | Limit | Key | Reason |
+|---|---|---|---|
+| `/agent/*` + `/mcp` | 60 req / hour | `Authorization` header or IP | Throttle agent scraping runs |
+| `/oauth/*` | 20 req / minute | IP | Protect unauthenticated PKCE/token endpoints |
+
+`/api/*` device routes rely on device session auth as the primary protection; individual high-risk endpoints (device register, challenge, verify) are under the same IP-keyed OAuth scope limit when applicable.
 
 ### 202 device_offline Semantics (Free Tier)
 

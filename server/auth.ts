@@ -27,12 +27,12 @@ export function verifyAgentToken(
     return { valid: true, userId: agentRow.user_id };
   }
 
-  // Path 2: OAuth access token — look up raw token in oauth_tokens
+  // Path 2: OAuth access token — hash and look up in oauth_tokens
   const oauthRow = db
     .prepare(
-      `SELECT user_id, access_expires FROM oauth_tokens WHERE access_token = ?`
+      `SELECT user_id, access_expires FROM oauth_tokens WHERE access_token_hash = ?`
     )
-    .get(token) as { user_id: string; access_expires: string } | undefined;
+    .get(hash) as { user_id: string; access_expires: string } | undefined;
 
   if (oauthRow) {
     if (new Date(oauthRow.access_expires) > new Date()) {
