@@ -47,13 +47,14 @@ export class SseManager {
     if (!client || client.reply.raw.writableEnded) return false;
 
     const body = JSON.stringify(payload);
-    client.reply.raw.write(`event: ${event}\n`);
-    const flushed = client.reply.raw.write(`data: ${body}\n\n`);
+    const headerFlushed = client.reply.raw.write(`event: ${event}\n`);
+    const bodyFlushed = client.reply.raw.write(`data: ${body}\n\n`);
 
-    // Back-pressure guard: if the kernel buffer is full the client is too slow
-    // to keep up. Drop the connection so the EventSource reconnects cleanly
-    // instead of letting the Node write buffer grow without bound.
-    if (!flushed) {
+    // Back-pressure guard: if either write signals the kernel buffer is full
+    // the client is too slow to keep up. Drop the connection so the
+    // EventSource reconnects cleanly instead of letting Node's write buffer
+    // grow without bound.
+    if (!headerFlushed || !bodyFlushed) {
       client.reply.raw.end();
       this.remove(userId);
       return false;

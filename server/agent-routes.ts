@@ -257,14 +257,17 @@ export function cleanupGlobal(db: Database.Database): void {
     `DELETE FROM sync_attempts WHERE attempted_at < datetime('now', '-30 days')`
   ).run();
 
-  // Purge expired device session tokens
+  // Purge expired device session tokens.
+  // expires_at is stored as an ISO-8601 string with a 'T' separator and 'Z'
+  // suffix, while datetime('now') returns space-separated format; compare
+  // both sides through datetime() so SQLite normalizes before comparing.
   const deviceSessionsResult = db.prepare(
-    `DELETE FROM device_sessions WHERE expires_at < datetime('now')`
+    `DELETE FROM device_sessions WHERE datetime(expires_at) < datetime('now')`
   ).run();
 
   // Purge consumed or expired device challenges (short-lived, no reason to retain)
   const deviceChallengesResult = db.prepare(
-    `DELETE FROM device_challenges WHERE consumed_at IS NOT NULL OR expires_at < datetime('now')`
+    `DELETE FROM device_challenges WHERE consumed_at IS NOT NULL OR datetime(expires_at) < datetime('now')`
   ).run();
 
   console.log(

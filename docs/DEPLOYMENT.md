@@ -25,7 +25,10 @@ VAPID_SUBJECT=mailto:you@example.com
 BASE_URL=https://yourapp.onrender.com
 CORS_ORIGIN=https://yourapp.vercel.app
 DB_PATH=/data/feed.db
+TRUST_PROXY=true
 ```
+
+`TRUST_PROXY=true` tells Fastify to read the real client IP from `X-Forwarded-For` — required behind Render/Cloudflare/Nginx so the rate limiters bucket by client rather than by proxy.
 
 6. Set `DB_PATH=/data/feed.db` so SQLite data is persisted on the Render disk
 

@@ -61,6 +61,33 @@ describe('cleanupGlobal', () => {
     expect(remaining).toHaveLength(0);
   });
 
+  it('purges expired device sessions and consumed/expired device challenges stored as ISO-8601', () => {
+    // Expired session written with toISOString() — must be deleted even on the same day
+    const pastIso = new Date(Date.now() - 60 * 1000).toISOString();
+    const futureIso = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    db.prepare(`INSERT INTO device_sessions (token_hash, device_id, expires_at) VALUES (?, ?, ?)`)
+      .run('hash_expired', 'dev_a', pastIso);
+    db.prepare(`INSERT INTO device_sessions (token_hash, device_id, expires_at) VALUES (?, ?, ?)`)
+      .run('hash_active', 'dev_a', futureIso);
+
+    // Challenges: consumed, expired, and still-valid
+    db.prepare(`INSERT INTO device_challenges (challenge_id, device_id, public_key, nonce, issued_at, expires_at, consumed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).run('chal_consumed', 'dev_a', 'k', 'n', pastIso, futureIso, pastIso);
+    db.prepare(`INSERT INTO device_challenges (challenge_id, device_id, public_key, nonce, issued_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)`).run('chal_expired', 'dev_a', 'k', 'n', pastIso, pastIso);
+    db.prepare(`INSERT INTO device_challenges (challenge_id, device_id, public_key, nonce, issued_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)`).run('chal_active', 'dev_a', 'k', 'n', pastIso, futureIso);
+
+    cleanupGlobal(db);
+
+    const sessions = db.prepare('SELECT token_hash FROM device_sessions').all() as { token_hash: string }[];
+    expect(sessions.map(s => s.token_hash)).toEqual(['hash_active']);
+
+    const challenges = db.prepare('SELECT challenge_id FROM device_challenges').all() as { challenge_id: string }[];
+    expect(challenges.map(c => c.challenge_id)).toEqual(['chal_active']);
+  });
+
   it('expires queued free-tier deliveries and purges old delivered/expired queue rows', () => {
     // Expired queued row (past TTL)
     db.prepare(`
