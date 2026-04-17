@@ -72,27 +72,7 @@ function parseBody<T>(
   return parsed.data;
 }
 
-function getRequestUserId(req: FastifyRequest, db: Database.Database): string | null {
-  const userIdHeader = req.headers['x-device-id'];
-  const userId = Array.isArray(userIdHeader) ? userIdHeader[0] : userIdHeader;
-
-  if (!userId) {
-    return process.env.NODE_ENV === 'production' ? null : 'local';
-  }
-  if (userId.startsWith('usr_')) {
-    return userId;
-  }
-  if (!userId.startsWith('dev_')) {
-    return process.env.NODE_ENV === 'production' ? null : 'local';
-  }
-
-  const registration = db.prepare(
-    `SELECT user_id FROM device_registrations WHERE user_id = ?`
-  ).get(userId) as { user_id: string } | undefined;
-  if (!registration) {
-    return null;
-  }
-
+function resolveDeviceRotation(deviceId: string, db: Database.Database): string | null {
   const rotation = db.prepare(
     `SELECT active_device_id, previous_active_device_id, grace_expires_at
      FROM free_device_rotation
@@ -103,34 +83,55 @@ function getRequestUserId(req: FastifyRequest, db: Database.Database): string | 
     grace_expires_at: string | null;
   } | undefined;
 
-  if (!rotation) {
-    return userId;
-  }
-
-  if (rotation.active_device_id === userId) {
-    return userId;
-  }
-  if (rotation.previous_active_device_id === userId && rotation.grace_expires_at) {
-    if (new Date(rotation.grace_expires_at) > new Date()) {
-      return userId;
-    }
+  if (!rotation) return deviceId;
+  if (rotation.active_device_id === deviceId) return deviceId;
+  if (
+    rotation.previous_active_device_id === deviceId &&
+    rotation.grace_expires_at &&
+    new Date(rotation.grace_expires_at) > new Date()
+  ) {
+    return deviceId;
   }
   return null;
 }
 
+function lookupSessionToken(plain: string, db: Database.Database): string | null {
+  const tokenHash = createHash('sha256').update(plain).digest('hex');
+  const session = db.prepare(
+    `SELECT device_id FROM device_sessions WHERE token_hash = ? AND expires_at > datetime('now')`
+  ).get(tokenHash) as { device_id: string } | undefined;
+  if (!session) return null;
+  return resolveDeviceRotation(session.device_id, db);
+}
+
+function getRequestUserId(req: FastifyRequest, db: Database.Database): string | null {
+  // dev_* devices must authenticate via session token issued after challenge/verify
+  const authHeader = req.headers['authorization'];
+  if (authHeader) {
+    const match = /^Bearer (dsess_[A-Za-z0-9]+)$/.exec(authHeader);
+    if (match) return lookupSessionToken(match[1], db);
+    // Unrecognised Authorization header — reject even in dev mode
+    return null;
+  }
+
+  // usr_* via X-Device-Id — auth bypass tracked in finding #2
+  const userIdHeader = req.headers['x-device-id'];
+  const userId = Array.isArray(userIdHeader) ? userIdHeader[0] : userIdHeader;
+  if (userId?.startsWith('usr_')) return userId;
+
+  // No auth headers: fall back to 'local' in non-production only
+  return process.env.NODE_ENV === 'production' ? null : 'local';
+}
+
 function getStreamUserId(req: FastifyRequest, db: Database.Database): string | null {
+  // Try Authorization header first (standard requests)
   const fromHeader = getRequestUserId(req, db);
   if (fromHeader) return fromHeader;
 
-  const q = req.query as { device_id?: string };
-  if (!q.device_id || !q.device_id.startsWith('dev_')) return null;
-
-  const registration = db.prepare(
-    `SELECT user_id FROM device_registrations WHERE user_id = ?`
-  ).get(q.device_id) as { user_id: string } | undefined;
-  if (!registration) return null;
-
-  return q.device_id;
+  // EventSource cannot set headers — accept session token via ?token= query param
+  const q = req.query as { token?: string };
+  if (!q.token?.startsWith('dsess_')) return null;
+  return lookupSessionToken(q.token, db);
 }
 
 export function registerApiRoutes(
@@ -294,14 +295,27 @@ export function registerApiRoutes(
       `).run(body.device_id, graceExpiresAt);
     }
 
-    return reply.send({ ok: true, user_id: body.device_id, grace_expires_at: graceExpiresAt });
+    const sessionPlain = `dsess_${randomBytes(24).toString('hex')}`;
+    const sessionHash = createHash('sha256').update(sessionPlain).digest('hex');
+    const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    db.prepare(
+      `INSERT INTO device_sessions (token_hash, device_id, expires_at) VALUES (?, ?, ?)`
+    ).run(sessionHash, body.device_id, sessionExpiresAt);
+
+    return reply.send({
+      ok: true,
+      user_id: body.device_id,
+      grace_expires_at: graceExpiresAt,
+      session_token: sessionPlain,
+      session_expires_at: sessionExpiresAt,
+    });
   });
 
   // GET /api/stream — SSE relay endpoint
   fastify.get('/api/stream', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = getStreamUserId(req, db);
     if (!userId || !userId.startsWith('dev_')) {
-      return reply.status(401).send({ error: 'Missing or invalid X-Device-Id header for registered device' });
+      return reply.status(401).send({ error: 'Valid device session token required' });
     }
     if (!sseManager) {
       return reply.status(503).send({ error: 'SSE manager unavailable' });
