@@ -42,7 +42,8 @@ export interface DeviceRecord {
 export type PreferenceKey =
   | 'blocked_keywords'
   | 'max_items_per_source'
-  | 'retention_days';
+  | 'retention_days'
+  | 'enrollment_token';
 
 interface ScrolLessDB {
   feed_items: {

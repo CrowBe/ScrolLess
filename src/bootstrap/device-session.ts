@@ -9,7 +9,24 @@ import {
   normaliseUrl,
   hashUrl,
 } from '../crypto';
-import { apiUrl, getDeviceEnrollmentToken } from '../config';
+import { apiUrl } from '../config';
+
+export class EnrollmentTokenRequiredError extends Error {
+  constructor() { super('enrollment_token_required'); }
+}
+
+async function loadEnrollmentTokenFromIdb(): Promise<string | null> {
+  const idb = await openScrollessDb();
+  const row = await idb.get('preferences', 'enrollment_token');
+  if (!row || typeof row.value !== 'string') return null;
+  const trimmed = row.value.trim();
+  return trimmed || null;
+}
+
+export async function saveEnrollmentToken(token: string): Promise<void> {
+  const idb = await openScrollessDb();
+  await idb.put('preferences', { key: 'enrollment_token', value: token.trim() });
+}
 
 const STREAM_RETRY_BASE_MS = 1_000;
 const STREAM_RETRY_MAX_MS = 30_000;
@@ -127,7 +144,7 @@ async function loadOrCreateDevice(): Promise<DeviceRecord> {
 
 /** Run challenge/verify to obtain a fresh session token from the server. */
 async function authenticateDevice(deviceRecord: DeviceRecord): Promise<{ sessionToken: string; sessionExpiresAt: string }> {
-  const enrollmentToken = getDeviceEnrollmentToken();
+  const enrollmentToken = await loadEnrollmentTokenFromIdb();
   const enrollHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
   if (enrollmentToken) enrollHeaders['X-Device-Enroll-Token'] = enrollmentToken;
 
@@ -136,6 +153,7 @@ async function authenticateDevice(deviceRecord: DeviceRecord): Promise<{ session
     headers: enrollHeaders,
     body: JSON.stringify({ device_id: deviceRecord.user_id, public_key: deviceRecord.signing_public_key_b64! }),
   });
+  if (chalRes.status === 401) throw new EnrollmentTokenRequiredError();
   if (!chalRes.ok) throw new Error(`challenge failed (${chalRes.status})`);
   const { challenge_id, nonce } = await chalRes.json() as { challenge_id: string; nonce: string };
 
@@ -152,11 +170,9 @@ async function authenticateDevice(deviceRecord: DeviceRecord): Promise<{ session
 }
 
 async function registerDevice(deviceRecord: DeviceRecord): Promise<void> {
-  const enrollmentToken = getDeviceEnrollmentToken();
+  const enrollmentToken = await loadEnrollmentTokenFromIdb();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (enrollmentToken) {
-    headers['X-Device-Enroll-Token'] = enrollmentToken;
-  }
+  if (enrollmentToken) headers['X-Device-Enroll-Token'] = enrollmentToken;
 
   const res = await fetch(apiUrl('/api/v1/device/register'), {
     method: 'POST',
@@ -166,9 +182,8 @@ async function registerDevice(deviceRecord: DeviceRecord): Promise<void> {
       public_key: deviceRecord.public_key_b64,
     }),
   });
-  if (!res.ok) {
-    throw new Error(`register failed (${res.status})`);
-  }
+  if (res.status === 401) throw new EnrollmentTokenRequiredError();
+  if (!res.ok) throw new Error(`register failed (${res.status})`);
 }
 
 /**

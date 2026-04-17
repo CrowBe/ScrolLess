@@ -34,11 +34,15 @@ Each finding is self-contained so it can be picked up individually in a future s
 - **Problem**: `oauth_tokens.access_token` and `refresh_token` are written and compared in the clear. A read-only SQLite leak yields working bearer tokens.
 - **Fix sketch**: hash tokens on issue (`createHash('sha256').update(token).digest('hex')`), store the hash, and look up by hash. Mirror the existing `agent_tokens.token_hash` model. Update `verifyAgentToken` and both grant handlers in `oauth-routes.ts`.
 
-### 4. `VITE_DEVICE_ENROLLMENT_TOKEN` is in the client bundle
+### ~~4. `VITE_DEVICE_ENROLLMENT_TOKEN` is in the client bundle~~ ✅ Fixed
 
-- **File**: `src/config.ts:20-26`
-- **Problem**: Vite exposes `VITE_*` env vars to browser JS. The "enrollment gate" is readable by any visitor and provides no real protection in a hosted deployment.
-- **Fix sketch**: either drop the client-side reference and expect the user to paste it once during onboarding, or remove enrollment gating entirely in favour of the challenge/verify handshake (#1).
+- **Files**: `src/config.ts`, `src/bootstrap/device-session.ts`, `src/main.tsx`, `src/idb.ts`
+- **Fix applied** (branch `claude/complete-security-review-task-4-0rZd2`):
+  - Removed `getDeviceEnrollmentToken()` and the `VITE_DEVICE_ENROLLMENT_TOKEN` reference from `src/config.ts` entirely.
+  - Added `enrollment_token` to `PreferenceKey` in `src/idb.ts`; token is now stored in IndexedDB, never in the bundle.
+  - `device-session.ts` exports `EnrollmentTokenRequiredError` and `saveEnrollmentToken(token)`; `registerDevice` and `authenticateDevice` read the token from IDB and throw `EnrollmentTokenRequiredError` on a 401 response.
+  - `main.tsx` catches `EnrollmentTokenRequiredError` and renders a one-time password-type input so the operator can paste their `DEVICE_ENROLLMENT_TOKEN` value on first launch. The token is persisted to IDB; on submit, the session start is retried automatically.
+- **Seam note**: server-side `DEVICE_ENROLLMENT_TOKEN` (non-VITE) is unchanged and remains the source of truth; only the client-bundle exposure is removed.
 
 ### ~~5. `free_device_rotation` is a global singleton~~ ✅ Fixed
 
@@ -158,7 +162,7 @@ Each finding is self-contained so it can be picked up individually in a future s
 ## Suggested tackling order
 
 1. Device auth (#1) + `usr_*` handling (#2) — same bug class.
-2. Hash OAuth tokens (#3); remove `VITE_DEVICE_ENROLLMENT_TOKEN` from bundle (#4).
+2. Hash OAuth tokens (#3); ~~remove `VITE_DEVICE_ENROLLMENT_TOKEN` from bundle (#4).~~ ✅ Fixed
 3. ~~Scope `free_device_rotation` by user (#5) — prerequisite for paid tier.~~ ✅ Fixed
 4. Rate limits on `/api/*` + `/oauth/*` (#6); payload caps on `/agent/feed-items` (#7).
 5. Retention preferences mismatch (#10) — silent correctness bug.

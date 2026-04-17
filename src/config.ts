@@ -17,10 +17,3 @@ export function apiUrl(path: string): string {
   return `${getApiBaseUrl()}${normalizedPath}`;
 }
 
-export function getDeviceEnrollmentToken(): string | null {
-  const configured = import.meta.env.VITE_DEVICE_ENROLLMENT_TOKEN;
-  if (!configured || typeof configured !== 'string') return null;
-
-  const trimmed = configured.trim();
-  return trimmed ? trimmed : null;
-}
