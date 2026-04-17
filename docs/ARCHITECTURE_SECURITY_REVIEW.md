@@ -40,12 +40,15 @@ Each finding is self-contained so it can be picked up individually in a future s
 - **Problem**: Vite exposes `VITE_*` env vars to browser JS. The "enrollment gate" is readable by any visitor and provides no real protection in a hosted deployment.
 - **Fix sketch**: either drop the client-side reference and expect the user to paste it once during onboarding, or remove enrollment gating entirely in favour of the challenge/verify handshake (#1).
 
-### 5. `free_device_rotation` is a global singleton
+### ~~5. `free_device_rotation` is a global singleton~~ ✅ Fixed
 
-- **Files**: `sql/schema.sql:24-30`, `server/api-routes.ts:276-295`
-- **Problem**: `scope_id = 1` means *all users* share one active-device row. User B verifying demotes user A's device into the "previous" slot.
-- **Scope**: only correct for `user_id = 'local'` self-hosted.
-- **Fix sketch**: change the primary key to `user_id`, update both `SELECT`/`INSERT`/`UPDATE` sites to pass the caller's `user_id`, write a migration that seeds a row for each existing user.
+- **Files**: `sql/schema.sql`, `server/api-routes.ts`, `server/db.ts`
+- **Fix applied** (branch `claude/complete-security-review-task-3-dNlqM`):
+  - `free_device_rotation` primary key changed from `scope_id INTEGER CHECK (scope_id = 1)` to `user_id TEXT`.
+  - All three SQL sites in `POST /api/v1/device/verify` updated to filter by `WHERE user_id = 'local'` and insert with `('local', ...)`.
+  - `resolveDeviceRotation` accepts an explicit `userId` parameter; `lookupSessionToken` passes `'local'` (the current self-hosted identity) — giving each future user their own rotation row without a route rewrite.
+  - `server/db.ts` migration detects the old `scope_id` column, recreates the table with the new schema, and re-seeds the existing `scope_id = 1` row under `user_id = 'local'` so live deployments carry their rotation state forward.
+- **Seam note**: when `usr_*` users arrive, the rotation scope will be their user ID; no table change is needed, only the caller context.
 
 ---
 
@@ -156,7 +159,7 @@ Each finding is self-contained so it can be picked up individually in a future s
 
 1. Device auth (#1) + `usr_*` handling (#2) — same bug class.
 2. Hash OAuth tokens (#3); remove `VITE_DEVICE_ENROLLMENT_TOKEN` from bundle (#4).
-3. Scope `free_device_rotation` by user (#5) — prerequisite for paid tier.
+3. ~~Scope `free_device_rotation` by user (#5) — prerequisite for paid tier.~~ ✅ Fixed
 4. Rate limits on `/api/*` + `/oauth/*` (#6); payload caps on `/agent/feed-items` (#7).
 5. Retention preferences mismatch (#10) — silent correctness bug.
 6. Everything else is best-effort cleanup.

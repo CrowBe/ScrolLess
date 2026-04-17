@@ -37,6 +37,30 @@ export function initDb(dbPath?: string): Database.Database {
   // sync_log superseded by sync_attempts
   db.exec(`DROP TABLE IF EXISTS sync_log`);
 
+  // Migrate free_device_rotation: scope_id singleton → user_id-keyed per-user table
+  const fdrCols = (db.prepare(
+    `SELECT name FROM pragma_table_info('free_device_rotation')`
+  ).all() as { name: string }[]).map(c => c.name);
+  if (fdrCols.includes('scope_id')) {
+    const oldRow = db.prepare(
+      `SELECT active_device_id, previous_active_device_id, grace_expires_at FROM free_device_rotation WHERE scope_id = 1`
+    ).get() as { active_device_id: string; previous_active_device_id: string | null; grace_expires_at: string | null } | undefined;
+    db.exec(`DROP TABLE free_device_rotation`);
+    db.exec(`
+      CREATE TABLE free_device_rotation (
+        user_id                   TEXT PRIMARY KEY,
+        active_device_id          TEXT NOT NULL,
+        previous_active_device_id TEXT,
+        grace_expires_at          TEXT
+      )
+    `);
+    if (oldRow) {
+      db.prepare(
+        `INSERT INTO free_device_rotation (user_id, active_device_id, previous_active_device_id, grace_expires_at) VALUES ('local', ?, ?, ?)`
+      ).run(oldRow.active_device_id, oldRow.previous_active_device_id ?? null, oldRow.grace_expires_at ?? null);
+    }
+  }
+
   // Idempotent migrations for columns added after initial schema
   try {
     db.exec(`ALTER TABLE user_sources ADD COLUMN scraping_notes TEXT`);

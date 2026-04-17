@@ -30,9 +30,9 @@ CREATE TABLE IF NOT EXISTS device_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_device_sessions_device ON device_sessions(device_id, expires_at);
 
--- Free-tier single-active-device rotation state
+-- Free-tier single-active-device rotation state (one row per user)
 CREATE TABLE IF NOT EXISTS free_device_rotation (
-    scope_id                 INTEGER PRIMARY KEY CHECK (scope_id = 1),
+    user_id                  TEXT PRIMARY KEY,
     active_device_id         TEXT NOT NULL,
     previous_active_device_id TEXT,
     grace_expires_at         TEXT
