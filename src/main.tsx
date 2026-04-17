@@ -3,6 +3,7 @@ import { useState } from 'preact/hooks';
 import { App } from './app';
 import { startDeviceSession, saveEnrollmentToken, EnrollmentTokenRequiredError } from './bootstrap/device-session';
 import { runRetentionCleanup } from './retention';
+import { syncPreferencesToIdb } from './api';
 import './styles.css';
 
 // Register service worker
@@ -26,7 +27,10 @@ function Root() {
     startDeviceSession({
       onReady: () => {
         setReady(true);
-        // Run retention cleanup in the background after init
+        // Sync server preferences to IDB so retention and other local logic uses the correct values
+        syncPreferencesToIdb().catch((err) => {
+          console.warn('[preferences] Sync to IDB failed:', err);
+        });
         runRetentionCleanup().catch((err) => {
           console.warn('[retention] Cleanup failed:', err);
         });

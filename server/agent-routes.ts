@@ -62,6 +62,51 @@ export function getSyncContext(db: Database.Database, userId: string): AgentSync
   };
 }
 
+export interface SubmitPayloadResult {
+  relayed?: number;
+  queued?: number;
+  queue_ttl_minutes?: number;
+}
+
+export function submitEncryptedPayload(
+  db: Database.Database,
+  userId: string,
+  payload: AgentEncryptedFeedPayload,
+  sseManager: SseManager | undefined,
+  pushCallback: PushCallback | undefined
+): SubmitPayloadResult {
+  const relayed = sseManager?.send(userId, 'feed_items', payload) ?? false;
+  const status = relayed ? 'relayed' : 'device_offline';
+
+  db.prepare(`
+    INSERT INTO sync_attempts (user_id, source, item_count, status)
+    VALUES (?, ?, ?, ?)
+  `).run(userId, payload.source, payload.items.length, status);
+
+  if (!relayed) {
+    const queueCount = (db.prepare(
+      `SELECT COUNT(*) as n FROM free_queue_deliveries WHERE user_id = ? AND status = 'queued'`
+    ).get(userId) as { n: number }).n;
+    if (queueCount >= 500) {
+      return { queued: 0, queue_ttl_minutes: FREE_QUEUE_TTL_MINUTES };
+    }
+    db.prepare(`
+      INSERT INTO free_queue_deliveries (user_id, payload_envelope, expires_at, status)
+      VALUES (?, ?, datetime('now', '+' || ? || ' minutes'), 'queued')
+    `).run(userId, JSON.stringify(payload), FREE_QUEUE_TTL_MINUTES);
+    pushCallback?.(userId, payload.source, payload.items.length, undefined).catch(() => {});
+    return { queued: payload.items.length, queue_ttl_minutes: FREE_QUEUE_TTL_MINUTES };
+  }
+
+  db.prepare(`
+    UPDATE user_sources
+    SET last_sync_at = datetime('now')
+    WHERE user_id = ? AND name = ?
+  `).run(userId, payload.source);
+
+  return { relayed: payload.items.length };
+}
+
 // ── REST route registration ──
 
 export function registerAgentRoutes(
@@ -87,6 +132,9 @@ export function registerAgentRoutes(
     if (!Array.isArray(body.items)) {
       return reply.status(400).send({ error: '`items` is required and must be an array' });
     }
+    if (body.items.length > 200) {
+      return reply.status(400).send({ error: '`items` must not exceed 200 per batch' });
+    }
 
     if (!body.ephemeral_public_key || typeof body.ephemeral_public_key !== 'string') {
       return reply.status(400).send({ error: '`ephemeral_public_key` is required for encrypted relay payloads' });
@@ -98,6 +146,9 @@ export function registerAgentRoutes(
       }
       if (!item.url || typeof item.url !== 'string') {
         return reply.status(400).send({ error: `items[${i}].url is required` });
+      }
+      if (item.url.length > 2048) {
+        return reply.status(400).send({ error: `items[${i}].url must not exceed 2048 characters` });
       }
       // Validate URL format
       try {
@@ -111,35 +162,14 @@ export function registerAgentRoutes(
       if (!item.encrypted_fields || typeof item.encrypted_fields !== 'string') {
         return reply.status(400).send({ error: `items[${i}].encrypted_fields is required` });
       }
+      if (item.encrypted_fields.length > 64_000) {
+        return reply.status(400).send({ error: `items[${i}].encrypted_fields must not exceed 64,000 characters` });
+      }
     }
 
-    const relayed = sseManager?.send(userId, 'feed_items', body) ?? false;
-    const status = relayed ? 'relayed' : 'device_offline';
-
-    db.prepare(`
-      INSERT INTO sync_attempts (user_id, source, item_count, status)
-      VALUES (?, ?, ?, ?)
-    `).run(userId, body.source, body.items.length, status);
-
-    if (!relayed) {
-      db.prepare(`
-        INSERT INTO free_queue_deliveries (user_id, payload_envelope, expires_at, status)
-        VALUES (?, ?, datetime('now', '+' || ? || ' minutes'), 'queued')
-      `).run(userId, JSON.stringify(body), FREE_QUEUE_TTL_MINUTES);
-      onNewItems?.(userId, body.source, body.items.length, undefined).catch(() => {});
-      return reply.status(202).send({
-        queued: body.items.length,
-        queue_ttl_minutes: FREE_QUEUE_TTL_MINUTES,
-      } satisfies AgentFeedResponse);
-    }
-
-    db.prepare(`
-      UPDATE user_sources
-      SET last_sync_at = datetime('now')
-      WHERE user_id = ? AND name = ?
-    `).run(userId, body.source);
-
-    return reply.status(200).send({ relayed: body.items.length } satisfies AgentFeedResponse);
+    const result = submitEncryptedPayload(db, userId, body, sseManager, onNewItems);
+    const httpStatus = result.queued !== undefined ? 202 : 200;
+    return reply.status(httpStatus).send(result satisfies AgentFeedResponse);
   });
 
   // GET /agent/state

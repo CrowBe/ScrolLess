@@ -61,6 +61,46 @@ export function initDb(dbPath?: string): Database.Database {
     }
   }
 
+  // Migrate oauth_tokens: plaintext access_token/refresh_token → hashed columns
+  const oauthCols = (db.prepare(
+    `SELECT name FROM pragma_table_info('oauth_tokens')`
+  ).all() as { name: string }[]).map(c => c.name);
+  if (oauthCols.includes('access_token')) {
+    const oldRows = db.prepare(
+      `SELECT access_token, refresh_token, client_id, user_id, access_expires, refresh_expires, created_at FROM oauth_tokens`
+    ).all() as Array<{
+      access_token: string; refresh_token: string | null;
+      client_id: string; user_id: string;
+      access_expires: string; refresh_expires: string | null; created_at: string;
+    }>;
+    db.exec(`DROP TABLE oauth_tokens`);
+    db.exec(`
+      CREATE TABLE oauth_tokens (
+        access_token_hash   TEXT PRIMARY KEY,
+        refresh_token_hash  TEXT UNIQUE,
+        client_id           TEXT NOT NULL,
+        user_id             TEXT NOT NULL,
+        access_expires      TEXT NOT NULL,
+        refresh_expires     TEXT,
+        created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+      )
+    `);
+    const ins = db.prepare(
+      `INSERT OR IGNORE INTO oauth_tokens (access_token_hash, refresh_token_hash, client_id, user_id, access_expires, refresh_expires, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    const migrate = db.transaction(() => {
+      for (const row of oldRows) {
+        const aHash = createHash('sha256').update(row.access_token).digest('hex');
+        const rHash = row.refresh_token
+          ? createHash('sha256').update(row.refresh_token).digest('hex')
+          : null;
+        ins.run(aHash, rHash, row.client_id, row.user_id, row.access_expires, row.refresh_expires ?? null, row.created_at);
+      }
+    });
+    migrate();
+  }
+
   // Idempotent migrations for columns added after initial schema
   try {
     db.exec(`ALTER TABLE user_sources ADD COLUMN scraping_notes TEXT`);

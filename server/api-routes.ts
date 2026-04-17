@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 import { z } from 'zod';
 import type { SseManager } from './sse-manager.js';
-import { DEFAULT_PREFERENCES, readPreferences, sanitizeBlockedKeywords } from './preferences.js';
+import { readPreferences, sanitizeBlockedKeywords } from './preferences.js';
 
 interface ApiRouteOptions {
   deviceEnrollmentToken?: string;

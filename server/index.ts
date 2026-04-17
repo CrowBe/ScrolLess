@@ -122,9 +122,11 @@ async function start() {
 
   const fastify = Fastify({ logger: { level: isProd ? 'warn' : 'info' } });
 
+  // Claude origins are included by default for MCP connector support.
+  // Self-hosters who don't use Claude can opt out with CLAUDE_CONNECTOR_CORS=false.
+  const includeClaudeOrigins = process.env.CLAUDE_CONNECTOR_CORS !== 'false';
   const allowedCorsOrigins = [
-    'https://claude.ai',
-    'https://www.claude.ai',
+    ...(includeClaudeOrigins ? ['https://claude.ai', 'https://www.claude.ai'] : []),
     ...(isProd ? [] : ['http://localhost:5173']),
     ...(config.cors_origins ?? []),
   ];
@@ -157,7 +159,7 @@ async function start() {
   fastify.addHook('onSend', async (_req, reply) => {
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('X-Frame-Options', 'DENY');
-    reply.header('X-XSS-Protection', '1; mode=block');
+    reply.header('Content-Security-Policy', "default-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'");
     reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
     if (isProd) {
       reply.header('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
@@ -205,11 +207,20 @@ async function start() {
     registerMcpHandler(agentScope, db, pushCallback, sseManager);
   });
 
-  // Register non-rate-limited routes
+  // Register API routes (device session auth provides the primary protection)
   registerApiRoutes(fastify, db, sseManager, {
     deviceEnrollmentToken: config.device?.enrollment_token,
   });
-  registerOAuthRoutes(fastify, db, config);
+
+  // OAuth routes in a dedicated rate-limited scope (POST endpoints are unauthenticated)
+  await fastify.register(async (oauthScope) => {
+    await oauthScope.register(fastifyRateLimit, {
+      max: 20,
+      timeWindow: '1 minute',
+      keyGenerator: (req) => req.ip,
+    });
+    registerOAuthRoutes(oauthScope, db, config);
+  });
 
   // Static file serving in production
   const distPath = resolve(__dirname, '../dist/client');

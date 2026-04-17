@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import type { AppConfig } from './types.js';
+import { hashToken } from './auth.js';
 
 function base64url(buf: Buffer): string {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -256,16 +257,16 @@ export function registerOAuthRoutes(
       return reply.status(400).send({ error: 'invalid_grant', error_description: 'PKCE code_verifier does not match code_challenge' });
     }
 
-    // Issue tokens
+    // Issue tokens — store only hashes, return plaintext to client
     const accessToken = randomBytes(32).toString('hex');
     const refreshToken = randomBytes(32).toString('hex');
     const accessExpires = new Date(Date.now() + tokenExpiresIn * 1000).toISOString();
     const refreshExpires = new Date(Date.now() + refreshExpiresIn * 1000).toISOString();
 
     db.prepare(
-      `INSERT INTO oauth_tokens (access_token, refresh_token, client_id, user_id, access_expires, refresh_expires)
+      `INSERT INTO oauth_tokens (access_token_hash, refresh_token_hash, client_id, user_id, access_expires, refresh_expires)
        VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(accessToken, refreshToken, authCode.client_id, authCode.user_id, accessExpires, refreshExpires);
+    ).run(hashToken(accessToken), hashToken(refreshToken), authCode.client_id, authCode.user_id, accessExpires, refreshExpires);
 
     // Delete used auth code
     db.prepare('DELETE FROM oauth_auth_codes WHERE code = ?').run(code);
@@ -287,10 +288,10 @@ export function registerOAuthRoutes(
     }
 
     const tokenRow = db.prepare(
-      `SELECT access_token, refresh_token, client_id, user_id, refresh_expires
-       FROM oauth_tokens WHERE refresh_token = ?`
-    ).get(refresh_token) as {
-      access_token: string; refresh_token: string; client_id: string;
+      `SELECT access_token_hash, client_id, user_id, refresh_expires
+       FROM oauth_tokens WHERE refresh_token_hash = ?`
+    ).get(hashToken(refresh_token)) as {
+      access_token_hash: string; client_id: string;
       user_id: string; refresh_expires: string | null;
     } | undefined;
 
@@ -304,23 +305,23 @@ export function registerOAuthRoutes(
 
     // Check refresh token expiry
     if (tokenRow.refresh_expires && new Date(tokenRow.refresh_expires) < new Date()) {
-      db.prepare('DELETE FROM oauth_tokens WHERE access_token = ?').run(tokenRow.access_token);
+      db.prepare('DELETE FROM oauth_tokens WHERE access_token_hash = ?').run(tokenRow.access_token_hash);
       return reply.status(400).send({ error: 'invalid_grant', error_description: 'Refresh token has expired' });
     }
 
     // Delete old token row
-    db.prepare('DELETE FROM oauth_tokens WHERE access_token = ?').run(tokenRow.access_token);
+    db.prepare('DELETE FROM oauth_tokens WHERE access_token_hash = ?').run(tokenRow.access_token_hash);
 
-    // Issue new tokens
+    // Issue new tokens — store only hashes, return plaintext to client
     const newAccessToken = randomBytes(32).toString('hex');
     const newRefreshToken = randomBytes(32).toString('hex');
     const accessExpires = new Date(Date.now() + tokenExpiresIn * 1000).toISOString();
     const refreshExpires = new Date(Date.now() + refreshExpiresIn * 1000).toISOString();
 
     db.prepare(
-      `INSERT INTO oauth_tokens (access_token, refresh_token, client_id, user_id, access_expires, refresh_expires)
+      `INSERT INTO oauth_tokens (access_token_hash, refresh_token_hash, client_id, user_id, access_expires, refresh_expires)
        VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(newAccessToken, newRefreshToken, tokenRow.client_id, tokenRow.user_id, accessExpires, refreshExpires);
+    ).run(hashToken(newAccessToken), hashToken(newRefreshToken), tokenRow.client_id, tokenRow.user_id, accessExpires, refreshExpires);
 
     return reply.send({
       access_token: newAccessToken,
@@ -337,10 +338,11 @@ export function registerOAuthRoutes(
     const { token } = body;
 
     if (token) {
-      // Try as access token first, then as refresh token
-      const r1 = db.prepare('DELETE FROM oauth_tokens WHERE access_token = ?').run(token);
+      // Try as access token first, then as refresh token (look up by hash)
+      const tokenHash = hashToken(token);
+      const r1 = db.prepare('DELETE FROM oauth_tokens WHERE access_token_hash = ?').run(tokenHash);
       if (r1.changes === 0) {
-        db.prepare('DELETE FROM oauth_tokens WHERE refresh_token = ?').run(token);
+        db.prepare('DELETE FROM oauth_tokens WHERE refresh_token_hash = ?').run(tokenHash);
       }
     }
 
