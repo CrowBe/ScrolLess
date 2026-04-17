@@ -2,12 +2,13 @@ import { describe, it, expect, vi } from 'vitest';
 import type { FastifyReply } from 'fastify';
 import { SseManager } from './sse-manager.js';
 
-function mockReply(): FastifyReply {
+function mockReply(writeReturns: boolean = true): FastifyReply {
   return {
     raw: {
       writableEnded: false,
       writeHead: vi.fn(),
-      write: vi.fn(),
+      write: vi.fn().mockReturnValue(writeReturns),
+      end: vi.fn(),
     },
   } as unknown as FastifyReply;
 }
@@ -27,5 +28,15 @@ describe('SseManager', () => {
 
     manager.remove('dev_123', second);
     expect(manager.isOnline('dev_123')).toBe(false);
+  });
+
+  it('drops the connection when the socket buffer is full', () => {
+    const manager = new SseManager();
+    const reply = mockReply(false); // write() returns false → backpressure
+
+    manager.register('dev_back', reply);
+    expect(manager.send('dev_back', 'feed_items', { source: 'x' })).toBe(false);
+    expect(reply.raw.end).toHaveBeenCalled();
+    expect(manager.isOnline('dev_back')).toBe(false);
   });
 });

@@ -120,7 +120,15 @@ async function start() {
 
   initPush(config);
 
-  const fastify = Fastify({ logger: { level: isProd ? 'warn' : 'info' } });
+  // trustProxy must be enabled behind Cloudflare/Render/Nginx/etc. so the
+  // rate limiters see the real client IP instead of bucketing every request
+  // under the proxy address. Default off to avoid spoofed X-Forwarded-For in
+  // direct deployments; operators opt in with TRUST_PROXY=true.
+  const trustProxy = process.env.TRUST_PROXY === 'true';
+  const fastify = Fastify({
+    logger: { level: isProd ? 'warn' : 'info' },
+    trustProxy,
+  });
 
   // Claude origins are included by default for MCP connector support.
   // Self-hosters who don't use Claude can opt out with CLAUDE_CONNECTOR_CORS=false.

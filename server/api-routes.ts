@@ -1,6 +1,7 @@
 import { randomBytes, createHash, createPublicKey, createVerify, timingSafeEqual } from 'crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
+import fastifyRateLimit from '@fastify/rate-limit';
 import { z } from 'zod';
 import type { SseManager } from './sse-manager.js';
 import { readPreferences, sanitizeBlockedKeywords } from './preferences.js';
@@ -192,11 +193,8 @@ export function registerApiRoutes(
 
     return reply.status(201).send({ user_id: body.device_id, ok: true });
   };
-  // POST /api/v1/device/register
-  fastify.post('/api/v1/device/register', registerDeviceHandler);
 
-  // POST /api/v1/device/challenge
-  fastify.post('/api/v1/device/challenge', async (req: FastifyRequest, reply: FastifyReply) => {
+  const challengeHandler = async (req: FastifyRequest, reply: FastifyReply) => {
     if (!requireEnrollmentToken(req, reply)) return;
     const body = parseBody(deviceChallengeSchema, req.body, reply);
     if (!body) return;
@@ -224,10 +222,9 @@ export function registerApiRoutes(
       issued_at: issuedAt.toISOString(),
       expires_at: expiresAt.toISOString(),
     });
-  });
+  };
 
-  // POST /api/v1/device/verify
-  fastify.post('/api/v1/device/verify', async (req: FastifyRequest, reply: FastifyReply) => {
+  const verifyHandler = async (req: FastifyRequest, reply: FastifyReply) => {
     const body = parseBody(deviceVerifySchema, req.body, reply);
     if (!body) return;
 
@@ -304,6 +301,19 @@ export function registerApiRoutes(
       session_token: sessionPlain,
       session_expires_at: sessionExpiresAt,
     });
+  };
+
+  // Rate-limited scope for the three unauthenticated device endpoints
+  // (enrollment-token-gated, but still brute-forceable over the wire).
+  fastify.register(async (scope) => {
+    await scope.register(fastifyRateLimit, {
+      max: 20,
+      timeWindow: '1 minute',
+      keyGenerator: (req) => req.ip,
+    });
+    scope.post('/api/v1/device/register', registerDeviceHandler);
+    scope.post('/api/v1/device/challenge', challengeHandler);
+    scope.post('/api/v1/device/verify', verifyHandler);
   });
 
   // GET /api/stream — SSE relay endpoint
