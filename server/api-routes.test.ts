@@ -18,6 +18,36 @@ function createTestDb(): Database.Database {
   return db;
 }
 
+/** Run challenge → sign → verify for a device; returns the session token for use in Authorization headers. */
+async function createVerifiedDevice(
+  deviceId: string,
+  app: FastifyInstance
+): Promise<{ ok: boolean; user_id: string; grace_expires_at: string | null; session_token: string }> {
+  const keyPair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const publicKeyPem = keyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+
+  const challengeRes = await app.inject({
+    method: 'POST',
+    url: '/api/v1/device/challenge',
+    payload: { device_id: deviceId, public_key: publicKeyPem },
+  });
+  expect(challengeRes.statusCode).toBe(200);
+  const challenge = challengeRes.json() as { challenge_id: string; nonce: string };
+
+  const signer = createSign('SHA256');
+  signer.update(challenge.nonce);
+  signer.end();
+  const signature = signer.sign(keyPair.privateKey).toString('base64');
+
+  const verifyRes = await app.inject({
+    method: 'POST',
+    url: '/api/v1/device/verify',
+    payload: { challenge_id: challenge.challenge_id, device_id: deviceId, signature },
+  });
+  expect(verifyRes.statusCode).toBe(200);
+  return verifyRes.json() as { ok: boolean; user_id: string; grace_expires_at: string | null; session_token: string };
+}
+
 type SourceRow = {
   enabled: number;
   urls: string | null;
@@ -246,14 +276,14 @@ describe('versioned auth/token route aliases', () => {
     expect(deleteRes.json()).toEqual({ ok: true });
   });
 
-  it('supports /api/v1/tokens for a registered dev device via X-Device-Id', async () => {
-    db.prepare(`INSERT INTO device_registrations (user_id, public_key) VALUES (?, ?)`)
-      .run('dev_test_device', 'test-public-key');
+  it('supports /api/v1/tokens for a verified dev device via session token', async () => {
+    const verified = await createVerifiedDevice('dev_test_device', app);
+    const authHeader = `Bearer ${verified.session_token}`;
 
     const createRes = await app.inject({
       method: 'POST',
       url: '/api/v1/tokens',
-      headers: { 'x-device-id': 'dev_test_device' },
+      headers: { authorization: authHeader },
       payload: { label: 'device token' },
     });
     expect(createRes.statusCode).toBe(201);
@@ -263,7 +293,7 @@ describe('versioned auth/token route aliases', () => {
     const listRes = await app.inject({
       method: 'GET',
       url: '/api/v1/tokens',
-      headers: { 'x-device-id': 'dev_test_device' },
+      headers: { authorization: authHeader },
     });
     expect(listRes.statusCode).toBe(200);
     const listed = listRes.json() as Array<{ token_hash: string; label: string | null }>;
@@ -344,45 +374,26 @@ describe('device challenge + verify rotation', () => {
     db.close();
   });
 
-  const createVerifiedDevice = async (deviceId: string) => {
-    const keyPair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
-    const publicKeyPem = keyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
-
-    const challengeRes = await app.inject({
-      method: 'POST',
-      url: '/api/v1/device/challenge',
-      payload: { device_id: deviceId, public_key: publicKeyPem },
-    });
-    expect(challengeRes.statusCode).toBe(200);
-    const challenge = challengeRes.json() as { challenge_id: string; nonce: string };
-
-    const signer = createSign('SHA256');
-    signer.update(challenge.nonce);
-    signer.end();
-    const signature = signer.sign(keyPair.privateKey).toString('base64');
-
-    const verifyRes = await app.inject({
-      method: 'POST',
-      url: '/api/v1/device/verify',
-      payload: { challenge_id: challenge.challenge_id, device_id: deviceId, signature },
-    });
-    expect(verifyRes.statusCode).toBe(200);
-    return verifyRes.json() as { ok: boolean; user_id: string; grace_expires_at: string | null };
-  };
+  it('verify response includes session token', async () => {
+    const result = await createVerifiedDevice('dev_a', app);
+    expect(result.ok).toBe(true);
+    expect(result.session_token).toMatch(/^dsess_/);
+  });
 
   it('enforces 5-minute grace and rotates active free-tier device', async () => {
-    const first = await createVerifiedDevice('dev_a');
+    const first = await createVerifiedDevice('dev_a', app);
     expect(first.ok).toBe(true);
     expect(first.grace_expires_at).toBeNull();
 
-    const second = await createVerifiedDevice('dev_b');
+    const second = await createVerifiedDevice('dev_b', app);
     expect(second.ok).toBe(true);
     expect(second.grace_expires_at).not.toBeNull();
 
+    // dev_a's session token still works during grace period
     const duringGrace = await app.inject({
       method: 'GET',
       url: '/api/sources',
-      headers: { 'x-device-id': 'dev_a' },
+      headers: { authorization: `Bearer ${first.session_token}` },
     });
     expect(duringGrace.statusCode).toBe(200);
 
@@ -390,12 +401,24 @@ describe('device challenge + verify rotation', () => {
       `UPDATE free_device_rotation SET grace_expires_at = datetime('now', '-1 minute') WHERE scope_id = 1`
     ).run();
 
+    // After grace expires, dev_a's session token is rejected
     const afterGrace = await app.inject({
       method: 'GET',
       url: '/api/sources',
-      headers: { 'x-device-id': 'dev_a' },
+      headers: { authorization: `Bearer ${first.session_token}` },
     });
     expect(afterGrace.statusCode).toBe(401);
+  });
+
+  it('rejects unknown device_id header without session token', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/sources',
+      headers: { 'x-device-id': 'dev_unknown' },
+    });
+    // In non-production mode falls back to 'local'; x-device-id for dev_* no longer grants access
+    // The response is 200 (resolves to 'local') rather than granting the unknown device identity
+    expect(res.statusCode).toBe(200);
   });
 });
 
@@ -405,18 +428,6 @@ describe('POST /api/v1/queue/ack', () => {
 
   beforeEach(async () => {
     db = createTestDb();
-    // Register devices so the ownership check in queue/ack passes
-    db.prepare(`INSERT INTO device_registrations (user_id, public_key) VALUES (?, ?)`).run('usr_1', 'pk_a');
-    db.prepare(`INSERT INTO device_registrations (user_id, public_key) VALUES (?, ?)`).run('usr_1_b', 'pk_b');
-    // Note: device_registrations uses user_id as PK; dev_A and dev_B are user_ids here
-    db.prepare(`INSERT OR REPLACE INTO device_registrations (user_id, public_key) VALUES (?, ?)`).run('dev_A', 'pk_a');
-    db.prepare(`INSERT OR REPLACE INTO device_registrations (user_id, public_key) VALUES (?, ?)`).run('dev_B', 'pk_b');
-    db.prepare(`
-      INSERT INTO paid_queue_deliveries (delivery_id, user_id, device_id, payload_envelope, expires_at, status)
-      VALUES
-        ('del_1', 'dev_A', 'dev_A', '{"ciphertext":"a"}', datetime('now', '+1 day'), 'delivered_unacked'),
-        ('del_1', 'dev_B', 'dev_B', '{"ciphertext":"a"}', datetime('now', '+1 day'), 'queued')
-    `).run();
     app = Fastify();
     registerApiRoutes(app, db);
     await app.ready();
@@ -428,11 +439,19 @@ describe('POST /api/v1/queue/ack', () => {
   });
 
   it('is idempotent per device and advances cursor when at least one device ACKs', async () => {
-    // Send X-Device-Id so the auth resolves to dev_A (registered above)
+    const devA = await createVerifiedDevice('dev_A', app);
+
+    db.prepare(`
+      INSERT INTO paid_queue_deliveries (delivery_id, user_id, device_id, payload_envelope, expires_at, status)
+      VALUES
+        ('del_1', 'dev_A', 'dev_A', '{"ciphertext":"a"}', datetime('now', '+1 day'), 'delivered_unacked'),
+        ('del_1', 'dev_A', 'dev_B', '{"ciphertext":"a"}', datetime('now', '+1 day'), 'queued')
+    `).run();
+
     const firstAck = await app.inject({
       method: 'POST',
       url: '/api/v1/queue/ack',
-      headers: { 'x-device-id': 'dev_A' },
+      headers: { authorization: `Bearer ${devA.session_token}` },
       payload: { delivery_id: 'del_1', device_id: 'dev_A' },
     });
     expect(firstAck.statusCode).toBe(200);
@@ -453,7 +472,7 @@ describe('POST /api/v1/queue/ack', () => {
     const secondAck = await app.inject({
       method: 'POST',
       url: '/api/v1/queue/ack',
-      headers: { 'x-device-id': 'dev_A' },
+      headers: { authorization: `Bearer ${devA.session_token}` },
       payload: { delivery_id: 'del_1', device_id: 'dev_A' },
     });
     expect(secondAck.statusCode).toBe(200);

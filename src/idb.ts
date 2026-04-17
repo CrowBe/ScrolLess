@@ -30,9 +30,13 @@ export interface SyncLogEntry {
 export interface DeviceRecord {
   id: 'singleton';
   user_id: string;
-  public_key_b64: string;
-  private_key: CryptoKey;  // non-extractable; stored via structured clone
+  public_key_b64: string;           // ECDH public key for feed decryption
+  private_key: CryptoKey;           // ECDH private key, non-extractable
   registered_at: string;
+  signing_public_key_b64?: string;  // ECDSA public key for challenge/verify auth
+  signing_private_key?: CryptoKey;  // ECDSA private key, non-extractable
+  session_token?: string;           // Current dsess_* session token
+  session_expires_at?: string;      // ISO timestamp when session_token expires
 }
 
 export type PreferenceKey =

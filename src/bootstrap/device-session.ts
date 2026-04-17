@@ -1,15 +1,29 @@
 import { openScrollessDb, type DeviceRecord, type FeedItem } from '../idb';
-import { generateKeypair, exportPublicKeyBase64, decryptFields, normaliseUrl, hashUrl } from '../crypto';
+import {
+  generateKeypair,
+  exportPublicKeyBase64,
+  generateSigningKeypair,
+  exportSigningPublicKeyBase64,
+  signNonce,
+  decryptFields,
+  normaliseUrl,
+  hashUrl,
+} from '../crypto';
 import { apiUrl, getDeviceEnrollmentToken } from '../config';
 
 const STREAM_RETRY_BASE_MS = 1_000;
 const STREAM_RETRY_MAX_MS = 30_000;
 
-// Module-level cache so api.ts req() can read the device ID synchronously
+// Module-level caches so api.ts req() can read auth state synchronously
 let cachedDeviceId: string | null = null;
+let cachedSessionToken: string | null = null;
 
 export function getCachedDeviceId(): string | null {
   return cachedDeviceId;
+}
+
+export function getCachedSessionToken(): string | null {
+  return cachedSessionToken;
 }
 
 type SessionUiState = 'not_registered' | 'stream_disconnected' | 'stream_active';
@@ -73,27 +87,68 @@ export function subscribeDeviceSessionStatus(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
-/** Load an existing device record or create and register a new one. */
+/** Load an existing device record or create a new one. Migrates signing keys if absent. */
 async function loadOrCreateDevice(): Promise<DeviceRecord> {
-  const db = await openScrollessDb();
-  const existing = await db.get('device', 'singleton');
-  if (existing) return existing;
+  const idb = await openScrollessDb();
+  const existing = await idb.get('device', 'singleton');
 
-  // Generate a non-extractable keypair — private key stored in IndexedDB via structured clone
-  const { publicKey, privateKey } = await generateKeypair();
-  const publicKeyB64 = await exportPublicKeyBase64(publicKey);
+  if (existing) {
+    // Migrate: add ECDSA signing keypair if not yet present
+    if (!existing.signing_private_key || !existing.signing_public_key_b64) {
+      const { publicKey, privateKey } = await generateSigningKeypair();
+      const signingPublicKeyB64 = await exportSigningPublicKeyBase64(publicKey);
+      const migrated: DeviceRecord = { ...existing, signing_public_key_b64: signingPublicKeyB64, signing_private_key: privateKey };
+      await idb.put('device', migrated);
+      return migrated;
+    }
+    return existing;
+  }
+
+  // New device: ECDH key for feed decryption + ECDSA key for auth
+  const { publicKey: ecdhPub, privateKey: ecdhPriv } = await generateKeypair();
+  const { publicKey: sigPub, privateKey: sigPriv } = await generateSigningKeypair();
+  const publicKeyB64 = await exportPublicKeyBase64(ecdhPub);
+  const signingPublicKeyB64 = await exportSigningPublicKeyBase64(sigPub);
   const userId = `dev_${crypto.randomUUID()}`;
 
   const record: DeviceRecord = {
     id: 'singleton',
     user_id: userId,
     public_key_b64: publicKeyB64,
-    private_key: privateKey,
+    private_key: ecdhPriv,
+    signing_public_key_b64: signingPublicKeyB64,
+    signing_private_key: sigPriv,
     registered_at: new Date().toISOString(),
   };
 
-  await db.put('device', record);
+  await idb.put('device', record);
   return record;
+}
+
+/** Run challenge/verify to obtain a fresh session token from the server. */
+async function authenticateDevice(deviceRecord: DeviceRecord): Promise<{ sessionToken: string; sessionExpiresAt: string }> {
+  const enrollmentToken = getDeviceEnrollmentToken();
+  const enrollHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (enrollmentToken) enrollHeaders['X-Device-Enroll-Token'] = enrollmentToken;
+
+  const chalRes = await fetch(apiUrl('/api/v1/device/challenge'), {
+    method: 'POST',
+    headers: enrollHeaders,
+    body: JSON.stringify({ device_id: deviceRecord.user_id, public_key: deviceRecord.signing_public_key_b64! }),
+  });
+  if (!chalRes.ok) throw new Error(`challenge failed (${chalRes.status})`);
+  const { challenge_id, nonce } = await chalRes.json() as { challenge_id: string; nonce: string };
+
+  const signature = await signNonce(nonce, deviceRecord.signing_private_key!);
+
+  const verRes = await fetch(apiUrl('/api/v1/device/verify'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ challenge_id, device_id: deviceRecord.user_id, signature }),
+  });
+  if (!verRes.ok) throw new Error(`verify failed (${verRes.status})`);
+  const { session_token, session_expires_at } = await verRes.json() as { session_token: string; session_expires_at: string };
+  return { sessionToken: session_token, sessionExpiresAt: session_expires_at };
 }
 
 async function registerDevice(deviceRecord: DeviceRecord): Promise<void> {
@@ -205,6 +260,17 @@ export async function startDeviceSession(options: DeviceSessionOptions = {}): Pr
     cachedDeviceId = deviceRecord.user_id;
     emitStatus({ deviceId: deviceRecord.user_id });
     await registerDevice(deviceRecord);
+
+    // Obtain a session token unless the cached one is still valid (with 60 s margin)
+    const expiry = deviceRecord.session_expires_at ? new Date(deviceRecord.session_expires_at) : null;
+    const needsAuth = !deviceRecord.session_token || !expiry || expiry <= new Date(Date.now() + 60_000);
+    if (needsAuth) {
+      const { sessionToken, sessionExpiresAt } = await authenticateDevice(deviceRecord);
+      deviceRecord = { ...deviceRecord, session_token: sessionToken, session_expires_at: sessionExpiresAt };
+      const idb = await openScrollessDb();
+      await idb.put('device', deviceRecord);
+    }
+    cachedSessionToken = deviceRecord.session_token!;
   } catch (err) {
     const message = err instanceof Error ? err.message : 'registration error';
     emitStatus({ state: 'not_registered', lastError: message });
@@ -218,7 +284,7 @@ export async function startDeviceSession(options: DeviceSessionOptions = {}): Pr
     stream?.close();
 
     stream = new EventSource(
-      `${apiUrl('/api/stream')}?device_id=${encodeURIComponent(deviceRecord.user_id)}`
+      `${apiUrl('/api/stream')}?token=${encodeURIComponent(cachedSessionToken!)}`
     );
 
     stream.onopen = () => {

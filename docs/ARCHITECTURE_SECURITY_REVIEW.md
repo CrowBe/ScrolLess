@@ -7,14 +7,14 @@ Each finding is self-contained so it can be picked up individually in a future s
 
 ## Critical
 
-### 1. `/api/*` has no real device authentication
+### ~~1. `/api/*` has no real device authentication~~ ✅ Fixed
 
-- **Files**: `server/api-routes.ts:75-119`, `server/api-routes.ts:591-602`, `src/bootstrap/device-session.ts`
-- **Problem**: `getRequestUserId` trusts the `X-Device-Id` header. The `/api/v1/device/challenge` and `/api/v1/device/verify` handshake proves possession once but issues no session credential. Every subsequent route just checks that `device_registrations` contains the id. Anyone who learns a `dev_<uuid>` can:
-  - drain the SSE queue,
-  - edit/delete sources,
-  - call `POST /api/v1/tokens` to mint a full-privilege agent token (giving full `/agent/*` access).
-- **Fix sketch**: after `/api/v1/device/verify`, issue a short-lived device bearer (or signed cookie) and require it on every `/api/*` request. Update `src/api.ts` `req()` and `src/bootstrap/device-session.ts` to store and attach it.
+- **Files**: `server/api-routes.ts`, `src/bootstrap/device-session.ts`, `src/api.ts`, `sql/schema.sql`
+- **Fix applied** (branch `claude/security-review-task-one-F60fP`):
+  - `POST /api/v1/device/verify` now issues a 30-day `dsess_*` bearer token (hash stored in new `device_sessions` table).
+  - `getRequestUserId` requires `Authorization: Bearer dsess_*` for `dev_*` devices; `X-Device-Id` is no longer honoured as an auth credential for device identities.
+  - Client (`device-session.ts`) generates a separate ECDSA signing keypair, runs challenge/verify on startup, persists the session token in IndexedDB, and attaches it via `Authorization` header on all API calls and as `?token=` on the SSE stream.
+  - `src/api.ts` switched from `X-Device-Id` to `Authorization: Bearer`.
 - **Seam alignment**: matches `docs/TIER_CONTRACT.md §4` — "cryptographic proof is authoritative, X-Device-Id is a routing hint."
 
 ### 2. Unauthenticated `usr_*` acceptance

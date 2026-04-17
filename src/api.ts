@@ -1,12 +1,12 @@
 import type { SyncLogEntry, UserSource } from './types';
 import { apiUrl } from './config';
-import { getCachedDeviceId } from './bootstrap/device-session';
+import { getCachedSessionToken } from './bootstrap/device-session';
 
 async function req<T>(url: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers ?? {});
-  const deviceId = getCachedDeviceId();
-  if (deviceId) {
-    headers.set('X-Device-Id', deviceId);
+  const sessionToken = getCachedSessionToken();
+  if (sessionToken) {
+    headers.set('Authorization', `Bearer ${sessionToken}`);
   }
   const res = await fetch(apiUrl(url), { ...options, headers });
   if (!res.ok) {
