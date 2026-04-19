@@ -3,6 +3,8 @@
 Status: **Active** — executing soon, Clerk-first.
 Created: 2026-04-03 · Revised: 2026-04-18
 
+> For step-by-step execution, see `docs/EXPO_REFACTOR_TASKS.md`. This document is the rationale (motivation, trade-offs, auth options, alternatives); the tasks file is the checklist.
+
 ---
 
 ## Motivation
