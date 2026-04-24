@@ -11,10 +11,12 @@ It is intended to be used for:
 - implementation sequencing
 - coordination across coding tools and agents
 
+This is the canonical execution plan for hosted ScrolLess work.
+If another planning or checklist doc disagrees with this one, update the other doc or remove the duplication.
+
 Use this alongside:
 - `docs/ARCHITECTURE.md`
 - `docs/TIER_CONTRACT.md`
-- `docs/pre-release-tasks.md`
 - `docs/EXPO_REFACTOR_PLAN.md`
 
 ---
@@ -58,11 +60,12 @@ Purpose:
 - managed sync, queueing, notifications, and device/account management
 
 Properties:
-- Postgres
+- Postgres for control-plane persistence
 - real user identity
 - subscription and entitlement model
 - operator-blind content handling
 - multi-device capable
+- client-resident content storage remains separate from server control-plane storage
 
 ### C. Client surfaces
 
@@ -81,10 +84,11 @@ The commercial surface should primarily live on the web, not inside mobile apps.
 
 1. The hosted server must not become a plaintext feed-content store.
 2. Feed payloads must remain ciphertext-only server-side wherever possible.
-3. The server may store operational metadata only.
-4. Entitlement enforcement must happen server-side, not in clients.
-5. Tenant isolation must be explicit and testable.
-6. Self-hosted convenience must not weaken hosted trust guarantees.
+3. The server may store operational metadata and encrypted relay payloads when queueing, replay, or recovery requires it.
+4. The client remains the decrypted feed-content store.
+5. Entitlement enforcement must happen server-side, not in clients.
+6. Tenant isolation must be explicit and testable.
+7. Self-hosted convenience must not weaken hosted trust guarantees.
 
 ### Security requirements
 
@@ -130,7 +134,38 @@ What does **not** exist in production-ready form yet:
 
 ## 5. Architectural Clarification
 
-The hosted product should be modelled as the following layers:
+The hosted product should be modelled as two storage domains and the following layers.
+
+### Storage domain A: control plane database
+
+This is the hosted backend database and should move to Postgres.
+
+It stores:
+- account and session data
+- device/account bindings
+- source configuration and preferences
+- agent tokens, OAuth clients, grants, and revocation state
+- subscription, billing, and entitlement data
+- sync, queue, and delivery metadata
+- encrypted relay payloads retained for queueing, replay, and recovery
+- audit and security events
+
+It does not store decrypted feed content.
+
+### Storage domain B: content plane database
+
+This is the client-resident feed store.
+Today it is IndexedDB in the PWA. Future native clients may use a local SQLite-equivalent or another device-local database.
+
+It stores:
+- decrypted feed items
+- read/save state
+- retention-managed local content
+- device-local UI/cache state
+
+This distinction is non-negotiable. Postgres migration applies to the control plane, not the decrypted feed database.
+
+The hosted product should then be modelled as the following layers:
 
 ### Layer 1: Identity and tenant boundary
 
@@ -200,6 +235,10 @@ Responsibilities:
 
 ## 6. Recommended Workstreams
 
+These workstreams are the actual buckets of hosted implementation work.
+GitHub issues should be derived from them.
+Do not create parallel hosted checklists elsewhere unless they are temporary execution artifacts that point back to this document.
+
 ## Workstream A — Hosted identity and tenant isolation
 
 Goal: remove local-only assumptions and establish real hosted account scoping.
@@ -217,9 +256,9 @@ Deliverable:
 
 ---
 
-## Workstream B — Postgres migration and hosted persistence
+## Workstream B — Postgres migration and hosted control-plane persistence
 
-Goal: move hosted mode to a real multi-tenant database.
+Goal: move hosted mode to a real multi-tenant control-plane database without turning the server into a feed-content store.
 
 Tasks:
 - [ ] Introduce Postgres-backed DB adapter for hosted mode
@@ -230,13 +269,13 @@ Tasks:
 - [ ] Add test coverage for hosted persistence path
 
 Deliverable:
-- hosted deployment no longer depends on SQLite assumptions
+- hosted deployment uses Postgres for control-plane persistence and no longer depends on SQLite assumptions
 
 ---
 
 ## Workstream C — Trust boundary and encryption model
 
-Goal: make the hosted privacy model explicit, coherent, and implementable.
+Goal: make the hosted privacy model explicit, coherent, and implementable across both the server control plane and the client content plane.
 
 Tasks:
 - [ ] Write a hosted trust-boundary section into `docs/ARCHITECTURE.md`
@@ -340,31 +379,105 @@ Deliverable:
 
 ## 7. Suggested Execution Order
 
-Phase 1:
-- Workstream A — Hosted identity and tenant isolation
-- Workstream B — Postgres migration and hosted persistence
+The current codebase is still structurally local-first in several important places.
+That means the real first job is not "add hosted features", it is "remove hidden single-user assumptions without breaking self-hosted mode".
 
-Phase 2:
+### Phase 1 — Identity boundary and hosted correctness
+
+Goal:
+make hosted mode fail closed and establish a real multi-tenant identity model.
+
+Includes:
+- Workstream A — Hosted identity and tenant isolation
+- the identity parts of Workstream B — Hosted persistence
+- schema cleanup required to remove implicit `local` assumptions
+- tenant-isolation and auth-boundary tests across route groups
+
+Concrete outcomes:
+- account identity, device identity, and agent/client identity are explicitly separated
+- hosted requests resolve to a real authenticated account identity
+- no hosted code path silently falls back to `local`
+- schema defaults and bootstrap behavior no longer make hosted correctness optional
+
+Why first:
+without this phase, every later hosted feature sits on top of a misleading single-user model.
+
+### Phase 2 — Hosted persistence and trust boundary
+
+Goal:
+move hosted mode onto real multi-tenant storage and make the operator-blind content contract explicit.
+
+Includes:
+- remaining hosted persistence work from Workstream B — Postgres migration and hosted persistence
 - Workstream C — Trust boundary and encryption model
+
+Concrete outcomes:
+- hosted mode runs on Postgres
+- hosted deploys use an explicit migration path
+- plaintext metadata vs ciphertext payload boundaries are documented and enforced
+- hosted key-management and multi-device onboarding direction is defined clearly enough to implement
+
+Why second:
+Postgres alone is not the milestone. The real milestone is a hosted platform whose persistence model and privacy model match each other.
+
+### Phase 3 — Entitlements and billing backbone
+
+Goal:
+turn hosted ScrolLess into a real SaaS backend, not just a multi-user app.
+
+Includes:
 - Workstream D — Subscription, billing, and entitlements
 
-Phase 3:
+Concrete outcomes:
+- billing provider selected
+- hosted plan matrix defined
+- subscription and entitlement tables implemented
+- server-side entitlement enforcement exists and clients consume server truth
+
+Why third:
+entitlements only matter once identity, tenancy, and trust boundaries are real.
+
+### Phase 4 — User-facing hosted account surface and operator controls
+
+Goal:
+make the hosted platform manageable by end users and credible to operate.
+
+Includes:
 - Workstream E — Connected apps, OAuth, and MCP management
 - Workstream F — Hosted security posture
-
-Phase 4:
 - Workstream G — Web account and billing surface
 
-Phase 5:
+Concrete outcomes:
+- users can manage connected apps, devices, and billing on the web
+- token/client lifecycle is auditable and revocable
+- hosted deployment and security posture are minimally production-credible
+
+Why fourth:
+this is where the product becomes operable and sellable, but it should not lead the platform work.
+
+### Phase 5 — Expo/native client alignment
+
+Goal:
+align future native clients to the hosted platform after the hosted backend contract is stable.
+
+Includes:
 - Workstream H — Expo/native client alignment
 
-This is the recommended order because it builds the platform before polishing the clients.
+Concrete outcomes:
+- native work consumes existing hosted identity and entitlements
+- mobile remains a client surface, not the commercial control plane
+
+Why last:
+starting mobile before hosted identity and entitlements are stable would reintroduce confusion and likely force rework.
+
+This is the recommended order because it builds the hosted platform spine before product surface expansion.
 
 ---
 
 ## 8. Suggested Issue Breakdown
 
 These should become GitHub issues.
+They are derived from the workstreams and phases above, not a separate planning source.
 
 ### Foundation
 - [ ] Pick hosted auth provider and finalize hosted identity model
@@ -395,6 +508,10 @@ These should become GitHub issues.
 - [ ] Add structured auth and security audit logs
 - [ ] Review and tighten route-level rate limiting
 - [ ] Write hosted deployment security checklist
+- [ ] Define hosted deployment topology and provider baseline (for example Render backend + Render Postgres + Vercel frontend)
+- [ ] Define migration, backup, and restore approach for hosted control-plane Postgres
+- [ ] Add queue health, webhook failure, and auth-failure observability requirements
+- [ ] Write minimum operator runbooks for auth outage, billing/webhook failure, queue backlog, and push delivery failure
 
 ### Client alignment
 - [ ] Update Expo refactor plan to reflect hosted-first sequencing
@@ -402,7 +519,55 @@ These should become GitHub issues.
 
 ---
 
-## 9. Open Decisions
+## 9. Production-grade hosted readiness requirements
+
+A real hosted server is not complete when the architecture exists on paper. It also needs a minimally credible operating model.
+
+Required categories:
+
+### A. Identity and tenant correctness
+- hosted auth must fail closed
+- tenant isolation must be testable
+- account, device, and agent/client identity must be distinct
+
+### B. Control-plane persistence and migration
+- hosted Postgres for the control plane
+- explicit migration flow
+- backup and restore plan
+- staging vs production separation
+
+### C. Trust boundary and encrypted retention
+- explicit plaintext-metadata vs ciphertext-payload boundary
+- encrypted payload retention rules for queue/replay/recovery
+- no server-side decrypted feed store
+
+### D. Billing and entitlement correctness
+- billing provider integration
+- webhook verification and reconciliation
+- server-side entitlement computation
+- downgrade/cancellation/failure handling
+
+### E. Observability and abuse resistance
+- structured logs and audit events
+- queue and webhook health visibility
+- rate limits and abuse controls by route group
+- alert-worthy failure modes documented
+
+### F. Support and lifecycle flows
+- account deletion and data deletion semantics
+- token compromise and revoke-all flow
+- device recovery / additional-device onboarding
+- operator support visibility that does not break trust boundaries
+
+### G. Deployment and operations
+- hosted topology decision
+- secret management and rotation policy
+- deployment/rollback expectations
+- operator runbooks for the main failure cases
+
+These are part of the hosted plan, not a separate checklist.
+
+## 10. Open Decisions
 
 These need explicit calls before implementation gets too far.
 
@@ -414,7 +579,7 @@ These need explicit calls before implementation gets too far.
 
 ---
 
-## 10. What to Avoid
+## 11. What to Avoid
 
 - Do not let hosted mode silently inherit self-hosted trust assumptions.
 - Do not put subscription logic primarily in the mobile app.
@@ -424,7 +589,7 @@ These need explicit calls before implementation gets too far.
 
 ---
 
-## 11. Definition of Success
+## 12. Definition of Success
 
 ScrolLess Cloud is on the right track when:
 - a hosted user can sign in to a real account

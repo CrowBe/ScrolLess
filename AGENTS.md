@@ -21,8 +21,9 @@ Core product promise: the server is a relay and coordinator, not a readable cont
 - Content lives on device in IndexedDB.
 - Agent encrypts content before submission.
 - Server handles ciphertext, metadata, routing, auth, queueing, and push.
-- Preserve the tier seam: `local`, `dev_*`, and `usr_*` identities should differ mainly in auth and delivery semantics, not require route rewrites.
-- Prefer changes that keep self-hosted and hosted paths structurally aligned.
+- Prefer changes that keep self-hosted and hosted paths structurally aligned where practical.
+- Do not assume hosted mode is only a thin auth wrapper around self-hosted mode. Identity semantics, schema assumptions, and route behavior may need explicit refactors.
+- When working on hosted features, separate account identity, device identity, and agent/client identity deliberately.
 
 If a change pressures ScrolLess toward "server as source-of-truth content store", stop and re-check `docs/ARCHITECTURE.md` and `docs/TIER_CONTRACT.md`.
 
@@ -59,18 +60,19 @@ Code is the truth for current implementation details. Avoid copying volatile fac
 ## Data and state ownership
 
 Default ownership model:
-- server DB: identities, tokens, source config, sync metadata, delivery/queue metadata, push subscriptions
-- device IndexedDB: feed items, local read/save state, retention behavior, decrypted display state
+- server control-plane DB: identities, tokens, source config, sync metadata, delivery/queue metadata, push subscriptions, audit events, and encrypted retained payloads when queue/replay requires them
+- device content DB: feed items, local read/save state, retention behavior, decrypted display state
 - agent: source-specific fetch logic and encryption before submit
 
-Do not casually move client state onto the server just because it is convenient.
+Do not casually move client content state onto the server just because it is convenient.
+Do not describe Postgres migration as moving the feed database, it is moving the control plane.
 
 ## Current priorities
 
 Prefer work in this order:
-1. architecture clarification and state-boundary hardening
-2. product usability improvements
-3. docs accuracy
+1. hosted identity-boundary cleanup and state-boundary hardening
+2. architecture clarification and docs accuracy
+3. product usability improvements
 4. tests and maintenance reliability
 
 Issue `#54` is the current architecture-focused thread unless a newer issue supersedes it.

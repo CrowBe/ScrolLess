@@ -1,15 +1,87 @@
 # Architecture
 
+## Read This Document Correctly
+
+This document mixes two things:
+- the **current implementation reality** in the repository
+- the **target hosted architecture** ScrolLess is moving toward
+
+Those are not the same.
+The relay-not-reader model is real today, but hosted multi-tenant identity and account-scoped operation are still in progress.
+When this document conflicts with the code, the code wins.
+
 ## Design Principles
 
-1. **Server is a relay, not a store**: The server never persists feed content. It receives an encrypted payload from the agent and relays it to the device via SSE (or queues it for push). Content lives in IndexedDB on the device only.
-2. **End-to-end encryption by default**: All content fields are encrypted by the agent using the device's public key before leaving the agent. The server handles ciphertext it cannot read.
-3. **MCP-first agent interface**: The primary integration point for AI agents is a Remote MCP server. The underlying REST `/agent/*` endpoints remain available for non-MCP clients (scripts, curl, cron jobs).
-4. **Tiered identity**: `user_id` is always one of `'local'` (self-hosted), `dev_*` (free tier, device-scoped), or `usr_*` (paid tier, account-scoped). Auth middleware resolves which tier and sets `userId`; route handlers never care which was used.
-5. **Production-promotable internals**: Schema, routes, and skill are designed so the transition from free to paid tier, or from SQLite to Postgres, is a configuration/migration change, not a rewrite.
-6. **Installable PWA**: The frontend is a Progressive Web App with push notifications, installable on Android.
+1. **Server is a relay, not a store**: The server should never become a plaintext feed-content backend. Content is intended to live on device, with the server handling relay, routing, queueing, and metadata.
+2. **Two data domains, two storage planes**: ScrolLess has a control plane and a content plane. The control plane lives server-side and stores operational/account data plus ciphertext relay payloads when needed. The content plane lives client-side and stores decrypted feed items and local reading state.
+3. **Encrypted content handling**: The current implementation already uses encrypted relay payloads. Hosted evolution should preserve and harden that model rather than weaken it for convenience.
+4. **MCP-first agent interface**: The primary integration point for AI agents is a Remote MCP server. The underlying REST `/agent/*` endpoints remain available for non-MCP clients.
+5. **Identity must become explicit**: Self-hosted `local`, free-tier `dev_*`, and hosted `usr_*` identities are the intended tiers, but the current implementation still contains local-first assumptions that must be removed before hosted mode is credible.
+6. **Prefer structural alignment, not fantasy alignment**: Self-hosted and hosted paths should stay as aligned as practical, but hosted mode should not be documented as "just a config switch" when schema, auth, and identity semantics still differ.
+7. **Installable PWA**: The frontend is a Progressive Web App with push notifications, installable on Android.
 
 ---
+
+## Current Reality vs Target State
+
+### Current implementation reality
+
+Today the repository is primarily:
+- self-hosted/local-first
+- SQLite-backed
+- structurally centered on `local` and device-scoped flows
+- partially prepared for `dev_*` and future `usr_*` identities, but not consistently enforced across all route groups
+
+Important caveats from the current codebase:
+- some auth paths still fall back to `local`
+- OAuth still behaves like a single-user local system in important places
+- device identity and account identity are not yet cleanly separated for hosted mode
+- hosted tenant isolation is a roadmap goal, not a completed invariant
+
+### Target hosted state
+
+The intended hosted architecture is:
+- account-scoped identity (`usr_*`)
+- explicit separation between account identity, device identity, and agent/client identity
+- Postgres-backed multi-tenant persistence for the control plane
+- client-resident feed/content storage for the content plane
+- operator-blind content handling with explicit plaintext-metadata vs ciphertext-payload boundaries
+- backend-enforced entitlements and connected-app management
+
+### Data domains and storage planes
+
+#### Control plane, server-side database
+
+This is the hosted backend operational database.
+In hosted mode, this should move to Postgres.
+
+It stores:
+- accounts and sessions
+- devices and device bindings
+- agent tokens and OAuth data
+- subscriptions and entitlements
+- source configuration and preferences
+- sync metadata and delivery metadata
+- audit/security events
+- encrypted relay payloads when queueing, replay, or recovery requires server-side retention
+
+It must not store decrypted feed content.
+
+#### Content plane, client-side database
+
+This is the user content database.
+Today it is IndexedDB in the PWA, and future native clients may use a local SQLite-equivalent or similar local store.
+
+It stores:
+- decrypted feed items
+- read/save state
+- retention-managed local content
+- device-local display/cache state
+
+This is the real feed database from the user's point of view.
+The server-side control plane is not the feed-content database.
+
+Use `docs/HOSTED_BACKEND_PLAN.md` for the authoritative hosted execution sequence.
 
 ## Tier Model
 
@@ -27,16 +99,24 @@
 
 ### Paid Tier
 
-- Account-based identity (`usr_*`).
-- Multi-device support via a wrapped private key: the private key is encrypted with the user's passphrase using Argon2id, and the ciphertext is stored server-side. Each trusted device decrypts the wrapped key on login using the user's passphrase; the plaintext private key never leaves the client.
-- Encrypted relay queue with TTL: when the target device is offline, the server queues the encrypted payload (TTL configurable, default 24 h) and delivers it when the device reconnects.
-- Historical backfill via device-to-device encrypted relay: a newly added device can request recent encrypted payloads from the server queue.
-- Agent continues to encrypt using the user's public key — same ECIES scheme as free tier.
+This is the target hosted direction, not a completed end-to-end implementation.
+
+Planned properties:
+- account-based identity (`usr_*`)
+- multi-device support via a wrapped private key or equivalent hosted key-management model
+- encrypted relay queue with TTL and per-device delivery tracking
+- historical backfill for additional devices
+- agent encryption against a user/account public key under the same relay-not-reader architecture
+
+The current codebase contains partial scaffolding for this direction, but not a finished hosted account model.
 
 ### Self-Hosted
 
-- `user_id = 'local'`, SQLite, no auth middleware enforced (token still required for agent routes).
-- Same encrypted relay model as hosted tiers: server relays ciphertext and does not persist feed content.
+- `user_id = 'local'`, SQLite, local-first assumptions
+- no hosted account middleware
+- same encrypted relay model: server relays ciphertext and does not persist readable feed content
+
+This is the mode the current repository supports most concretely today.
 
 ---
 
@@ -72,16 +152,18 @@
 1. **Registers devices** and stores their public keys
 2. **Serves sync context** to agents: sources, last sync timestamps, encryption key, filters
 3. **Receives encrypted feed payloads** from agents and relays them to devices via SSE
-4. **Falls back to Web Push** when the target device has no active SSE connection
-5. **Logs sync attempts** (metadata only — no content)
-6. **Manages source configuration** and agent tokens per user
-7. **Runs OAuth 2.0** authorization server for MCP connector integration
-8. **Cleans up stale data** on a daily schedule (sync_attempts, oauth codes/tokens)
+4. **Stores encrypted payloads only when queueing, replay, or recovery requires server-side retention**
+5. **Falls back to Web Push** when the target device has no active SSE connection
+6. **Logs sync attempts** (metadata only — no plaintext content)
+7. **Manages source configuration, account data, and agent tokens**
+8. **Runs OAuth 2.0** authorization server for MCP connector integration
+9. **Cleans up stale data** on a daily schedule (sync_attempts, oauth codes/tokens, queue state)
 
 ### What the Server Does NOT Do
 
 - Call any upstream API (YouTube, X, NewsAPI, etc.)
-- Store feed items or feed content (free/paid tiers)
+- Store decrypted feed items or readable feed content
+- Act as the canonical content database for the user's feed
 - Decrypt agent payloads — the server handles ciphertext only
 
 ### Route Groups
