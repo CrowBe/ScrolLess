@@ -12,10 +12,16 @@ This document captures the agreed product and backend contract for free vs paid 
 
 ## 2. Data privacy contract
 
+ScrolLess has two storage domains:
+- **control plane**: server-side operational storage
+- **content plane**: client-side feed/content storage
+
+Contract:
 - End-to-end encryption is mandatory in all phases.
 - Feed payloads are encrypted in transit and at rest.
-- Server may store plaintext operational metadata only (source config, preferences, token metadata, sync metadata).
-- Server must never store feed content payloads in plaintext.
+- The control plane may store plaintext operational metadata and encrypted payload envelopes when queueing/replay requires retention.
+- The control plane must never store decrypted feed content.
+- The content plane remains the decrypted feed-content store.
 
 ## 3. Tier behavior contract
 
@@ -24,7 +30,8 @@ This document captures the agreed product and backend contract for free vs paid 
 - Identity is device-scoped.
 - No guaranteed cloud queue semantics for feed retrieval.
 - If sync fails while device is offline, surface status in top banner.
-- Read/save state remains local client storage (IndexedDB).
+- Content plane storage remains local client storage (IndexedDB in the current PWA).
+- Control-plane retention is limited to operational metadata and short-lived encrypted queue state.
 - Single active device policy.
 - Default retention recommendation: **7 days** (user-configurable).
 
@@ -34,6 +41,8 @@ This document captures the agreed product and backend contract for free vs paid 
 - Multi-device is enabled.
 - Submissions fan out to all registered devices.
 - Guaranteed encrypted queue semantics with retry + ACK.
+- Control-plane retention may include encrypted payload envelopes for replay and recovery.
+- Content plane storage on client devices remains the decrypted feed database.
 - Default retention recommendation: **30 days** (user-configurable).
 
 ## 4. Device auth and rotation
@@ -50,6 +59,7 @@ This document captures the agreed product and backend contract for free vs paid 
 - Queue entry is complete only when each intended device has ACKed or expired.
 - Global cursor advances after at least one recipient ACK (not merely enqueue).
 - Replay remains available for offline devices until TTL expiry.
+- Control-plane queue storage contains encrypted payload envelopes, not decrypted feed content.
 - UX target is effectively-once via idempotent write + dedup behavior.
 
 ## 6. API direction
@@ -138,6 +148,8 @@ Behavioral requirements:
 - ACK updates per-device status and can advance global cursor once at least one device ACK exists.
 
 ## 8. Paid queue data model (minimum)
+
+This is control-plane queue state, not the content-plane feed database.
 
 - `delivery_id` (batch id)
 - `user_id`

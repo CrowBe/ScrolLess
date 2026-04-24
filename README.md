@@ -2,7 +2,8 @@
 
 A feed aggregator where an AI agent scrapes content from your platforms, posts it to a server, and a PWA displays a unified feed with push notifications. The server never talks to YouTube, X, or any content platform — the agent does, using logged-in browser sessions.
 
-Available as a **hosted product** (multi-user, Postgres + Clerk) and as an **open-source self-hosted app** (single-user, SQLite, no auth overhead).
+Today, ScrolLess is primarily a **self-hosted open-source app** (single-user, SQLite, local-first).
+A **hosted product** is an active architecture and roadmap track, not a finished supported deployment mode yet.
 
 ## How It Works
 
@@ -29,14 +30,44 @@ Available as a **hosted product** (multi-user, Postgres + Clerk) and as an **ope
 3. **Server relays + notifies**: The server relays encrypted items over SSE to connected devices and sends a Web Push notification.
 4. **PWA renders**: The app decrypts and stores items in IndexedDB, then renders the unified feed locally.
 
-The server is deliberately dumb — it coordinates relay + metadata and sends push notifications. All platform interaction and feed-content handling happens off-server.
+The server is deliberately dumb, it coordinates relay + metadata and sends push notifications. All platform interaction and feed-content handling happens off-server.
+
+ScrolLess has two storage domains:
+- **server control plane storage** for accounts, tokens, config, metadata, and encrypted relay payloads when queueing/replay requires them
+- **client content storage** for decrypted feed items and local reading state
+
+Postgres in hosted mode belongs to the control plane, not the decrypted feed database.
+
+## Current Status
+
+### What exists today
+
+- self-hosted/local-first backend and PWA flow
+- encrypted relay model between agent, server, and device
+- SQLite persistence for current server-side operational state
+- IndexedDB persistence for client-side feed content
+- MCP, OAuth, SSE, push, source management, and token-management foundations
+
+### What is planned, not finished
+
+- hosted multi-user account model
+- Postgres-backed hosted control-plane persistence
+- hosted auth and tenant isolation
+- encrypted payload retention for queue/replay/recovery without exposing plaintext content
+- subscription-backed entitlements
+- production-ready web account and billing surface
+
+For hosted architecture and sequencing, see:
+- `docs/HOSTED_BACKEND_PLAN.md`
+- `docs/ARCHITECTURE.md`
+- `docs/pre-release-tasks.md`
 
 ## Stack
 
 | Layer | Technology | Rationale |
 |---|---|---|
 | **Runtime** | Node.js 20+ | |
-| **Database** | SQLite (self-hosted) / Postgres (hosted) | SQLite: zero-config, single-file; Postgres: multi-user |
+| **Database** | SQLite today, Postgres planned for hosted control plane, IndexedDB for current client content storage | SQLite: current server operational store; Postgres: hosted control-plane target; IndexedDB: client feed store |
 | **Backend API** | Fastify | Lightweight HTTP server |
 | **MCP server** | `@modelcontextprotocol/sdk` | Exposes tools + resources to Claude |
 | **Push** | `web-push` (VAPID) | Server-initiated notifications to the PWA |
@@ -214,9 +245,9 @@ For a stable named tunnel tied to a domain you control, follow the [Cloudflare T
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full deployment instructions.
 
-**Self-hosted**: SQLite, no auth middleware, single user. Run with `npm run build && npm start`, expose via Cloudflare Tunnel or keep local.
+**Self-hosted**: this is the current supported mode. SQLite, local-first assumptions, single-user operation. Run with `npm run build && npm start`, expose via Cloudflare Tunnel or keep local.
 
-**Hosted product**: Requires Clerk (user auth), Postgres (multi-user DB), and client-side encryption (operator-blind feed content). See the Production Notes section in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the remaining work in [docs/pre-release-tasks.md](docs/pre-release-tasks.md).
+**Hosted product**: active roadmap only. Requires real hosted identity, Postgres, tenant isolation, entitlement enforcement, and a completed operator-blind trust model before it should be treated as a supported deployment mode. See `docs/HOSTED_BACKEND_PLAN.md` and `docs/pre-release-tasks.md`.
 
 ## Licence
 
