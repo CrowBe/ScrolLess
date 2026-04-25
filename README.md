@@ -4,7 +4,7 @@ A feed aggregator where an AI agent scrapes content from your platforms, posts i
 
 Today, ScrolLess is primarily a **self-hosted open-source app** with a local-first codebase and a PWA client.
 A **hosted product** is an active architecture and roadmap track, not a finished supported deployment mode yet.
-The roadmap now converges both self-hosted and hosted server deployments toward a single Postgres control-plane path.
+The roadmap is moving toward a Postgres-backed control plane, but the current self-hosted server still runs on SQLite today.
 
 ## How It Works
 
@@ -14,7 +14,7 @@ The roadmap now converges both self-hosted and hosted server deployments toward 
 │  Claude Code / Claude │                           │                    │
 │  in Chrome            │──── POST /agent/* ───────▶│  Fastify API :3333 │
 │                       │    (Bearer token)         │  Server control    │
-│                       │                           │  plane (Postgres)  │
+│                       │                           │  plane (SQLite)    │
 │  Scrapes YouTube, X,  │                           │  MCP server /mcp   │
 │  news using logged-in │◀─── MCP tools/resources ──│  Push sender       │
 │  browser sessions     │                           │                    │
@@ -38,7 +38,7 @@ ScrolLess has two storage domains:
 - **server control plane storage** for accounts, tokens, config, metadata, and encrypted relay payloads when queueing/replay requires them
 - **client content storage** for decrypted feed items and local reading state
 
-Postgres in hosted mode belongs to the control plane, not the decrypted feed database.
+Postgres in the hosted roadmap belongs to the control plane, not the decrypted feed database.
 
 ## Current Status
 
@@ -49,7 +49,7 @@ Postgres in hosted mode belongs to the control plane, not the decrypted feed dat
 - IndexedDB persistence for client-side feed content
 - MCP, OAuth, SSE, push, source management, and token-management foundations
 - shipped `/api/v1/device/challenge`, `/api/v1/device/verify`, `/api/v1/queue/ack`, versioned device/token routes, tier gating, queue schema, and acceptance tests recorded in `docs/TIER_CONTRACT.md`
-- current server code still contains some local-first assumptions in places, so the Postgres unification work is still roadmap-state
+- current server uses SQLite plus local-first assumptions in places, so the Postgres unification work is still roadmap-state
 
 ### What is planned, not finished
 
@@ -70,7 +70,7 @@ For hosted architecture and sequencing, see:
 | Layer | Technology | Rationale |
 |---|---|---|
 | **Runtime** | Node.js 20+ | |
-| **Database** | Postgres for the server control plane, IndexedDB for current client content storage | The roadmap converges self-hosted and hosted on one Postgres server DB path; IndexedDB remains the current client feed store |
+| **Database** | SQLite today for the server control plane, IndexedDB for current client content storage | Current self-hosted runtime uses SQLite; the roadmap converges hosted and self-hosted toward a later Postgres server DB path |
 | **Backend API** | Fastify | Lightweight HTTP server |
 | **MCP server** | `@modelcontextprotocol/sdk` | Exposes tools + resources to Claude |
 | **Push** | `web-push` (VAPID) | Server-initiated notifications to the PWA |
@@ -158,7 +158,7 @@ Set optional values as needed:
 
 | Environment variable | Required for |
 |---|---|
-| `DATABASE_URL` | Postgres connection string for the server control plane |
+| `DB_PATH` | Custom SQLite location (default: `./data/scrolless.db`) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web Push notifications |
 | `VAPID_SUBJECT` | Web Push contact (set to `mailto:you@example.com`) |
 | `BASE_URL` | Backend public URL for OAuth issuer metadata and tunnel/external access |
@@ -169,7 +169,7 @@ Set optional values as needed:
 | `AGENT_RATE_LIMIT_PER_HOUR` | Agent/MCP rate limit (default: `60`) |
 | `OAUTH_CLIENTS_JSON` | OAuth client seed list (JSON array) |
 
-Self-hosters previously running SQLite should plan for a reset/cutover when moving onto the Postgres server path. There is no migration script.
+Current self-hosted deployments still use SQLite via `DB_PATH`. When the Postgres server path lands later, self-hosters should plan for a reset/cutover rather than a migration script.
 
 Generate VAPID keys if you want push notifications:
 
@@ -250,7 +250,7 @@ For a stable named tunnel tied to a domain you control, follow the [Cloudflare T
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full deployment instructions.
 
-**Self-hosted**: this is the current supported mode. The current codebase is still local-first in places, but the roadmap now converges self-hosted and hosted onto the same Postgres-backed server control plane. Existing self-hosters should expect a reset/cutover rather than migration tooling when that lands. Run with `npm run build && npm start`, expose via Cloudflare Tunnel or keep local.
+**Self-hosted**: this is the current supported mode. Today it is SQLite-backed and still local-first in places. The roadmap later converges self-hosted and hosted onto the same Postgres-backed server control plane, and existing self-hosters should expect a reset/cutover rather than migration tooling when that lands. Run with `npm run build && npm start`, expose via Cloudflare Tunnel or keep local.
 
 **Hosted product**: active roadmap only. Requires real hosted identity, Postgres, tenant isolation, server-enforced entitlements, a completed ciphertext-only trust model, and the web account surface before it should be treated as a supported deployment mode. See `docs/HOSTED_BACKEND_PLAN.md`.
 
