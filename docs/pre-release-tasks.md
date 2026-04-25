@@ -82,7 +82,7 @@ Before release, confirm:
 
 ## 3. Hosted note
 
-Hosted launch readiness, hosted production-grade gaps, identity work, Postgres control-plane migration, encryption/privacy completion, billing, and operator concerns are all owned by:
+Hosted launch readiness, hosted production-grade gaps, identity work, Postgres control-plane migration, encryption/privacy completion, billing, operator concerns, and Expo/native sequencing are all owned by:
 - `docs/HOSTED_BACKEND_PLAN.md`
 
-Do not rebuild a second hosted checklist here.
+Do not rebuild a second hosted or Expo checklist here.

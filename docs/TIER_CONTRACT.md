@@ -9,6 +9,7 @@ This document captures the agreed product and backend contract for free vs paid 
 - **Single architecture / codebase** with behavior gated by tier.
 - **Free tier** is device-scoped and does not require account creation.
 - **Paid tier** is account-scoped with cloud queue semantics and multi-device delivery.
+- Hosted auth must accept either a Clerk-backed `usr_*` session or a device challenge/verify `dev_*` session, depending on tier.
 
 ## 2. Data privacy contract
 
@@ -22,6 +23,7 @@ Contract:
 - The control plane may store plaintext operational metadata and encrypted payload envelopes when queueing/replay requires retention.
 - The control plane must never store decrypted feed content.
 - The content plane remains the decrypted feed-content store.
+- Plaintext metadata exposure must stay limited to documented control-plane fields such as device IDs, source names, URLs, URL hashes, timestamps, payload sizes, recipient device IDs in queue records, OAuth client IDs, and agent token labels.
 
 ## 3. Tier behavior contract
 
@@ -44,6 +46,14 @@ Contract:
 - Control-plane retention may include encrypted payload envelopes for replay and recovery.
 - Content plane storage on client devices remains the decrypted feed database.
 - Default retention recommendation: **30 days** (user-configurable).
+
+### Auth-path matrix
+
+- **Self-hosted:** enrollment token + device challenge/verify, no Clerk
+- **Free `dev_*` (hosted):** device challenge/verify, no Clerk
+- **Paid `usr_*` (hosted):** Clerk session
+
+Hosted middleware must accept either a Clerk session or device proof, scoped by route group and tier behavior.
 
 ## 4. Device auth and rotation
 
