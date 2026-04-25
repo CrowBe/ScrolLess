@@ -34,7 +34,7 @@ Status:
 
 Main goals:
 - build a real hosted control plane
-- preserve operator-blind content handling
+- preserve ciphertext-only server handling for feed content
 - add identity, entitlements, account management, and production-grade operations
 
 All detailed hosted sequencing, phases, production-readiness requirements, and issue breakdown now live in `docs/HOSTED_BACKEND_PLAN.md`.
@@ -45,7 +45,7 @@ All detailed hosted sequencing, phases, production-readiness requirements, and i
 
 1. Keep the current self-hosted product trustworthy and usable
 2. Execute hosted foundation work in the order defined by `docs/HOSTED_BACKEND_PLAN.md`
-3. Only advance native/mobile client work after hosted identity, persistence, and entitlements are stable
+3. Only advance native/mobile client work once hosted Phase 3 (entitlements) is complete, following the Phase 5 gate in `docs/HOSTED_BACKEND_PLAN.md`
 
 ---
 

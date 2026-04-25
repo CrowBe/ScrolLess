@@ -2,8 +2,9 @@
 
 A feed aggregator where an AI agent scrapes content from your platforms, posts it to a server, and a PWA displays a unified feed with push notifications. The server never talks to YouTube, X, or any content platform — the agent does, using logged-in browser sessions.
 
-Today, ScrolLess is primarily a **self-hosted open-source app** (single-user, SQLite, local-first).
+Today, ScrolLess is primarily a **self-hosted open-source app** with a local-first codebase and a PWA client.
 A **hosted product** is an active architecture and roadmap track, not a finished supported deployment mode yet.
+The roadmap now converges both self-hosted and hosted server deployments toward a single Postgres control-plane path.
 
 ## How It Works
 
@@ -12,7 +13,8 @@ A **hosted product** is an active architecture and roadmap track, not a finished
 ┌──────────────────────┐                           ┌────────────────────┐
 │  Claude Code / Claude │                           │                    │
 │  in Chrome            │──── POST /agent/* ───────▶│  Fastify API :3333 │
-│                       │    (Bearer token)         │  SQLite / Postgres │
+│                       │    (Bearer token)         │  Server control    │
+│                       │                           │  plane (Postgres)  │
 │  Scrapes YouTube, X,  │                           │  MCP server /mcp   │
 │  news using logged-in │◀─── MCP tools/resources ──│  Push sender       │
 │  browser sessions     │                           │                    │
@@ -44,9 +46,10 @@ Postgres in hosted mode belongs to the control plane, not the decrypted feed dat
 
 - self-hosted/local-first backend and PWA flow
 - encrypted relay model between agent, server, and device
-- SQLite persistence for current server-side operational state
 - IndexedDB persistence for client-side feed content
 - MCP, OAuth, SSE, push, source management, and token-management foundations
+- shipped `/api/v1/device/challenge`, `/api/v1/device/verify`, `/api/v1/queue/ack`, versioned device/token routes, tier gating, queue schema, and acceptance tests recorded in `docs/TIER_CONTRACT.md`
+- current server code still contains some local-first assumptions in places, so the Postgres unification work is still roadmap-state
 
 ### What is planned, not finished
 
@@ -60,14 +63,14 @@ Postgres in hosted mode belongs to the control plane, not the decrypted feed dat
 For hosted architecture and sequencing, see:
 - `docs/HOSTED_BACKEND_PLAN.md`
 - `docs/ARCHITECTURE.md`
-- `docs/pre-release-tasks.md`
+- `docs/TIER_CONTRACT.md`
 
 ## Stack
 
 | Layer | Technology | Rationale |
 |---|---|---|
 | **Runtime** | Node.js 20+ | |
-| **Database** | SQLite today, Postgres planned for hosted control plane, IndexedDB for current client content storage | SQLite: current server operational store; Postgres: hosted control-plane target; IndexedDB: client feed store |
+| **Database** | Postgres for the server control plane, IndexedDB for current client content storage | The roadmap converges self-hosted and hosted on one Postgres server DB path; IndexedDB remains the current client feed store |
 | **Backend API** | Fastify | Lightweight HTTP server |
 | **MCP server** | `@modelcontextprotocol/sdk` | Exposes tools + resources to Claude |
 | **Push** | `web-push` (VAPID) | Server-initiated notifications to the PWA |
@@ -98,7 +101,7 @@ ScrolLess/
 ├── vite.config.ts
 ├── server/
 │   ├── index.ts                     # Entry: Fastify setup, auth hook, route registration
-│   ├── db.ts                        # SQLite init, URL normalisation + hashing
+│   ├── db.ts                        # Server DB init, URL normalisation + hashing
 │   ├── auth.ts                      # Token hashing + verification
 │   ├── types.ts                     # Shared TypeScript interfaces
 │   ├── agent-routes.ts              # /agent/* endpoints (Bearer token auth)
@@ -155,7 +158,7 @@ Set optional values as needed:
 
 | Environment variable | Required for |
 |---|---|
-| `DB_PATH` | Custom SQLite location (default: `~/.feed-aggregator/feed.db`) |
+| `DATABASE_URL` | Postgres connection string for the server control plane |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web Push notifications |
 | `VAPID_SUBJECT` | Web Push contact (set to `mailto:you@example.com`) |
 | `BASE_URL` | Backend public URL for OAuth issuer metadata and tunnel/external access |
@@ -165,6 +168,8 @@ Set optional values as needed:
 | `VITE_DEVICE_ENROLLMENT_TOKEN` | Frontend header used for device enrollment when backend `DEVICE_ENROLLMENT_TOKEN` is enabled |
 | `AGENT_RATE_LIMIT_PER_HOUR` | Agent/MCP rate limit (default: `60`) |
 | `OAUTH_CLIENTS_JSON` | OAuth client seed list (JSON array) |
+
+Self-hosters previously running SQLite should plan for a reset/cutover when moving onto the Postgres server path. There is no migration script.
 
 Generate VAPID keys if you want push notifications:
 
@@ -245,9 +250,9 @@ For a stable named tunnel tied to a domain you control, follow the [Cloudflare T
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full deployment instructions.
 
-**Self-hosted**: this is the current supported mode. SQLite, local-first assumptions, single-user operation. Run with `npm run build && npm start`, expose via Cloudflare Tunnel or keep local.
+**Self-hosted**: this is the current supported mode. The current codebase is still local-first in places, but the roadmap now converges self-hosted and hosted onto the same Postgres-backed server control plane. Existing self-hosters should expect a reset/cutover rather than migration tooling when that lands. Run with `npm run build && npm start`, expose via Cloudflare Tunnel or keep local.
 
-**Hosted product**: active roadmap only. Requires real hosted identity, Postgres, tenant isolation, entitlement enforcement, and a completed operator-blind trust model before it should be treated as a supported deployment mode. See `docs/HOSTED_BACKEND_PLAN.md` and `docs/pre-release-tasks.md`.
+**Hosted product**: active roadmap only. Requires real hosted identity, Postgres, tenant isolation, server-enforced entitlements, a completed ciphertext-only trust model, and the web account surface before it should be treated as a supported deployment mode. See `docs/HOSTED_BACKEND_PLAN.md`.
 
 ## Licence
 

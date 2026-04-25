@@ -14,11 +14,11 @@ When this document conflicts with the code, the code wins.
 
 1. **Server is a relay, not a store**: The server should never become a plaintext feed-content backend. Content is intended to live on device, with the server handling relay, routing, queueing, and metadata.
 2. **Two data domains, two storage planes**: ScrolLess has a control plane and a content plane. The control plane lives server-side and stores operational/account data plus ciphertext relay payloads when needed. The content plane lives client-side and stores decrypted feed items and local reading state.
-3. **Encrypted content handling**: The current implementation already uses encrypted relay payloads. Hosted evolution should preserve and harden that model rather than weaken it for convenience.
+3. **Ciphertext-only server handling**: Hosted evolution should preserve and harden the encrypted relay model rather than weaken it for convenience. The server may see documented operational metadata, but feed content stays ciphertext-only.
 4. **MCP-first agent interface**: The primary integration point for AI agents is a Remote MCP server. The underlying REST `/agent/*` endpoints remain available for non-MCP clients.
-5. **Identity must become explicit**: Self-hosted `local`, free-tier `dev_*`, and hosted `usr_*` identities are the intended tiers, but the current implementation still contains local-first assumptions that must be removed before hosted mode is credible.
+5. **Identity must become explicit**: Hosted auth is converging on Clerk-backed `usr_*` identity plus device-scoped `dev_*` challenge/verify identity. The current implementation still contains local-first assumptions that must be removed before hosted mode is credible.
 6. **Prefer structural alignment, not fantasy alignment**: Self-hosted and hosted paths should stay as aligned as practical, but hosted mode should not be documented as "just a config switch" when schema, auth, and identity semantics still differ.
-7. **Installable PWA**: The frontend is a Progressive Web App with push notifications, installable on Android.
+7. **Installable PWA today, Expo later**: The current frontend is a Progressive Web App with push notifications. Expo/native work is a later hosted-client phase, not the current product center.
 
 ---
 
@@ -28,7 +28,7 @@ When this document conflicts with the code, the code wins.
 
 Today the repository is primarily:
 - self-hosted/local-first
-- SQLite-backed
+- still carrying SQLite/local-first assumptions in server code
 - structurally centered on `local` and device-scoped flows
 - partially prepared for `dev_*` and future `usr_*` identities, but not consistently enforced across all route groups
 
@@ -41,11 +41,11 @@ Important caveats from the current codebase:
 ### Target hosted state
 
 The intended hosted architecture is:
-- account-scoped identity (`usr_*`)
+- Clerk-backed account identity (`usr_*`) plus hosted device-scoped free-tier identity (`dev_*`)
 - explicit separation between account identity, device identity, and agent/client identity
 - Postgres-backed multi-tenant persistence for the control plane
 - client-resident feed/content storage for the content plane
-- operator-blind content handling with explicit plaintext-metadata vs ciphertext-payload boundaries
+- ciphertext-only server handling with explicit plaintext-metadata boundaries
 - backend-enforced entitlements and connected-app management
 
 ### Data domains and storage planes
@@ -103,7 +103,7 @@ This is the target hosted direction, not a completed end-to-end implementation.
 
 Planned properties:
 - account-based identity (`usr_*`)
-- multi-device support via a wrapped private key or equivalent hosted key-management model
+- multi-device support via the selected wrapped-key hosted key-management model
 - encrypted relay queue with TTL and per-device delivery tracking
 - historical backfill for additional devices
 - agent encryption against a user/account public key under the same relay-not-reader architecture
@@ -112,25 +112,26 @@ The current codebase contains partial scaffolding for this direction, but not a 
 
 ### Self-Hosted
 
-- `user_id = 'local'`, SQLite, local-first assumptions
+- single-tenant identity remains `user_id = 'local'`
+- storage backend direction is Postgres, using the same server DB codepath as hosted
 - no hosted account middleware
 - same encrypted relay model: server relays ciphertext and does not persist readable feed content
 
-This is the mode the current repository supports most concretely today.
+This is the mode the current repository supports most concretely today, even though some local-first assumptions still need cleanup.
 
 ---
 
 ## Deployment Topology
 
 ```
- Any MCP Client (Claude Code,            Backend (Render / self-hosted)
+ Any MCP Client (Claude Code,            Backend (hosted / self-hosted)
  Claude Desktop, LangChain…)        ┌──────────────────────────────────┐
 ┌────────────────────────┐          │  Fastify Server :3333            │
 │  MCP tools:            │          │  ├── /mcp  (MCP transport)       │
 │  get_sync_context      │── HTTPS ─▶  ├── /agent/* (REST relay)       │
 │  submit_items          │          │  ├── /api/* (PWA + SSE)          │
 └────────────────────────┘          │  ├── /oauth/* (auth server)      │
-                                    │  ├── SQLite / Postgres            │
+                                    │  ├── Postgres control plane      │
  Phone / Desktop (anywhere)         │  ├── Web Push sender             │
 ┌────────────────────────┐          │  └── Cron (cleanup)              │
 │  PWA (Preact)          │══ SSE ══▶  └──────────────────────────────────┘
@@ -139,7 +140,7 @@ This is the mode the current repository supports most concretely today.
 └────────────────────────┘
 ```
 
-**Split hosting (recommended)**: Frontend deployed to Vercel (free tier, global CDN); backend runs on Render (free tier, persistent disk for SQLite). `VITE_API_BASE_URL` points to Render; `CORS_ORIGIN` on the backend points to the Vercel URL.
+**Split hosting (recommended)**: Frontend deployed to Vercel (free tier, global CDN); backend runs on a service with Postgres available for the server control plane. `VITE_API_BASE_URL` points to the backend; `CORS_ORIGIN` on the backend points to the frontend origin.
 
 **Self-hosted**: Cloudflare Tunnel (`cloudflared tunnel --url http://localhost:3333`) provides HTTPS without opening ports. Frontend and backend served from the same Fastify process.
 
@@ -892,11 +893,11 @@ CREATE TABLE relay_queue (
 
 ### Timestamps
 
-All SQLite defaults use `strftime('%Y-%m-%dT%H:%M:%SZ', 'now')` to produce UTC ISO 8601 strings with a `Z` suffix. Client code always appends `Z` when parsing if missing: `new Date(ts.endsWith('Z') ? ts : ts + 'Z')`.
+The SQL examples in this document still show the current SQLite-flavoured timestamp defaults. The server DB direction is Postgres going forward, so production schema work should translate these defaults to Postgres-native equivalents while keeping UTC ISO 8601 semantics. Client code always appends `Z` when parsing if missing: `new Date(ts.endsWith('Z') ? ts : ts + 'Z')`.
 
 ### User Identity Seam
 
-`user_id` is always one of `'local'` | `dev_*` | `usr_*`. Auth middleware resolves this before handing off to route handlers. Every DB query includes `WHERE user_id = ?`. Never hardcode `'local'` except in the self-hosted bootstrap path.
+Self-hosted remains single-tenant with `user_id = 'local'`. Hosted auth must resolve either free-tier `dev_*` device identity or Clerk-backed `usr_*` account identity before handing off to route handlers. Hosted paths must not hardcode or silently fall back to `local`.
 
 ### Source Labels
 
