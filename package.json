@@ -21,7 +21,8 @@
     "test:e2e:update": "playwright test --update-snapshots",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:client": "tsc --noEmit -p src/tsconfig.json",
-    "lint": "npm run typecheck"
+    "lint": "npm run typecheck",
+    "validate:boot": "node scripts/validate-boot.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",
@@ -51,5 +52,8 @@
     "typescript": "^5.4.3",
     "vite": "^5.2.7",
     "vitest": "^4.1.2"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
