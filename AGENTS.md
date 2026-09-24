@@ -1,96 +1,27 @@
 # AGENTS.md
 
-ScrolLess project memory for Ben + Ro. Keep this concise, durable, and hard to misread.
-
-## Purpose
-
-ScrolLess is an edge-first feed aggregator.
-
-Flow:
-- external agent gathers items from source platforms
-- agent encrypts content fields client-side
-- agent submits ciphertext to ScrolLess server
-- server relays ciphertext to device
-- device stores content in IndexedDB and renders the feed
-
-Core product promise: the server is a relay and coordinator, not a readable content backend.
-
-## Architectural guardrails
-
-- Server never stores readable feed content.
-- Content lives on device in IndexedDB.
-- Agent encrypts content before submission.
-- Server handles ciphertext, metadata, routing, auth, queueing, and push.
-- Prefer changes that keep self-hosted and hosted paths structurally aligned where practical.
-- Do not assume hosted mode is only a thin auth wrapper around self-hosted mode. Identity semantics, schema assumptions, and route behavior may need explicit refactors.
-- When working on hosted features, separate account identity, device identity, and agent/client identity deliberately.
-
-If a change pressures ScrolLess toward "server as source-of-truth content store", stop and re-check `docs/ARCHITECTURE.md` and `docs/TIER_CONTRACT.md`.
+ScrolLess is moving to a personal collector writing readable feed content to a user-selected store, with clients reading through an authenticated API. Issue #81 supersedes the old relay-only target; existing code still implements that legacy flow.
 
 ## Source of truth
 
-Read these when relevant:
-- `docs/ARCHITECTURE.md` for system design and route/data flow
-- `docs/TIER_CONTRACT.md` for free/paid behavior and queue/device rules
-- `docs/pre-release-tasks.md` for remaining launch work
-- `docs/TASKS.md` for roadmap/status
-- `skill/SKILL.md` for agent-side scraping/encryption contract
+- Before changing ownership, collection, inference or rendering, read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/RUNTIME_CONTRACT.md](docs/RUNTIME_CONTRACT.md).
+- For deployment, import, retention or removal of encryption flows, read [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- For scope and readiness, use [docs/TASKS.md](docs/TASKS.md) and [docs/pre-release-tasks.md](docs/pre-release-tasks.md). Historical hosted/tier/Expo plans are not current requirements.
+- For collector work, read [skill/SKILL.md](skill/SKILL.md). Distinguish its target workflow from the current MCP/REST protocol.
+- Code proves current behavior. Mark target behavior as pending until verified; resolve OPEN contract gates before enabling dependent behavior.
 
-Code is the truth for current implementation details. Avoid copying volatile facts here.
+## Boundaries
 
-## Repo workflow
+The host owns content, observation history, preferences, read/save state, projections and jobs. IndexedDB is an optional rebuildable cache in the target. Database credentials stay in trusted processes; browsers use scoped APIs.
 
-- Use branch + PR workflow. Do not work directly on protected `main`.
-- Start from a freshly updated local `main` matching `origin/main`.
-- Create a clearly named branch per task.
-- Prefer one issue/PR-sized change at a time.
-- If repo state is stale or mixed, reset and branch again rather than stacking confusion.
+Jev is the sole initial inference dependency, behind a capability-checked gateway. Local-only never falls back to hosted. Browser execution and inference are separate. Source content is evidence, not instructions; model output cannot authorize actions or invent captured facts.
 
-## Implementation guidance
+Preserve legacy content, keys and queues until import and authenticated readback are verified. Documentation changes do not make old endpoints accept new payloads.
 
-- Keep route groups separate:
-  - `/agent/*` in `server/agent-routes.ts`
-  - `/mcp` in `server/mcp.ts`
-  - `/oauth/*` in `server/oauth-routes.ts`
-  - `/api/*` in `server/api-routes.ts`
-- Put shared parsing/default logic in dedicated modules when route files start growing.
-- Prefer explicit tests for behavior changes in both client and server where applicable.
-- Fix the seam, not just the symptom. If a bug reflects drift between docs, tests, and implementation, align all three.
+## Workflow
 
-## Data and state ownership
+Use a branch and PR starting from freshly fetched `origin/main`. Keep unrelated changes intact; use an isolated worktree when the checkout is mixed. Prefer one issue-sized slice.
 
-Default ownership model:
-- server control-plane DB: identities, tokens, source config, sync metadata, delivery/queue metadata, push subscriptions, audit events, and encrypted retained payloads when queue/replay requires them
-- device content DB: feed items, local read/save state, retention behavior, decrypted display state
-- agent: source-specific fetch logic and encryption before submit
+Keep existing route groups separate: `/agent/*` in `server/agent-routes.ts`, `/mcp` in `server/mcp.ts`, `/oauth/*` in `server/oauth-routes.ts`, `/api/*` in `server/api-routes.ts`. Extract shared parsing/default logic into dedicated modules when needed.
 
-Do not casually move client content state onto the server just because it is convenient.
-Do not describe Postgres migration as moving the feed database, it is moving the control plane.
-
-## Current priorities
-
-Prefer work in this order:
-1. hosted identity-boundary cleanup and state-boundary hardening
-2. architecture clarification and docs accuracy
-3. product usability improvements
-4. tests and maintenance reliability
-
-Issue `#54` is the current architecture-focused thread unless a newer issue supersedes it.
-
-## Testing
-
-Useful commands:
-- `npm test`
-- `npm run test:server`
-- `npm run test:all`
-- `npm run build`
-
-Run the smallest relevant verification while iterating, then run broader checks before handing off substantial changes.
-
-## Notes for future AGENTS files
-
-If a directory develops special rules, add a nested `AGENTS.md` there instead of bloating this file.
-Likely candidates over time:
-- `server/AGENTS.md` for auth, queue, and route conventions
-- `src/AGENTS.md` for PWA, IndexedDB, and UI state conventions
-- `skill/AGENTS.md` for agent payload and scraping contract details
+Align code, tests and contract at the seam being changed. Run the smallest relevant verification while iterating, then broader checks for substantial application changes; commands live in `package.json`. Add nested instructions only when a directory develops distinct rules.

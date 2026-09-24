@@ -1,274 +1,59 @@
-# Deployment
+# Deployment and migration
 
-Two supported deployment paths. Both serve the same app — choose based on your hosting preference.
+The [personal-host architecture](ARCHITECTURE.md) is the target. Current code still uses encrypted relay and device-owned IndexedDB; this documentation PR does not provide the new collector, gateway, API or migration tools. Implement deployment and import in [#84](https://github.com/CrowBe/ScrolLess/issues/84), after the #82/#83 runtime foundations.
 
----
+## Current development setup
 
-## Option A: Vercel + Render (recommended, free tier)
-
-Split hosting: Vercel serves the frontend (global CDN), Render runs the backend (persistent disk for SQLite).
-
-### Backend on Render
-
-1. Create a **Web Service** on Render pointing to the repo
-2. Set build command: `npm install`
-3. Set start command: `npm start`
-4. Add a **Disk** (persistent volume) mounted at `/data`
-5. Set environment variables:
-
-```
-NODE_ENV=production
-AGENT_TOKEN_HASH=<sha256 hash of your agent token>
-VAPID_PUBLIC_KEY=<your VAPID public key>
-VAPID_PRIVATE_KEY=<your VAPID private key>
-VAPID_SUBJECT=mailto:you@example.com
-BASE_URL=https://yourapp.onrender.com
-CORS_ORIGIN=https://yourapp.vercel.app
-DB_PATH=/data/feed.db
-TRUST_PROXY=true
-```
-
-`TRUST_PROXY=true` tells Fastify to read the real client IP from `X-Forwarded-For` — required behind Render/Cloudflare/Nginx so the rate limiters bucket by client rather than by proxy.
-
-6. Set `DB_PATH=/data/feed.db` so SQLite data is persisted on the Render disk
-
-> **Note**: Render free tier instances spin down after 15 minutes of inactivity. Push notifications won't fire while spun down. Upgrade to Starter ($7/mo) for always-on.
-
-`BASE_URL` is the backend's own public URL. `CORS_ORIGIN` is the frontend origin allowed to call the API from the browser.
-
-Verify these routes respond from the Render URL:
-- `GET /api/stream` — 401 without `X-Device-Id`, 200 with registered device header
-- `POST /agent/feed-items` — 401 (no token)
-- `GET /oauth/.well-known/oauth-authorization-server` — metadata JSON
-- `/mcp` — MCP endpoint
-
-### Frontend on Vercel
-
-1. Create a **Vercel project** pointing to the same repo
-2. Set framework preset: **Vite**
-3. Build command: `npm run build`
-4. Output directory: `dist/client`
-5. Add environment variables:
-
-```
-VITE_API_BASE_URL=https://yourapp.onrender.com
-# only needed if backend enrollment protection is enabled
-VITE_DEVICE_ENROLLMENT_TOKEN=<match Render DEVICE_ENROLLMENT_TOKEN>
-```
-
-6. Add `vercel.json` at the repo root (see below)
-7. Deploy
-
-Verify:
-- PWA loads from the Vercel URL
-- API calls reach Render (check network tab)
-- Push subscription flow works end-to-end
-- PWA installs on Android via "Add to Home Screen"
-
----
-
-## Option B: Self-Hosted (Cloudflare Tunnel)
-
-Single process serves both frontend and backend. Cloudflare Tunnel provides HTTPS without opening inbound ports.
-
-### Prerequisites
-
-- Node.js 20+
-- `cloudflared` installed:
+Use Node.js 20+ and the repository lockfile:
 
 ```bash
-# Fedora
-sudo dnf install cloudflared
-
-# Or direct download
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
-chmod +x /usr/local/bin/cloudflared
+npm ci
+HOST=127.0.0.1 npm run dev
 ```
 
-### Quick test (temporary URL)
+For a production-build check of the existing application:
 
 ```bash
 npm run build
-npm start &
-cloudflared tunnel --url http://localhost:3333
+HOST=127.0.0.1 npm start
 ```
 
-This gives you a temporary `https://xxx.trycloudflare.com` URL — good for testing.
+The explicit host override matters: [server/index.ts](../server/index.ts) currently defaults to `0.0.0.0`. These commands start the legacy application, not a personal-host collector. Consult the source before exposing it beyond loopback; target authentication requirements are not evidence of existing enforcement.
 
-### Permanent tunnel with custom domain
+Existing configuration is loaded in [server/index.ts](../server/index.ts) and typed in [server/types.ts](../server/types.ts). `DB_PATH` selects the current SQLite operational database, not an authoritative readable feed database. `AGENT_TOKEN_HASH` authenticates existing agent ingestion; `BASE_URL`, `CORS_ORIGIN`, OAuth/device settings and optional VAPID keys serve the current runtime. Client `VITE_*` values are browser-visible and must never contain database or inference secrets.
 
-```bash
-cloudflared tunnel login
-cloudflared tunnel create scrolless
-cloudflared tunnel route dns scrolless feed.yourdomain.com
-```
+Current agent endpoints require encrypted payloads, as defined in [agent-routes.ts](../server/agent-routes.ts) and [legacy payload schema](../skill/resources/schema.json). The existing MCP prompt and platform resources are legacy instructions. Do not send readable target records to them. For historical deployment context see the [archived guide](archive/DEPLOYMENT.md); its hosted roadmap and service-provider instructions are not current deployment recommendations.
 
-Create `~/.cloudflared/config.yml`:
+## Target topology and configuration
 
-```yaml
-tunnel: <TUNNEL_ID>
-credentials-file: /home/<user>/.cloudflared/<TUNNEL_ID>.json
+Run a trusted collector with access to the user's signed-in browser and a host API with access to the configured data store. They may share a machine or use an authenticated connection across the user's network. Readers use the host API, not database credentials or a shared SQLite file. For SQLite, the trusted database process owns the local file; remote machines call its API.
 
-ingress:
-  - hostname: feed.yourdomain.com
-    service: http://localhost:3333
-  - service: http_status:404
-```
+Two configuration groups must be exposed by the implementation (names below are conceptual, not existing environment variables):
 
-Run: `cloudflared tunnel run scrolless`
+| Group | Configuration and validation |
+|---|---|
+| Data connection | Supported adapter, local path or network/API endpoint, credential reference, owner scope, schema version; startup verifies permissions, schema compatibility and atomic/idempotent capabilities |
+| Inference gateway | Configured endpoints and credential references, capability/model versions, routing order, allowed destinations, observation egress and finite budgets; startup rejects incompatible/local-only violations |
 
-### Build and run
+Keep secret values in restricted trusted-process configuration. API authentication distinguishes reader, collector and administration. A private network such as a Tailnet can supply reachability and transport protection; it does not substitute for scoped application authorization. Configure trusted origins and secure transport for remote access. Do not expose an unauthenticated public listener as a setup shortcut.
 
-```bash
-npm run build
-npm start
-```
+The deployment slice must provide a reproducible service/startup procedure, browser-profile access, locked-down listener configuration, bounded scheduling, job status, backup/restore and a smoke test with the reader closed. No specific scheduler, tunnel provider or browser engine is mandated here.
 
-In self-hosted mode, CORS is not needed (same origin). The SPA fallback serves `index.html` for all non-API paths.
+Hosted Jev sends declared selected observations externally even when the database is local. A validated compatible local/LAN endpoint may keep inference within the configured boundary. Declare hardware, quality and latency limitations; local-only failures remain local failures.
 
----
+## Migration: preserve before replacing
 
-## Systemd Services
+1. **Inventory and snapshot.** Record application/schema versions, server database and queue state, every device/origin's IndexedDB feed, read/save state and preferences. Back up the operational database consistently, including any journal state through an appropriate backup mechanism. A server backup alone does not contain today's readable device feed.
+2. **Preserve decryption access.** Keep the original browser profiles/origins and device keys usable. Non-extractable keys cannot be assumed exportable. Decrypt/export within the owning device context while the legacy code still works. A missing device/key is an explicit unresolved migration case.
+3. **Import into separate target storage.** Authenticate the import; validate a versioned export; attach original identity/provenance and migration batch IDs. Import content and user state idempotently. Resolve cross-device duplicates and read/save conflicts explicitly; do not silently drop one device's records. Existing excerpts are partial source evidence, not invented full articles.
+4. **Verify durable readback.** Compare export/import receipts, counts, identities, field fingerprints, saved/read state and preferences. Read through the authenticated target API and render representative records. Restart the host and verify again. Track rejected/missing records; an HTTP success alone is insufficient.
+5. **Cut over deliberately.** Quiesce legacy writers, reconcile late changes and remaining encrypted queues, then switch readers/collectors. Keep the old data and a documented rollback path. Target storage starts as authoritative only after verification; prior offline client mutations need reconciliation.
+6. **Retire old paths.** After verified import and explicit completion of the rollback window, remove device content-key dependencies, ciphertext submission, relay queues and legacy prompts/routes in a dedicated implementation change. Revoke obsolete credentials as appropriate. Destructive cleanup requires a deliberate user action; do not couple it to startup or cache eviction.
 
-### ScrolLess server
+No reset/cutover without preservation is the default. Queue TTL is not an import strategy. If unreadable queued payloads or inaccessible devices remain, report the gap and retain the originals rather than claiming complete migration.
 
-Create `~/.config/systemd/user/scrolless.service`:
+## Backup and readiness
 
-```ini
-[Unit]
-Description=ScrolLess Feed Aggregator
-After=network-online.target
+Target backups cover authoritative content, ledger, preferences/user state, projections and jobs plus schema versions. Search indexes and acknowledged reader caches are rebuildable. Browser login/session recovery and secret recovery are separate from content backup. Restore to an isolated location and verify API readback and job recovery before declaring a backup usable.
 
-[Service]
-Type=simple
-WorkingDirectory=/path/to/ScrolLess
-ExecStart=/usr/bin/node --import tsx server/index.ts
-Environment=NODE_ENV=production
-EnvironmentFile=%h/.config/scrolless/env
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=default.target
-```
-
-Create the env file:
-
-```bash
-mkdir -p ~/.config/scrolless
-cat > ~/.config/scrolless/env << 'EOF'
-AGENT_TOKEN_HASH=<your hash>
-VAPID_PUBLIC_KEY=<key>
-VAPID_PRIVATE_KEY=<key>
-VAPID_SUBJECT=mailto:you@example.com
-EOF
-chmod 600 ~/.config/scrolless/env
-```
-
-Enable and start:
-
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now scrolless
-sudo loginctl enable-linger $USER
-```
-
-### Cloudflare Tunnel (self-hosted only)
-
-```bash
-# cloudflared has its own systemd integration:
-cloudflared service install
-systemctl --user enable --now cloudflared
-```
-
-Or create a manual unit at `~/.config/systemd/user/cloudflared.service` pointing to your config.
-
----
-
-## Vercel Configuration
-
-Add `vercel.json` at the repo root:
-
-```json
-{
-  "rewrites": [
-    { "source": "/((?!api/|agent/|mcp|oauth/|.*\\..*).*)", "destination": "/index.html" }
-  ]
-}
-```
-
-This routes only frontend SPA paths to `index.html`, avoids rewriting backend route groups in split-hosting deployments, and leaves asset requests alone.
-
----
-
-## VAPID Key Generation
-
-Required for push notifications. Generate once and store permanently:
-
-```bash
-npx web-push generate-vapid-keys
-```
-
-Add the public and private keys to your environment.
-
----
-
-## Agent Token Setup
-
-```bash
-# Generate a random token
-npm run generate-token
-# Output: e.g. a1b2c3d4...
-
-# Hash it for the server
-node -e "const c=require('crypto');const t='YOUR_TOKEN_HERE';console.log(c.createHash('sha256').update(t).digest('hex'))"
-
-# Store the HASH in AGENT_TOKEN_HASH
-# Store the PLAINTEXT token in your agent's MCP config or script
-```
-
----
-
-## Claude Code Scheduled Sync
-
-Once deployed, set up automatic feed syncing with Claude Code:
-
-### 1. Configure the MCP server
-
-Add to `~/.claude/mcp_servers.json`:
-
-```json
-{
-  "scrolless": {
-    "type": "streamable-http",
-    "url": "https://feed.yourdomain.com/mcp",
-    "headers": {
-      "Authorization": "Bearer YOUR_PLAINTEXT_TOKEN"
-    }
-  }
-}
-```
-
-### 2. Enable Chrome connector
-
-The agent needs browser access to scrape logged-in feeds (YouTube subscriptions, X timeline). Enable the Claude in Chrome connector.
-
-### 3. Set up recurring sync
-
-In Claude Code, use a loop or schedule:
-
-```
-/loop 30m Use the run_feed_sync prompt from the ScrolLess MCP server.
-```
-
-Or with `/schedule` for background operation:
-
-```
-/schedule every 30 minutes: Use the run_feed_sync prompt from the scrolless MCP server.
-```
-
-### 4. Verify
-
-- Check the PWA feed updates automatically
-- Check `GET /api/sync/status` shows recent sync times
-- Push notifications arrive on your phone when new items land
+See [release gates](pre-release-tasks.md) and the [runtime policy gates](RUNTIME_CONTRACT.md#implementation-gates). This document specifies required evidence; it does not claim that backups, scheduling or migration have already been implemented.

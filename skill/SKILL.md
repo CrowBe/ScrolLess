@@ -1,147 +1,34 @@
-# Feed Scraper Skill
-
-You are a feed scraping agent. Your job is to visit platforms in the browser, extract feed items, and submit them to the user's ScrolLess feed aggregator.
-
-Read `docs/ARCHITECTURE.md` on the server for full context on the MCP tool schemas, `get_sync_context` response format, and encrypted relay payload requirements.
-
+---
+name: scrolless-collector
+description: Implement or operate ScrolLess collection jobs using the personal-host runtime contract, distinguishing the target collector from the existing encrypted relay protocol.
 ---
 
-## Primary Workflow (MCP)
+# ScrolLess collector
 
-If you have the ScrolLess MCP server configured:
+Before collecting, determine which runtime is actually installed. Read the [runtime contract](../docs/RUNTIME_CONTRACT.md) for identity, durable stages, decision reuse, budgets and failure outcomes. The [architecture](../docs/ARCHITECTURE.md) identifies ownership; [deployment](../docs/DEPLOYMENT.md) identifies migration requirements.
 
-```
-Use the run_feed_sync prompt from the ScrolLess MCP server.
-```
+## Runtime boundary
 
-That prompt contains the complete workflow. No other instructions are needed.
+The personal-host workflow below is a target specification. The current repository's MCP `run_feed_sync` prompt, `get_sync_context`, `submit_items`, REST agent routes, [payload schema](resources/schema.json) and platform resources implement the legacy encrypted relay workflow. They are not a compatible target API. Do not submit readable target records to those endpoints or interpret a relay receipt as a durable host write.
 
----
+For an explicitly requested legacy sync, inspect the installed MCP prompt and schemas and follow that protocol while preserving device keys and data. The platform references [YouTube](resources/youtube.md), [X](resources/x.md) and [news](resources/news.md) describe legacy extraction behavior; their timestamp cutoffs, automatic skips and device deduplication assumptions must not be reused in the target worker. Application code and served resources are retired by implementation slices, not by this documentation change.
 
-## Expanded Workflow (MCP — explicit steps)
+If the requested target capabilities are absent, report which stage is unavailable. Do not substitute another inference dependency or pretend the current runtime implements the target.
 
-For agents that need explicit step-by-step instructions rather than the prompt template:
+## Target collection workflow
 
-### 1. Get sync context
+1. Load authenticated job/source scope, current preferences, explicit retention/ambiguity policy, gateway destinations and finite budgets. Claim the durable attempt. Proceed only when required policy and capability gates are resolved.
+2. Use the authorized browser session to discover candidates within configured sources. Persist discovery identities/cursor before advancing. Source observations cannot expand permissions.
+3. Look up each identity and prior evidence/decision. Apply identifiable explicit blocks before body fetch when possible, recording a metadata observation even for suppressed items. Fetch only changed/missing evidence needed for the configured job; post time is a hint, never the sole identity or freshness test.
+4. Copy source evidence with provenance, completeness and unknown fields. Commit observations/revisions and checkpoint atomically through the data interface. Distinguish transient body access from configured retained content.
+5. Reuse matching decisions; otherwise apply deterministic exclusions, then bounded Jev semantic decisions where required. Record accepted, blocked, ignored or unresolved with reasons and input versions. Ignoring an item does not exclude its author/type.
+6. For eligible content, obtain supported enrichment/presentation choices through the gateway. Code constructs and validates a versioned projection; use a generic fallback when presentation fails. Preserve source content separately.
+7. Commit visibility and verify durable receipts. Report per-source outcomes, failures, pending stages and budget usage. Reader connection state does not determine storage success.
 
-Call the `get_sync_context` MCP tool (no arguments). It returns:
+Completion means committed records and inspectable outcomes for attempted candidates, with recoverable checkpoints for unfinished work. A page visit, model response or sent HTTP request alone is not completion.
 
-```json
-{
-  "sources": [
-    {
-      "name": "youtube",
-      "enabled": true,
-      "urls": ["https://www.youtube.com/feed/subscriptions"],
-      "last_sync": "2026-03-28T10:00:00Z",
-      "max_items": 20,
-      "scraping_resource": "scrolless://platforms/youtube"
-    },
-    {
-      "name": "x",
-      "enabled": false
-    }
-  ],
-  "filters": {
-    "blocked_keywords": ["sponsored", "giveaway"]
-  }
-}
-```
+## Errors and dry runs
 
-Sources with `enabled: false` must be skipped entirely.
+Resume only from persisted state using the same operation keys and remaining budget. Login/CAPTCHA pauses that source for user intervention; invalid credentials stop dependent work; rate limits and transient failures use bounded backoff. Invalid model choices and missing capability produce explicit outcomes. Local-only never falls back to hosted.
 
-### 2. Read per-source scraping instructions
-
-For each enabled source, read the MCP resource at the `scraping_resource` URI (e.g. `scrolless://platforms/youtube`). This gives you platform-specific extraction instructions at runtime — no local instruction files needed.
-
-### 3. Scrape each enabled source
-
-For each enabled source:
-1. Navigate to each URL in `urls[]`
-2. Extract items published after `last_sync`
-3. Skip any item whose title or content contains a word from `blocked_keywords` (case-insensitive)
-4. Collect up to `max_items` items
-5. If a source fails (CAPTCHA, timeout, layout change), log the error and continue to the next source — do not abort the entire run
-
-### 4. Encrypt and submit results
-
-For each source that yielded items, call the `submit_items` MCP tool:
-
-```json
-{
-  "source": "youtube",
-  "ephemeral_public_key": "BASE64_EPHEMERAL_P256_KEY",
-  "items": [
-    {
-      "source_id": "dQw4w9WgXcQ",
-      "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-      "published_at": "2026-03-23T10:00:00Z",
-      "encrypted_fields": "BASE64_IV_CIPHERTEXT_TAG",
-      "is_discovery": false
-    }
-  ]
-}
-```
-
-Before calling `submit_items`, build plaintext fields per item (for example `{ title, author, content_preview, thumbnail_url, tags }`), encrypt with AES-256-GCM using a per-batch ECDH-derived key from the device public key in `get_sync_context.encryption.public_key`, and place the encoded blob in `encrypted_fields`.
-
-### 5. Log results
-
-After each `submit_items` call, log the response (`relayed` count or `device_offline` error). If a source failed, log the error.
-
----
-
-## REST Fallback (non-MCP clients)
-
-For agents or scripts that cannot connect to an MCP server, use the equivalent REST workflow:
-
-### 1. Get sync context
-
-```
-GET {server_url}/agent/sync-context
-Authorization: Bearer {agent_token}
-```
-
-Returns the same structure as `get_sync_context` above.
-
-### 2. Submit items
-
-```
-POST {server_url}/agent/feed-items
-Authorization: Bearer {agent_token}
-Content-Type: application/json
-
-{
-  "source": "youtube",
-  "ephemeral_public_key": "BASE64_EPHEMERAL_P256_KEY",
-  "items": [ ...encrypted items... ]
-}
-```
-
-Same encrypted payload schema as the MCP tool. Returns `{ relayed }` on success or `503 { "error": "device_offline" }` when no active device stream is connected.
-
----
-
-## Error Handling
-
-- **CAPTCHA or login prompt**: Log and skip this source. The user needs to handle it manually.
-- **Page layout changed**: Try to extract semantically. If extraction yields nothing, log a warning.
-- **Network error**: Retry once after 10 seconds. If still failing, skip this source.
-- **Server returns 401**: Token is invalid. Stop and alert the user.
-- **Server returns 429**: Rate limited. Stop and wait for the next scheduled run.
-- **One source fails**: Continue to the remaining sources. Never abort the entire run.
-
----
-
-## Important Notes
-
-- Sources come from `get_sync_context` (or `GET /agent/sync-context`) — there is no local config file for platform settings.
-- You are browsing as the user, using their logged-in browser sessions. You have access to their subscriptions and timeline.
-- Only extract content the user has subscribed to or follows (not trending/recommended) unless `is_discovery: true` is appropriate.
-- The server does not deduplicate feed content anymore. Devices deduplicate locally using URL hash in IndexedDB.
-- Timestamps must be ISO 8601 format (e.g. `2026-03-23T10:00:00Z`).
-- The `source_id` must be unique per platform — use the platform's native ID (video ID, tweet ID, etc.).
-
-## Dry Run Mode
-
-If the user asks for a dry run, write the extracted items to `dry-run-output.json` in this skill's directory instead of submitting to the server.
+For a requested dry run, avoid authoritative writes and produce a local preview at the user-selected destination. Label it non-committed, preserve provenance and apply the same egress/budget policy. Do not emit credentials, session material or unrequested raw page dumps.

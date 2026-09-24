@@ -1,78 +1,21 @@
-# ScrolLess Roadmap
+# Replacement backlog
 
-This document is now a short top-level roadmap, not the detailed hosted execution plan.
+The personal-host direction supersedes the old relay/hosted architecture. [Architecture](ARCHITECTURE.md) defines ownership; [runtime contract](RUNTIME_CONTRACT.md) defines behavior and OPEN gates. GitHub issues own scoped execution; this table records sequence, not completed implementation.
 
-For hosted backend/server work, use:
-- `docs/HOSTED_BACKEND_PLAN.md` as the canonical source of truth
+| Order | Issue | Deliverable and dependency |
+|---|---|---|
+| 1 | [#81](https://github.com/CrowBe/ScrolLess/issues/81) | Documentation/runtime contract only; this change |
+| 2 | [#82](https://github.com/CrowBe/ScrolLess/issues/82) | One real browser source through Jev, SQLite and reader; resolve first-slice contract gates |
+| 3 | [#83](https://github.com/CrowBe/ScrolLess/issues/83) | Resumable collection and revision-aware decisions; prove interruptions and reuse |
+| 4 | [#84](https://github.com/CrowBe/ScrolLess/issues/84) | Scheduling, personal-host deployment, backups and verified existing-data migration |
+| 5 | [#85](https://github.com/CrowBe/ScrolLess/issues/85) | Search the captured corpus independently of presentation |
+| 6 | [#86](https://github.com/CrowBe/ScrolLess/issues/86) | Topical news discovery entering the same collection pipeline |
+| 7 | [#87](https://github.com/CrowBe/ScrolLess/issues/87) | Ownership-aware deletion/reset for host data, observation history and client cache |
 
-Use this document for:
-- top-level product direction
-- self-hosted vs hosted sequencing
-- concise orientation for contributors
+Search, discovery and reset may be prioritized independently once their foundations exist. A slice may implement only one supported adapter/engine; it must not weaken the durable contract to imply broader support.
 
----
+[#54](https://github.com/CrowBe/ScrolLess/issues/54) and [#56](https://github.com/CrowBe/ScrolLess/issues/56) were closed as superseded, not completed implementations. #81 replaces #54's architectural premise; #87 carries forward deletion work under the new ownership model.
 
-## 1. Current product lanes
+Tier billing, multi-tenant hosted identity, mandatory Postgres migration and Expo entitlements gates are [archived plans](archive/README.md). Additional stores, engines or native clients need separately scoped decisions. Existing UI improvements may be revisited against current code; old unchecked lists are not proof of remaining bugs.
 
-### Self-hosted ScrolLess
-
-Status:
-- real and usable now
-- still needs product tightening and polish
-
-Main goals:
-- improve setup and deployment confidence
-- improve sync observability and settings clarity
-- preserve the relay-not-reader architecture
-- keep the self-hosted open-source experience credible
-
-### Hosted ScrolLess Cloud
-
-Status:
-- active product and architecture lane
-- not yet production-ready
-
-Main goals:
-- build a real hosted control plane
-- preserve ciphertext-only server handling for feed content
-- add identity, entitlements, account management, and production-grade operations
-
-All detailed hosted sequencing, phases, production-readiness requirements, and issue breakdown now live in `docs/HOSTED_BACKEND_PLAN.md`.
-
----
-
-## 2. Priority order
-
-1. Keep the current self-hosted product trustworthy and usable
-2. Execute hosted foundation work in the order defined by `docs/HOSTED_BACKEND_PLAN.md`
-3. Only advance native/mobile client work once hosted Phase 3 (entitlements) is complete, following the Phase 5 gate in `docs/HOSTED_BACKEND_PLAN.md`
-
----
-
-## 3. Contributor guidance
-
-Before starting work:
-
-1. read `docs/ARCHITECTURE.md`
-2. read `docs/TIER_CONTRACT.md` if the task touches auth, queueing, delivery, privacy, or tier behavior
-3. read `docs/HOSTED_BACKEND_PLAN.md` if the task touches hosted/server work
-4. inspect the implementation before trusting older assumptions
-
-Rules of thumb:
-- code beats stale planning text
-- architecture docs define constraints
-- the hosted backend plan defines hosted execution order
-- GitHub issues define scoped execution work
-
----
-
-## 4. Backlog structure
-
-Use GitHub Issues as the source of truth for scoped work.
-
-Recommended interpretation:
-- **document** = strategy, architecture, or contract
-- **issue** = concrete executable work
-- **PR** = implementation vehicle
-
-If this roadmap starts duplicating the hosted plan again, trim it rather than letting two planning docs drift.
+Before implementation, link the applicable runtime contract sections and resolve that slice's policy gates. Before release, provide the evidence in [pre-release tasks](pre-release-tasks.md).

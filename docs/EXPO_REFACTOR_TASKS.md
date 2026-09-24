@@ -1,14 +1,7 @@
-# Expo Refactor Tasks
+# Expo Refactor Tasks — superseded
 
-This document is superseded.
+Issue [#81](https://github.com/CrowBe/ScrolLess/issues/81) replaces this plan. It is not an implementation prerequisite or current product commitment.
 
-The canonical execution plan now lives in:
-- `docs/HOSTED_BACKEND_PLAN.md`
+Use the [architecture](ARCHITECTURE.md), [runtime contract](RUNTIME_CONTRACT.md) and [replacement backlog](TASKS.md). Tier billing, multi-tenant hosted service and Expo/native work are outside the agreed initial scope.
 
-Expo/native tasks are now in **Phase 5** of that document.
-Mobile work is explicitly **Phase-5-gated behind hosted Phase 3** (entitlements).
-
-Use the Phase 5 task list instead:
-- `docs/HOSTED_BACKEND_PLAN.md` §Phase 5 (`P5-T01` .. `P5-T44`)
-
-Do not maintain a separate Expo task list here.
+The [historical snapshot](archive/EXPO_REFACTOR_TASKS.md) preserves the former design; existing code may still implement parts of it. Superseded does not mean implemented or removed.

@@ -1,88 +1,19 @@
-# Pre-Release Tasks
+# Personal-host release gates
 
-This document is no longer the main hosted planning doc.
+These are pending verification requirements for the target runtime, not claims that today's relay application passes them. Use the [backlog](TASKS.md) for scope and the [runtime contract](RUNTIME_CONTRACT.md) for semantics.
 
-For hosted backend/server execution, use:
-- `docs/HOSTED_BACKEND_PLAN.md`
+- [ ] **One-source proof (#82):** a real signed-in browser observation passes through the configured Jev gateway into the authoritative store and is read through the authenticated API. Closing the reader does not prevent durable capture.
+- [ ] **Policies (#82):** hidden-body retention and unresolved/stale eligibility behavior are explicitly selected, documented and tested. Unknown evidence is represented without invented facts.
+- [ ] **Inference (#82):** validate required capabilities, quality and finite budgets. Exercise malformed output, abstention, timeout and incompatible local endpoints. Verify local-only never contacts hosted inference and declared egress matches actual observations.
+- [ ] **Authorization (#82):** reader, collector and administration scopes enforce owner/source boundaries; browser bundles contain no database/inference credentials. Private-network deployment still enforces API access.
+- [ ] **Durability (#83):** repeated unchanged items reuse decisions; edited items invalidate correctly; blocked/ignored history survives body expiry. Kill/restart during stages and ambiguous writes; verify checkpoint, idempotency, fencing and budget recovery.
+- [ ] **Rendering (#82/#83):** projections persist across reads, unknown versions degrade to generic cards, source content remains intact and read/save/navigation/accessibility stay deterministic.
+- [ ] **Operations (#84):** bounded scheduling survives restarts, reports source failures and does not overlap work unsafely. Verify deployment on the selected personal host/network topology.
+- [ ] **Migration (#84):** preserve each device's content, keys and user state; import with receipts; verify authenticated readback after restart; reconcile remaining queues; exercise rollback before retiring legacy flows.
+- [ ] **Restore (#84):** restore an authoritative backup to an isolated location and verify feed, ledger, saved/read state and resumed jobs. Declare unavailable device/key cases.
+- [ ] **Search (#85):** index source content independently of projections; enforce current eligibility after preference changes and rebuild without inference.
+- [ ] **Discovery (#86):** record acquisition provenance and use the same identity, eligibility and budget rules as subscription collection.
+- [ ] **Deletion (#87):** separate host bodies, history, user preferences and client cache; show effects on recapture, backups and pending offline mutations before deletion.
+- [ ] **Documentation:** mark implemented versus pending behavior honestly; verify links, current commands and active guidance. Historical plans remain clearly superseded.
 
-This file should stay focused on release-readiness checks that are still useful outside the hosted execution plan.
-
----
-
-## 1. Self-hosted release readiness
-
-These are the highest-value remaining checks for the open-source self-hosted product.
-
-### PWA Icons Missing
-
-`src/icons/` contains only a README. `manifest.json` references `icon-192.png` and `icon-512.png` which do not exist. Without them the "Add to Home Screen" prompt uses a browser default icon and push notifications show no icon.
-
-Generate or design two PNGs:
-- `src/icons/icon-192.png` — 192×192
-- `src/icons/icon-512.png` — 512×512
-
----
-
-### Danger Zone / Data Deletion
-
-Make sure local reset/deletion semantics match the actual runtime model.
-
-What to verify or finish:
-- any destructive UI clearly matches what is actually deleted
-- local content deletion does not imply server-side feed deletion that does not exist
-- preference reset behavior is explicit and reversible where appropriate
-
----
-
-### Card Thumbnails Not Rendered
-
-`thumbnail_url` is stored and returned in the API but none of the three card components display it. YouTube cards without thumbnails are significantly harder to scan.
-
-Each card should render the thumbnail in its collapsed or relevant state:
-- `youtube-card.tsx` — thumbnail left of title
-- `news-card.tsx` — thumbnail in expanded state
-- `x-card.tsx` — inline if `thumbnail_url` is set
-
----
-
-### Saved Tab Empty State Copy
-
-When the Saved tab is empty it should describe saved/bookmarked behavior, not initial sync behavior.
-
----
-
-### Sync Status Per-Source Detail
-
-The header widget shows a single "Synced X ago". If one source errored or stalled, this is invisible.
-
-Add per-source sync detail in either:
-- an expandable panel in `SyncStatus`, or
-- the Settings screen
-
----
-
-## 2. Cross-cutting release checks
-
-### Preferences clarity
-
-Ensure preference editing is visible, understandable, and consistent with actual agent/server behavior.
-
-### Deployment confidence
-
-Ensure the self-hosted deployment path remains clearly documented and tested enough to be trustworthy for real users.
-
-### Architecture consistency
-
-Before release, confirm:
-- docs still match implementation
-- relay-not-reader constraints still hold
-- no new feature has turned the server into a plaintext feed-content store
-
----
-
-## 3. Hosted note
-
-Hosted launch readiness, hosted production-grade gaps, identity work, Postgres control-plane migration, encryption/privacy completion, billing, operator concerns, and Expo/native sequencing are all owned by:
-- `docs/HOSTED_BACKEND_PLAN.md`
-
-Do not rebuild a second hosted or Expo checklist here.
+Run tests and builds appropriate to each implementation slice. A documentation-only change requires link, scope and consistency review; it does not establish runtime readiness. The old icon/thumbnail/status defect list is retired rather than copied forward without revalidation.
