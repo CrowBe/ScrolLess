@@ -2,6 +2,10 @@
 
 The [personal-host architecture](ARCHITECTURE.md) is the target. Current code still uses encrypted relay and device-owned IndexedDB; this documentation PR does not provide the new collector, gateway, API or migration tools. Implement deployment and import in [#84](https://github.com/CrowBe/ScrolLess/issues/84), after the #82/#83 runtime foundations.
 
+## Former Vercel integration
+
+Vercel Git deployment is disconnected for this repository. Use the local setup below and the target personal-host deployment work in #84. Existing Vercel deployments are retained, not retired; see the [removal record](VERCEL_REMOVAL.md) for external settings, verification and remaining cleanup. Archived provider instructions are historical only.
+
 ## Current development setup
 
 Use Node.js 20+ and the repository lockfile:
