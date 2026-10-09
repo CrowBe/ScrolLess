@@ -32,6 +32,8 @@ export interface AppPreferences {
   blocked_keywords: string[];
   max_items_per_source: number;
   session_size: number;
+  /** Share of each session reserved for discovery cards (0–0.5). */
+  exploration_share: number;
 }
 
 export function getPreferences(): Promise<AppPreferences> {
@@ -162,6 +164,49 @@ export function getFeedItems(params: { view?: string; source?: string; cursor?: 
   if (params.cursor) query.set('cursor', params.cursor);
   if (params.limit) query.set('limit', String(params.limit));
   return req<FeedPage>(`/api/items?${query.toString()}`);
+}
+
+export type SessionSlot = 'ranked' | 'discovery' | 'recent';
+
+export interface SessionItem extends FeedItem {
+  session: { slot: SessionSlot; score: number; reasons: string[] };
+}
+
+export interface SessionPage {
+  ranking_version: string;
+  size: number;
+  exploration_share: number;
+  discovery_count: number;
+  feedback_count: number;
+  items: SessionItem[];
+}
+
+/** Draw one swipe session ranked by learned taste, with discovery cards mixed in. */
+export function getSession(params: { view: 'feed' | 'discover'; source?: string }): Promise<SessionPage> {
+  const query = new URLSearchParams({ view: params.view });
+  if (params.source) query.set('source', params.source);
+  return req<SessionPage>(`/api/items/session?${query.toString()}`);
+}
+
+export interface TasteEntry {
+  name: string;
+  source?: string;
+  score: number;
+  likes: number;
+  saves: number;
+  dislikes: number;
+}
+
+export interface TasteSummary {
+  feedback: { total: number; likes: number; saves: number; dislikes: number; latest_at: string | null };
+  liked: Record<'sources' | 'authors' | 'types' | 'tags', TasteEntry[]>;
+  passed: Record<'sources' | 'authors' | 'types' | 'tags', TasteEntry[]>;
+  summary: string;
+}
+
+/** Learned taste, the same summary the agent reads. */
+export function getTaste(): Promise<TasteSummary> {
+  return req<TasteSummary>('/api/taste');
 }
 
 export function getFeedStats(): Promise<FeedStats> {

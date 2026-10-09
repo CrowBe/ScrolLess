@@ -48,6 +48,9 @@ function CardFace({ item }: CardFaceProps) {
           <span class="swipe-card__source">{displayName(item.source)}</span>
           {item.author && <span class="swipe-card__author">{item.author}</span>}
           <span class="swipe-card__time">{relativeTime(item.published_at)}</span>
+          {item.session_slot === 'discovery' && (
+            <span class="swipe-card__badge" title="Something different from your usual likes">Discovery</span>
+          )}
         </div>
         <h2 class="swipe-card__title">{item.title}</h2>
         {item.content_preview && <p class="swipe-card__preview">{item.content_preview}</p>}

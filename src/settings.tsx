@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
-import { getSources, getTokens, createToken, revokeToken, getPreferences, updatePreferences } from './api';
+import { getSources, getTokens, createToken, revokeToken, getPreferences, updatePreferences, getTaste } from './api';
 import type { UserSource } from './types';
 import type { AgentToken, AppPreferences } from './api';
 import { SourceList } from './components/source-list';
@@ -154,8 +154,13 @@ function PreferencesSection() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [tasteSummary, setTasteSummary] = useState<string | null>(null);
 
   const loadPreferences = useCallback(async () => {
+    // Optional context; the preferences form works without it
+    getTaste()
+      .then((taste) => setTasteSummary(taste.summary))
+      .catch((err) => console.warn('Failed to load taste summary:', err));
     try {
       const prefs = await getPreferences();
       setPreferences(prefs);
@@ -190,6 +195,7 @@ function PreferencesSection() {
         blocked_keywords: nextBlockedKeywords,
         max_items_per_source: preferences.max_items_per_source,
         session_size: preferences.session_size,
+        exploration_share: preferences.exploration_share,
       });
       setPreferences(updated);
       setBlockedKeywordsInput(updated.blocked_keywords.join(', '));
@@ -224,6 +230,7 @@ function PreferencesSection() {
     <section class="settings__section">
       <h2 class="settings__heading">Preferences</h2>
       <p class="settings__help">Control feed filtering and storage behavior.</p>
+      {tasteSummary && <p class="settings__help">Learned taste: {tasteSummary}</p>}
       <form class="settings__prefs-form" onSubmit={handleSave}>
         <label class="settings__prefs-field">
           <span class="settings__prefs-label">Blocked keywords</span>
@@ -257,6 +264,29 @@ function PreferencesSection() {
             }}
           />
           <span class="settings__help">How many cards each swipe session holds before you're caught up.</span>
+        </label>
+
+        <label class="settings__prefs-field">
+          <span class="settings__prefs-label">Discovery share (%)</span>
+          <input
+            class="form-input settings__prefs-number"
+            type="number"
+            min="0"
+            max="50"
+            step="5"
+            value={String(Math.round(preferences.exploration_share * 100))}
+            onInput={(e) => {
+              setPreferences({
+                ...preferences,
+                exploration_share: Number((e.target as HTMLInputElement).value) / 100,
+              });
+              setSaved(false);
+            }}
+          />
+          <span class="settings__help">
+            Sessions are ranked by what you like. This share of each session is held back for things you
+            haven't shown a taste for yet.
+          </span>
         </label>
 
         <label class="settings__prefs-field">

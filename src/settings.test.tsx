@@ -9,13 +9,14 @@ vi.mock('./api', () => ({
   revokeToken: vi.fn(),
   getPreferences: vi.fn(),
   updatePreferences: vi.fn(),
+  getTaste: vi.fn(),
 }));
 
 vi.mock('./idb', () => ({
   openScrollessDb: vi.fn(),
 }));
 
-import { createToken, getSources, getTokens, getPreferences, updatePreferences } from './api';
+import { createToken, getSources, getTokens, getPreferences, getTaste, updatePreferences } from './api';
 
 describe('Settings', () => {
   beforeEach(() => {
@@ -26,11 +27,14 @@ describe('Settings', () => {
       blocked_keywords: ['sponsored'],
       max_items_per_source: 50,
       session_size: 20,
+      exploration_share: 0.25,
     });
+    (getTaste as ReturnType<typeof vi.fn>).mockResolvedValue({ summary: 'Based on 3 swipes. Leans toward: topics rust.' });
     (updatePreferences as ReturnType<typeof vi.fn>).mockImplementation(async (payload) => ({
       blocked_keywords: payload.blocked_keywords ?? ['sponsored'],
       max_items_per_source: payload.max_items_per_source ?? 50,
       session_size: payload.session_size ?? 20,
+      exploration_share: payload.exploration_share ?? 0.2,
     }));
   });
 
@@ -141,6 +145,9 @@ describe('Settings', () => {
     const maxItemsInput = screen.getByDisplayValue('50');
     fireEvent.input(maxItemsInput, { target: { value: '75' } });
 
+    expect(await screen.findByText(/Learned taste: Based on 3 swipes/)).toBeInTheDocument();
+    fireEvent.input(screen.getByDisplayValue('25'), { target: { value: '30' } });
+
     fireEvent.click(screen.getByRole('button', { name: 'Save preferences' }));
 
     await waitFor(() => {
@@ -148,6 +155,7 @@ describe('Settings', () => {
         blocked_keywords: ['sponsored', 'giveaway'],
         max_items_per_source: 75,
         session_size: 12,
+        exploration_share: 0.3,
       });
     });
 

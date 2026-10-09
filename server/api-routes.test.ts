@@ -93,6 +93,7 @@ describe('GET/PATCH /api/preferences', () => {
       blocked_keywords: ['sponsored'],
       max_items_per_source: 50,
       session_size: 20,
+      exploration_share: 0.2,
     });
   });
 
@@ -111,6 +112,7 @@ describe('GET/PATCH /api/preferences', () => {
       blocked_keywords: ['sponsored', 'giveaway'],
       max_items_per_source: 25,
       session_size: 20,
+      exploration_share: 0.2,
     });
 
     const rows = db.prepare(
@@ -534,6 +536,46 @@ describe('/api/items (host content)', () => {
     expect(ok.json()).toMatchObject({ session_size: 10 });
   });
 
+  it('validates exploration_share bounds', async () => {
+    expect((await app.inject({ method: 'PATCH', url: '/api/preferences', payload: { exploration_share: 0.9 } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'PATCH', url: '/api/preferences', payload: { exploration_share: -0.1 } })).statusCode).toBe(400);
+    const ok = await app.inject({ method: 'PATCH', url: '/api/preferences', payload: { exploration_share: 0 } });
+    expect(ok.json()).toMatchObject({ exploration_share: 0 });
+  });
+
+  it('draws a session newest first until there is feedback, then ranks by taste', async () => {
+    const cold = await app.inject({ method: 'GET', url: '/api/items/session' });
+    expect(cold.statusCode).toBe(200);
+    const coldBody = cold.json() as { size: number; feedback_count: number; items: Array<{ title: string; session: { slot: string } }> };
+    expect(coldBody).toMatchObject({ size: 20, feedback_count: 0, ranking_version: 'rank1' });
+    expect(coldBody.items.map((i) => [i.title, i.session.slot])).toEqual([['Second', 'recent'], ['First', 'recent']]);
+
+    const discover = await app.inject({ method: 'GET', url: '/api/items/session?view=discover' });
+    expect((discover.json() as { items: Array<{ title: string }> }).items.map((i) => i.title)).toEqual(['Found']);
+    expect((await app.inject({ method: 'GET', url: '/api/items/session?view=saved' })).statusCode).toBe(400);
+
+    // Liking an item from the "liked" author lifts their unread item above newer ones
+    pushItems(db, 'local', 'news', [
+      { source_id: 'd', url: 'https://example.com/d', title: 'Liked', author: 'Ada', published_at: '2026-09-01T00:00:00Z' },
+      { source_id: 'e', url: 'https://example.com/e', title: 'Also Ada', author: 'Ada', published_at: '2026-09-02T00:00:00Z' },
+    ]);
+    const liked = db.prepare(`SELECT id FROM content_items WHERE source_id = 'e'`).get() as { id: string };
+    await app.inject({ method: 'PUT', url: `/api/items/${liked.id}/feedback`, payload: { verdict: 'like' } });
+    await app.inject({ method: 'PATCH', url: '/api/preferences', payload: { exploration_share: 0 } });
+
+    const warm = (await app.inject({ method: 'GET', url: '/api/items/session' })).json() as {
+      feedback_count: number;
+      items: Array<{ title: string; session: { slot: string; reasons: string[] } }>;
+    };
+    expect(warm.feedback_count).toBe(1);
+    expect(warm.items[0]).toMatchObject({ title: 'Liked', session: { slot: 'ranked' } });
+    expect(warm.items[0].session.reasons).toContain('liked author: Ada');
+    expect(warm.items.map((i) => i.title)).not.toContain('Also Ada');
+
+    const taste = (await app.inject({ method: 'GET', url: '/api/taste' })).json() as { summary: string };
+    expect(taste.summary).toContain('Ada (news)');
+  });
+
   it('reports stats and marks all read', async () => {
     expect((await app.inject({ method: 'GET', url: '/api/items/stats' })).json()).toMatchObject({ total: 3, unread: 3 });
     const res = await app.inject({ method: 'POST', url: '/api/items/mark-read', payload: { source: 'news' } });
@@ -548,6 +590,8 @@ describe('/api/items (host content)', () => {
     await app.ready();
     process.env.NODE_ENV = 'production';
     expect((await app.inject({ method: 'GET', url: '/api/items' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/api/items/session' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/api/taste' })).statusCode).toBe(401);
     expect((await app.inject({ method: 'GET', url: '/api/items', headers: { authorization: 'Bearer dsess_bogus' } })).statusCode).toBe(401);
 
     const { session_token } = await createVerifiedDevice('dev_reader', app, 'enroll-secret');

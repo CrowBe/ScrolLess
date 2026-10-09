@@ -9,7 +9,7 @@ description: Collect content from the user's sources and push readable items int
 
 When the `scrolless` MCP server is connected:
 
-1. Read `scrolless://guide/push` and call `get_collection_context`.
+1. Read `scrolless://guide/push` and call `get_collection_context`. Its `taste_summary` (detail via `get_taste_profile`) says what the user likes; use it to choose items and discovery picks, never as a block list.
 2. For each enabled source, read `scrolless://sources/{name}` for extraction hints and visit its URLs with your own browsing tools.
 3. Call `push_items` once per source (≤ 200 items). Pushing is idempotent per `(source, source_id)`.
 4. Check receipts: correct and re-push `rejected` items; `blocked` items matched a blocked keyword and are hidden.

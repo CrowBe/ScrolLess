@@ -1126,6 +1126,14 @@ img { display: block; max-width: 100%; }
 
 .swipe-card__source { color: var(--primary); font-weight: 700; }
 .swipe-card__author { font-weight: 600; color: var(--on-surface); }
+.swipe-card__badge {
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
 
 .swipe-card__title {
   font-family: var(--font-headline);

@@ -21,6 +21,10 @@ export interface FeedItemResponse {
   fetched_at: string;
   is_read: boolean;
   is_saved: boolean;
+  /** Why a swipe session placed this card: ranked by taste, discovery, or newest first. */
+  session_slot?: 'ranked' | 'discovery' | 'recent';
+  /** Top taste signals behind the card's rank, e.g. "liked tag: rust". */
+  session_reasons?: string[];
 }
 
 export interface PushPayload {
