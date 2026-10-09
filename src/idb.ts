@@ -1,67 +1,21 @@
 import { openDB, type IDBPDatabase } from 'idb';
 
-export interface FeedItem {
-  id: string;           // "source:source_id"
-  user_id: string;
-  source: string;
-  source_id: string;
-  url: string;
-  url_hash: string;     // SHA-256(normalised url) — used for dedup
-  published_at: string;
-  fetched_at: string;   // used for retention (not published_at)
-  is_discovery: boolean;
-  is_read: boolean;
-  is_saved: boolean;
-  title: string;
-  author?: string;
-  content_preview?: string;
-  thumbnail_url?: string;
-  tags: string[];       // stored as parsed array
-}
-
-export interface SyncLogEntry {
-  id?: number;          // autoincrement — omit on insert
-  source: string;
-  synced_at: string;
-  items_added: number;
-  items_duped: number;
-}
+// Local device state only: the signing key used for reader authentication and
+// the enrollment token. Feed content lives on the host.
 
 export interface DeviceRecord {
   id: 'singleton';
-  user_id: string;
-  public_key_b64: string;           // ECDH public key for feed decryption
-  private_key: CryptoKey;           // ECDH private key, non-extractable
+  device_id: string;
+  signing_public_key_b64: string;   // ECDSA public key for challenge/verify auth
+  signing_private_key: CryptoKey;   // ECDSA private key, non-extractable
   registered_at: string;
-  signing_public_key_b64?: string;  // ECDSA public key for challenge/verify auth
-  signing_private_key?: CryptoKey;  // ECDSA private key, non-extractable
   session_token?: string;           // Current dsess_* session token
   session_expires_at?: string;      // ISO timestamp when session_token expires
 }
 
-export type PreferenceKey =
-  | 'blocked_keywords'
-  | 'max_items_per_source'
-  | 'retention_days'
-  | 'enrollment_token';
+export type PreferenceKey = 'enrollment_token';
 
 interface ScrolLessDB {
-  feed_items: {
-    key: string;
-    value: FeedItem;
-    indexes: {
-      by_url_hash: string;
-      by_published_at: string;
-      by_source: string;
-      by_is_read: number;
-      by_is_discovery: number;
-      by_is_saved: number;
-    };
-  };
-  sync_log: {
-    key: number;
-    value: SyncLogEntry;
-  };
   device: {
     key: 'singleton';
     value: DeviceRecord;
@@ -76,17 +30,14 @@ let dbPromise: Promise<IDBPDatabase<ScrolLessDB>> | null = null;
 
 export function openScrollessDb(): Promise<IDBPDatabase<ScrolLessDB>> {
   if (!dbPromise) {
-    dbPromise = openDB<ScrolLessDB>('scrolless', 1, {
-      upgrade(db) {
-        const feedStore = db.createObjectStore('feed_items', { keyPath: 'id' });
-        feedStore.createIndex('by_url_hash', 'url_hash', { unique: true });
-        feedStore.createIndex('by_published_at', 'published_at');
-        feedStore.createIndex('by_source', 'source');
-        feedStore.createIndex('by_is_read', 'is_read');
-        feedStore.createIndex('by_is_discovery', 'is_discovery');
-        feedStore.createIndex('by_is_saved', 'is_saved');
-
-        db.createObjectStore('sync_log', { keyPath: 'id', autoIncrement: true });
+    // v2 dropped the encrypted-relay feed stores and device encryption keys
+    dbPromise = openDB<ScrolLessDB>('scrolless', 2, {
+      upgrade(db, oldVersion) {
+        if (oldVersion < 2) {
+          for (const name of Array.from(db.objectStoreNames)) {
+            db.deleteObjectStore(name as never);
+          }
+        }
         db.createObjectStore('device', { keyPath: 'id' });
         db.createObjectStore('preferences', { keyPath: 'key' });
       },

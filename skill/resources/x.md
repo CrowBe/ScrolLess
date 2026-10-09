@@ -16,7 +16,7 @@ For each tweet on the page, extract:
 | `title` | Tweet text | First 200 characters. For longer tweets, this is the preview. |
 | `author` | `@handle` of the author | Include the `@` prefix |
 | `url` | Full tweet URL | `https://x.com/{handle}/status/{source_id}` |
-| `published_at` | Tweet timestamp | Hover over relative time to get exact timestamp, or convert relative time |
+| `published_at` | Tweet timestamp | The `datetime` attribute of the tweet's `<time>` element |
 | `thumbnail_url` | First image in the tweet, if any | Omit if no image |
 | `content_preview` | Full tweet text (up to 300 chars) | |
 | `tags` | Not available | Omit |
@@ -43,12 +43,7 @@ The timeline loads more tweets as you scroll:
 
 ## Timestamp Handling
 
-X shows relative timestamps:
-- "2m", "1h", "3h" — minutes/hours ago
-- "Mar 22" — date without year (current year implied)
-- Hovering over the timestamp reveals the exact datetime
-
-Convert all timestamps to ISO 8601. Hovering to get exact time is preferred if accessible; otherwise, convert the relative time.
+Prefer an exact timestamp from the page: a `<time datetime="…">` attribute or the tooltip on the time link. If only relative text is visible ("2 hours ago", "3h"), push that text unchanged as `published_at` — the host keeps it raw and orders the item by when it was first seen. Do not compute a time from relative text. Date-only values may be pushed as `YYYY-MM-DD`.
 
 ## Edge Cases
 

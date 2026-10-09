@@ -65,25 +65,17 @@ describe('hashUrl', () => {
 
 describe('initDb', () => {
   it('creates tables and seeds defaults', () => {
-    const db = new Database(':memory:');
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-
-    const schema = readFileSync(join(__dirname, '../sql/schema.sql'), 'utf8');
-    db.exec(schema);
-
-    // Seed like initDb does
-    db.prepare(`INSERT OR IGNORE INTO user_preferences (user_id, key, value) VALUES ('local', ?, ?)`).run('blocked_keywords', '[]');
-    db.prepare(`INSERT OR IGNORE INTO user_preferences (user_id, key, value) VALUES ('local', ?, ?)`).run('retention_days', '7');
-    db.prepare(`INSERT OR IGNORE INTO user_sources (user_id, name, enabled) VALUES ('local', ?, 0)`).run('youtube');
-    db.prepare(`INSERT OR IGNORE INTO user_sources (user_id, name, enabled) VALUES ('local', ?, 0)`).run('x');
-    db.prepare(`INSERT OR IGNORE INTO user_sources (user_id, name, enabled) VALUES ('local', ?, 0)`).run('news');
+    const db = initDb(':memory:');
 
     const sources = db.prepare('SELECT name FROM user_sources WHERE user_id = ?').all('local') as Array<{ name: string }>;
     expect(sources.map(s => s.name).sort()).toEqual(['news', 'x', 'youtube']);
 
     const prefs = db.prepare('SELECT key FROM user_preferences WHERE user_id = ?').all('local') as Array<{ key: string }>;
-    expect(prefs.map(p => p.key)).toContain('blocked_keywords');
+    expect(prefs.map(p => p.key).sort()).toEqual(['blocked_keywords', 'max_items_per_source']);
+
+    const tables = (db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all() as Array<{ name: string }>).map(t => t.name);
+    expect(tables).toContain('content_items');
+    expect(tables).not.toContain('free_queue_deliveries');
 
     db.close();
   });
@@ -93,13 +85,10 @@ describe('initDb', () => {
     const schema = readFileSync(join(__dirname, '../sql/schema.sql'), 'utf8');
     db.exec(schema);
 
-    // Insert a sync_attempts row and check the attempted_at default
-    db.prepare(`INSERT INTO sync_attempts (user_id, source, item_count, status) VALUES (?, ?, ?, ?)`).run(
-      'local', 'test', 1, 'relayed'
-    );
+    db.prepare(`INSERT INTO agent_tokens (token_hash, label) VALUES (?, ?)`).run('hash', 'test');
 
-    const row = db.prepare('SELECT attempted_at FROM sync_attempts WHERE user_id = ?').get('local') as { attempted_at: string };
-    expect(row.attempted_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    const row = db.prepare('SELECT created_at FROM agent_tokens WHERE token_hash = ?').get('hash') as { created_at: string };
+    expect(row.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
 
     db.close();
   });

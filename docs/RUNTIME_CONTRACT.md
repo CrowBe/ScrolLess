@@ -1,6 +1,6 @@
 # Runtime contract
 
-Contract version: **1, target specification**. This document is normative for the personal-host implementation beginning with [#82](https://github.com/CrowBe/ScrolLess/issues/82); it does not describe a shipped API. Concrete transport schemas, endpoint names and configuration keys must be versioned in that implementation. [Architecture](ARCHITECTURE.md) defines ownership; [deployment](DEPLOYMENT.md) defines migration.
+Contract version: **1, target specification**, plus the implemented [agent-push contract v1](#agent-push-contract-v1). The target sections are normative for the browser-worker implementation beginning with [#82](https://github.com/CrowBe/ScrolLess/issues/82); they do not describe a shipped API. [Architecture](ARCHITECTURE.md) defines ownership; [deployment](DEPLOYMENT.md) covers setup.
 
 ## Durable records and identity
 
@@ -121,7 +121,7 @@ Implemented in [content-store.ts](../server/content-store.ts) and [mcp-content-t
 | Unknown values | Missing fields stay null. `published_at` is stored only when it parses; the raw text is kept. The reader shows first-seen time when publication time is unknown |
 | Eligibility | Deterministic blocked keywords (title, author, preview, body; case-insensitive). No semantic classification, so no unresolved state exists in v1. Current keywords also apply at read time |
 | Hidden-body retention | Blocked items are recorded metadata-only (identity, URL, title, author, fingerprint, reason); preview, body, thumbnail and metadata are not retained. Re-pushing after unblocking restores them |
-| Retention | Host items are not expired. `retention_days` still applies only to legacy IndexedDB items |
+| Retention | Host items are not expired |
 | User state | `PATCH /api/items/:id` with optional `expected_version`; a stale version returns 409 with current state |
 | Pagination | Newest first by `COALESCE(published_at, first_seen_at)`, stable opaque cursor |
 
@@ -138,6 +138,5 @@ These choices were not settled in the planning thread. An implementation PR must
 | Durable recovery limits | #83 | Lease durations, retry/backoff caps, crash tests and policy for uncertain external usage |
 | Body/history/saved retention | #84, #87 | Durations, backup/restore, saved-content exception and deletion scopes; history does not inherit body expiry |
 | Offline conflict handling | First slice enabling offline mutations | Conditional merge/reject policy, pending-state UX and cache-reset protection |
-| Migration reconciliation | #84 | Cross-device identity/read-save conflicts, unavailable keys/devices, import receipts and rollback evidence |
 
 Optional future scope: network database/API adapters, additional browser engines, screenshot decisions, native clients, semantic search and multi-user hosting. Each requires its own evidence and scope; the current contract does not commit to universal plugin machinery.

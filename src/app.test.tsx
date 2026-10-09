@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { App } from './app';
 
 vi.mock('./hooks/useFeedItems', () => ({
-  useFeedItems: () => ({ items: [], loading: false, hasMore: false, loadMore: vi.fn(), patchItem: vi.fn(), reload: vi.fn() }),
+  useFeedItems: () => ({ items: [], loading: false, error: null, hasMore: false, loadMore: vi.fn(), patchItem: vi.fn(), reload: vi.fn() }),
 }));
 
 vi.mock('./hooks/useUnreadCounts', () => ({
@@ -18,9 +18,6 @@ vi.mock('./components/feed-list', () => ({
   FeedList: () => <div>FeedList</div>,
 }));
 
-vi.mock('./components/sync-status', () => ({
-  SyncStatus: () => <div>SyncStatus</div>,
-}));
 
 vi.mock('./components/device-session-status', () => ({
   DeviceSessionStatusBadge: () => <div>DeviceSessionStatusBadge</div>,

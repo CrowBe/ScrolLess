@@ -1,67 +1,66 @@
-# Deployment and migration
+# Deployment
 
-The [personal-host architecture](ARCHITECTURE.md) is the target. Current code still uses encrypted relay and device-owned IndexedDB; this documentation PR does not provide the new collector, gateway, API or migration tools. Implement deployment and import in [#84](https://github.com/CrowBe/ScrolLess/issues/84), after the #82/#83 runtime foundations.
+ScrolLess is a work-in-progress personal host. There is no migration path between versions yet: schema changes may drop data.
 
-## Former Vercel integration
-
-Vercel Git deployment is disconnected for this repository. Use the local setup below and the target personal-host deployment work in #84. Existing Vercel deployments are retained, not retired; see the [removal record](VERCEL_REMOVAL.md) for external settings, verification and remaining cleanup. Archived provider instructions are historical only.
-
-## Current development setup
+## Local setup
 
 Use Node.js 20+ and the repository lockfile:
 
 ```bash
 npm ci
-HOST=127.0.0.1 npm run dev
+HOST=127.0.0.1 npm run dev        # API :3333, reader :5173
 ```
 
-For a production-build check of the existing application:
+Production build of the reader and API on one port:
 
 ```bash
 npm run build
-HOST=127.0.0.1 npm start
+HOST=127.0.0.1 DEVICE_ENROLLMENT_TOKEN=<secret> npm start
 ```
 
-The explicit host override matters: [server/index.ts](../server/index.ts) currently defaults to `0.0.0.0`. These commands start the legacy application, not a personal-host collector. Consult the source before exposing it beyond loopback; target authentication requirements are not evidence of existing enforcement.
+[server/index.ts](../server/index.ts) defaults to `0.0.0.0`; set `HOST=127.0.0.1` unless you intend to expose the listener.
 
-Existing configuration is loaded in [server/index.ts](../server/index.ts) and typed in [server/types.ts](../server/types.ts). `DB_PATH` selects the current SQLite operational database, not an authoritative readable feed database. `AGENT_TOKEN_HASH` authenticates existing agent ingestion; `BASE_URL`, `CORS_ORIGIN`, OAuth/device settings and optional VAPID keys serve the current runtime. Client `VITE_*` values are browser-visible and must never contain database or inference secrets.
+## Connecting an agent
 
-### Agent push over MCP (implemented)
+**Stdio (same machine).** `npm run mcp:config` prints the command for this checkout. The stdio server ([mcp-stdio.ts](../server/mcp-stdio.ts)) opens the same SQLite file as the web server and exposes the [push tools](../server/mcp-content-tools.ts). Trust comes from the local process boundary: whoever can launch it can write to the store. It logs to stderr only, because stdout carries the MCP protocol.
 
-`npm run mcp:config` prints the stdio server command for this checkout. The stdio server ([mcp-stdio.ts](../server/mcp-stdio.ts)) opens the same SQLite file as the web server (`DB_PATH`, default `data/scrolless.db`) and exposes the [agent-push tools](../server/mcp-content-tools.ts); trust comes from the local process boundary. The HTTP `/mcp` endpoint exposes the same tools to agents holding an agent token or OAuth access token. Readers fetch pushed items from `/api/items` with a device session (unauthenticated only outside production). See [agent-push contract v1](RUNTIME_CONTRACT.md#agent-push-contract-v1).
+**HTTP (`/mcp`).** For agents elsewhere on your network. Requires `Authorization: Bearer <token>` with an agent token (created in Settings, or seeded from `AGENT_TOKEN_HASH`) or an OAuth access token from `/oauth/*`. Rate-limited per token (`AGENT_RATE_LIMIT_PER_HOUR`, default 600 requests).
 
-Legacy agent endpoints require encrypted payloads, as defined in [agent-routes.ts](../server/agent-routes.ts) and [legacy payload schema](../skill/resources/schema.json). The legacy MCP `run_feed_sync` prompt, `get_sync_context`/`submit_items` tools and `scrolless://platforms/*` resources remain for the relay. Do not send readable records to them; use `push_items`. For historical deployment context see the [archived guide](archive/DEPLOYMENT.md); its hosted roadmap and service-provider instructions are not current deployment recommendations.
+## Reader authentication
 
-## Target topology and configuration
+Readers fetch `/api/*` with a device session. On first load the reader creates a non-extractable ECDSA key in IndexedDB, completes `/api/v1/device/challenge` + `/verify`, and stores the `dsess_*` token. Every verified device reads the single owner's feed.
 
-Run a trusted collector with access to the user's signed-in browser and a host API with access to the configured data store. They may share a machine or use an authenticated connection across the user's network. Readers use the host API, not database credentials or a shared SQLite file. For SQLite, the trusted database process owns the local file; remote machines call its API.
+- Outside production, requests without an `Authorization` header act as the owner, for local development.
+- In production, enrollment requires `DEVICE_ENROLLMENT_TOKEN`; without it, enrollment is closed.
 
-Two configuration groups must be exposed by the implementation (names below are conceptual, not existing environment variables):
+## Configuration
 
-| Group | Configuration and validation |
+| Variable | Purpose |
 |---|---|
-| Data connection | Supported adapter, local path or network/API endpoint, credential reference, owner scope, schema version; startup verifies permissions, schema compatibility and atomic/idempotent capabilities |
-| Inference gateway | Configured endpoints and credential references, capability/model versions, routing order, allowed destinations, observation egress and finite budgets; startup rejects incompatible/local-only violations |
+| `DB_PATH` | SQLite file (default `data/scrolless.db`). Shared by the web server and stdio MCP server |
+| `HOST`, `PORT` | Listener (default `0.0.0.0:3333`) |
+| `DEVICE_ENROLLMENT_TOKEN` | Secret readers enter to enroll; required in production |
+| `AGENT_TOKEN_HASH` | SHA-256 of a pre-shared agent token for HTTP `/mcp` |
+| `AGENT_RATE_LIMIT_PER_HOUR` | `/mcp` request limit per token |
+| `BASE_URL`, `OAUTH_CLIENTS_JSON`, `OAUTH_TOKEN_EXPIRES_IN`, `OAUTH_REFRESH_TOKEN_EXPIRES_IN`, `ADMIN_PASSWORD` | OAuth for remote MCP connectors |
+| `CORS_ORIGIN`, `CLAUDE_CONNECTOR_CORS` | Browser origins allowed to call the API |
+| `TRUST_PROXY` | Trust `X-Forwarded-For` behind a reverse proxy |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Optional Web Push when HTTP pushes commit new items |
 
-Keep secret values in restricted trusted-process configuration. API authentication distinguishes reader, collector and administration. A private network such as a Tailnet can supply reachability and transport protection; it does not substitute for scoped application authorization. Configure trusted origins and secure transport for remote access. Do not expose an unauthenticated public listener as a setup shortcut.
+Client `VITE_*` values are browser-visible and must never contain database or inference secrets.
 
-The deployment slice must provide a reproducible service/startup procedure, browser-profile access, locked-down listener configuration, bounded scheduling, job status, backup/restore and a smoke test with the reader closed. No specific scheduler, tunnel provider or browser engine is mandated here.
+## Exposing the host
 
-Hosted Jev sends declared selected observations externally even when the database is local. A validated compatible local/LAN endpoint may keep inference within the configured boundary. Declare hardware, quality and latency limitations; local-only failures remain local failures.
+A private network such as a Tailnet can supply reachability and transport protection; it does not replace application authentication. Keep the enrollment token and agent tokens secret, use TLS for anything beyond loopback, and do not expose an unauthenticated listener.
 
-## Migration: preserve before replacing
+## Backups
 
-1. **Inventory and snapshot.** Record application/schema versions, server database and queue state, every device/origin's IndexedDB feed, read/save state and preferences. Back up the operational database consistently, including any journal state through an appropriate backup mechanism. A server backup alone does not contain today's readable device feed.
-2. **Preserve decryption access.** Keep the original browser profiles/origins and device keys usable. Non-extractable keys cannot be assumed exportable. Decrypt/export within the owning device context while the legacy code still works. A missing device/key is an explicit unresolved migration case.
-3. **Import into separate target storage.** Authenticate the import; validate a versioned export; attach original identity/provenance and migration batch IDs. Import content and user state idempotently. Resolve cross-device duplicates and read/save conflicts explicitly; do not silently drop one device's records. Existing excerpts are partial source evidence, not invented full articles.
-4. **Verify durable readback.** Compare export/import receipts, counts, identities, field fingerprints, saved/read state and preferences. Read through the authenticated target API and render representative records. Restart the host and verify again. Track rejected/missing records; an HTTP success alone is insufficient.
-5. **Cut over deliberately.** Quiesce legacy writers, reconcile late changes and remaining encrypted queues, then switch readers/collectors. Keep the old data and a documented rollback path. Target storage starts as authoritative only after verification; prior offline client mutations need reconciliation.
-6. **Retire old paths.** After verified import and explicit completion of the rollback window, remove device content-key dependencies, ciphertext submission, relay queues and legacy prompts/routes in a dedicated implementation change. Revoke obsolete credentials as appropriate. Destructive cleanup requires a deliberate user action; do not couple it to startup or cache eviction.
+The SQLite file is the whole state. Back it up with SQLite's online backup (`sqlite3 data/scrolless.db ".backup backup.db"`) rather than copying a live WAL database. Search indexes and reader caches do not exist yet.
 
-No reset/cutover without preservation is the default. Queue TTL is not an import strategy. If unreadable queued payloads or inaccessible devices remain, report the gap and retain the originals rather than claiming complete migration.
+## Target topology
 
-## Backup and readiness
+Later slices add a trusted browser worker and Jev gateway next to the host API (see [architecture](ARCHITECTURE.md)). Their configuration groups — data connection and inference gateway — are described in the [runtime contract](RUNTIME_CONTRACT.md) and are not implemented.
 
-Target backups cover authoritative content, ledger, preferences/user state, projections and jobs plus schema versions. Search indexes and acknowledged reader caches are rebuildable. Browser login/session recovery and secret recovery are separate from content backup. Restore to an isolated location and verify API readback and job recovery before declaring a backup usable.
+## Former Vercel integration
 
-See [release gates](pre-release-tasks.md) and the [runtime policy gates](RUNTIME_CONTRACT.md#implementation-gates). This document specifies required evidence; it does not claim that backups, scheduling or migration have already been implemented.
+Vercel Git deployment is disconnected; see the [removal record](VERCEL_REMOVAL.md). Archived provider instructions are historical only.

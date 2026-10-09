@@ -30,7 +30,6 @@ sw.addEventListener('fetch', (event: FetchEvent) => {
   // Pass API and backend-specific routes through to network
   if (
     url.pathname.startsWith('/api/') ||
-    url.pathname.startsWith('/agent/') ||
     url.pathname.startsWith('/oauth/') ||
     url.pathname.startsWith('/mcp')
   ) {

@@ -8,6 +8,7 @@ interface Props {
   view: 'feed' | 'discover' | 'saved' | 'settings';
   items: FeedItemResponse[];
   loading: boolean;
+  error?: string | null;
   hasMore: boolean;
   onLoadMore: () => void;
   onMarkRead: (id: string) => void;
@@ -19,6 +20,7 @@ export function FeedList({
   view,
   items,
   loading,
+  error,
   hasMore,
   onLoadMore,
   onMarkRead,
@@ -34,6 +36,17 @@ export function FeedList({
     );
   }
 
+  if (error && items.length === 0) {
+    return (
+      <div class="feed-empty">
+        <span class="material-symbols-outlined feed-empty__icon">cloud_off</span>
+        <p class="feed-empty__title">Couldn't load your feed</p>
+        <p class="feed-empty__sub">{error}</p>
+        <button class="btn btn--ghost btn--sm" onClick={onLoadMore}>Retry</button>
+      </div>
+    );
+  }
+
   if (!loading && items.length === 0) {
     const isFeed = view === 'feed';
     const isDiscover = view === 'discover';
@@ -43,7 +56,7 @@ export function FeedList({
         ? 'Nothing to discover yet'
         : 'No saved items yet';
     const subtitle = isFeed
-      ? 'Add your first source in Settings to start building a personalized feed.'
+      ? 'Ask your agent to collect your sources, or add sources in Settings first.'
       : isDiscover
         ? 'Add a few sources to unlock recommendations and trending picks.'
         : 'Tap the bookmark icon on any card in Feed or Discover to save it for later.';

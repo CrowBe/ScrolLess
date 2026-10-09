@@ -1,4 +1,4 @@
-import type { SyncLogEntry, UserSource } from './types';
+import type { UserSource } from './types';
 import { apiUrl } from './config';
 import { getCachedSessionToken } from './bootstrap/device-session';
 
@@ -28,13 +28,8 @@ async function req<T>(url: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function getSyncStatus(): Promise<{ missed: SyncLogEntry[]; next_sync_estimate: string | null }> {
-  return req<{ missed: SyncLogEntry[]; next_sync_estimate: string | null }>('/api/sync/status');
-}
-
 export interface AppPreferences {
   blocked_keywords: string[];
-  retention_days: number;
   max_items_per_source: number;
 }
 
@@ -125,22 +120,8 @@ export function revokeToken(hash: string): Promise<{ ok: boolean }> {
   return req(`/api/v1/tokens/${encodeURIComponent(hash)}`, { method: 'DELETE' });
 }
 
-export async function syncPreferencesToIdb(): Promise<void> {
-  const { openScrollessDb } = await import('./idb');
-  const prefs = await getPreferences();
-  const db = await openScrollessDb();
-  const entries: Array<{ key: import('./idb').PreferenceKey; value: unknown }> = [
-    { key: 'blocked_keywords', value: prefs.blocked_keywords },
-    { key: 'retention_days', value: prefs.retention_days },
-    { key: 'max_items_per_source', value: prefs.max_items_per_source },
-  ];
-  await Promise.all(entries.map(e => db.put('preferences', e)));
-}
-
-// Host content (agent-push v1). Items pushed by the local MCP agent live on
-// the host; ids start with "ci_" so the reader can tell them from legacy
-// IndexedDB items.
-export interface HostItem {
+// Feed content pushed by the agent over MCP, stored on the host.
+export interface FeedItem {
   id: string;
   source: string;
   source_id: string;
@@ -160,35 +141,31 @@ export interface HostItem {
   state_version: number;
 }
 
-export interface HostItemPage {
-  items: HostItem[];
+export interface FeedPage {
+  items: FeedItem[];
   next_cursor: string | null;
 }
 
-export interface HostItemStats {
+export interface FeedStats {
   total: number;
   unread: number;
   by_source: Array<{ source: string; count: number; unread: number }>;
 }
 
-export function isHostItemId(id: string): boolean {
-  return id.startsWith('ci_');
-}
-
-export function getHostItems(params: { view?: string; source?: string; cursor?: string | null; limit?: number }): Promise<HostItemPage> {
+export function getFeedItems(params: { view?: string; source?: string; cursor?: string | null; limit?: number }): Promise<FeedPage> {
   const query = new URLSearchParams();
   if (params.view) query.set('view', params.view);
   if (params.source) query.set('source', params.source);
   if (params.cursor) query.set('cursor', params.cursor);
   if (params.limit) query.set('limit', String(params.limit));
-  return req<HostItemPage>(`/api/items?${query.toString()}`);
+  return req<FeedPage>(`/api/items?${query.toString()}`);
 }
 
-export function getHostItemStats(): Promise<HostItemStats> {
-  return req<HostItemStats>('/api/items/stats');
+export function getFeedStats(): Promise<FeedStats> {
+  return req<FeedStats>('/api/items/stats');
 }
 
-export function updateHostItem(
+export function updateFeedItem(
   id: string,
   data: { is_read?: boolean; is_saved?: boolean; expected_version?: number }
 ): Promise<{ id: string; is_read: boolean; is_saved: boolean; state_version: number }> {
@@ -199,7 +176,7 @@ export function updateHostItem(
   });
 }
 
-export function markHostItemsRead(source?: string): Promise<{ updated: number }> {
+export function markAllRead(source?: string): Promise<{ updated: number }> {
   return req('/api/items/mark-read', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
-import { getSources, getTokens, createToken, revokeToken, getPreferences, updatePreferences, getSyncStatus } from './api';
-import type { UserSource, SyncLogEntry as MissedSyncLogEntry } from './types';
+import { getSources, getTokens, createToken, revokeToken, getPreferences, updatePreferences } from './api';
+import type { UserSource } from './types';
 import type { AgentToken, AppPreferences } from './api';
 import { SourceList } from './components/source-list';
 import { AddSourceForm } from './components/add-source-form';
-import { openScrollessDb, type SyncLogEntry as LocalSyncLogEntry } from './idb';
-import { displayName } from './source-labels';
-import { relativeTime } from './utils';
+import { openScrollessDb } from './idb';
 
 function AgentTokens() {
   const [tokens, setTokens] = useState<AgentToken[]>([]);
@@ -135,109 +133,16 @@ function AgentTokens() {
   );
 }
 
-interface SourceHealthRow {
-  source: string;
-  latestSuccess: LocalSyncLogEntry | null;
-  latestMissed: MissedSyncLogEntry | null;
-}
-
-function newestBy<T extends { source: string }>(rows: T[], getTs: (row: T) => string): Map<string, T> {
-  const map = new Map<string, T>();
-  for (const row of rows) {
-    const prev = map.get(row.source);
-    if (!prev || Date.parse(getTs(row)) > Date.parse(getTs(prev))) {
-      map.set(row.source, row);
-    }
-  }
-  return map;
-}
-
-function SyncHealthSection() {
-  const [rows, setRows] = useState<SourceHealthRow[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    try {
-      const [sources, syncStatus, localSyncLog] = await Promise.all([
-        getSources(),
-        getSyncStatus(),
-        openScrollessDb().then((db) => db.getAll('sync_log')).catch(() => [] as LocalSyncLogEntry[]),
-      ]);
-
-      const successBySource = newestBy(localSyncLog, (row) => row.synced_at);
-      const missedBySource = newestBy(syncStatus.missed, (row) => row.attempted_at);
-      const sourceNames = Array.from(new Set([
-        ...sources.map((source) => source.name),
-        ...localSyncLog.map((row) => row.source),
-        ...syncStatus.missed.map((row) => row.source),
-      ])).sort();
-
-      setRows(
-        sourceNames.map((source) => ({
-          source,
-          latestSuccess: successBySource.get(source) ?? null,
-          latestMissed: missedBySource.get(source) ?? null,
-        }))
-      );
-    } catch (err) {
-      console.error('Failed to load sync health:', err);
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
+function AgentConnectionSection() {
   return (
     <section class="settings__section">
-      <h2 class="settings__heading">Sync Health</h2>
-      <p class="settings__help">Inspect source-level sync health instead of relying only on the global header status.</p>
-      {loading ? (
-        <p class="settings__help">Loading sync health…</p>
-      ) : rows.length === 0 ? (
-        <p class="settings__help">No sync activity yet.</p>
-      ) : (
-        <ul class="settings__sync-list">
-          {rows.map(({ source, latestSuccess, latestMissed }) => {
-            const lastSuccessAt = latestSuccess ? Date.parse(latestSuccess.synced_at) : -Infinity;
-            const lastMissedAt = latestMissed ? Date.parse(latestMissed.attempted_at) : -Infinity;
-            const latestIssueWins = lastMissedAt > lastSuccessAt;
-            const state = latestIssueWins
-              ? 'issue'
-              : latestSuccess
-                ? 'ok'
-                : 'idle';
-
-            return (
-              <li key={source} class={`settings__sync-item settings__sync-item--${state}`}>
-                <div class="settings__sync-header">
-                  <span class="settings__sync-source">{displayName(source)}</span>
-                  <span class={`settings__sync-badge settings__sync-badge--${state}`}>
-                    {state === 'issue' ? 'Needs attention' : state === 'ok' ? 'Healthy' : 'Not synced yet'}
-                  </span>
-                </div>
-
-                {latestSuccess ? (
-                  <p class="settings__help">
-                    Last successful sync {relativeTime(latestSuccess.synced_at)} · added {latestSuccess.items_added} item{latestSuccess.items_added === 1 ? '' : 's'}
-                  </p>
-                ) : (
-                  <p class="settings__help">No successful sync recorded on this device yet.</p>
-                )}
-
-                {latestMissed && (
-                  <p class="settings__token-copy-state settings__token-copy-state--error">
-                    Last issue: {latestMissed.status === 'device_offline' ? 'device offline' : 'sync error'} {relativeTime(latestMissed.attempted_at)}
-                  </p>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <h2 class="settings__heading">Agent Connection</h2>
+      <p class="settings__help">
+        Your agent collects content and pushes it here over MCP. On the machine running ScrolLess,
+        run <code>npm run mcp:config</code> and add the printed command to your MCP client
+        (Claude Code, Claude Desktop, …). Agents on other machines can use <code>/mcp</code> over HTTP
+        with an agent token below.
+      </p>
     </section>
   );
 }
@@ -283,7 +188,6 @@ function PreferencesSection() {
     try {
       const updated = await updatePreferences({
         blocked_keywords: nextBlockedKeywords,
-        retention_days: preferences.retention_days,
         max_items_per_source: preferences.max_items_per_source,
       });
       setPreferences(updated);
@@ -332,26 +236,7 @@ function PreferencesSection() {
               setSaved(false);
             }}
           />
-          <span class="settings__help">Comma-separated. Matching items are filtered from agent sync results.</span>
-        </label>
-
-        <label class="settings__prefs-field">
-          <span class="settings__prefs-label">Retention days</span>
-          <input
-            class="form-input settings__prefs-number"
-            type="number"
-            min="1"
-            max="365"
-            value={String(preferences.retention_days)}
-            onInput={(e) => {
-              setPreferences({
-                ...preferences,
-                retention_days: Number((e.target as HTMLInputElement).value),
-              });
-              setSaved(false);
-            }}
-          />
-          <span class="settings__help">Older unsaved feed items are deleted after this many days.</span>
+          <span class="settings__help">Comma-separated. Matching items are hidden from your feed and stored without their content.</span>
         </label>
 
         <label class="settings__prefs-field">
@@ -405,7 +290,7 @@ export function Settings() {
     <div class="settings">
       <PreferencesSection />
 
-      <SyncHealthSection />
+      <AgentConnectionSection />
 
       <AgentTokens />
 
@@ -426,62 +311,32 @@ export function Settings() {
 }
 
 function DangerZone() {
-  const [clearing, setClearing] = useState(false);
-  const [cleared, setCleared] = useState(false);
-
-  async function handleClearFeedData() {
-    if (!confirm('Delete all locally stored feed items and sync history? This cannot be undone.')) return;
-    setClearing(true);
-    try {
-      const db = await openScrollessDb();
-      await db.clear('feed_items');
-      await db.clear('sync_log');
-      window.dispatchEvent(new CustomEvent('scrolless:idb-updated'));
-      setCleared(true);
-    } catch (err) {
-      console.error('Failed to clear feed data:', err);
-    } finally {
-      setClearing(false);
-    }
-  }
+  const [busy, setBusy] = useState(false);
 
   async function handleUnregisterDevice() {
-    if (!confirm('Unregister this device? Your keypair will be deleted and you will need to re-register. This cannot be undone.')) return;
-    setClearing(true);
+    if (!confirm('Sign this device out? Its key will be deleted and it will re-enroll on reload.')) return;
+    setBusy(true);
     try {
       const db = await openScrollessDb();
-      await db.clear('feed_items');
-      await db.clear('sync_log');
       await db.clear('device');
       await db.clear('preferences');
-      window.dispatchEvent(new CustomEvent('scrolless:idb-updated'));
-      // Reload to trigger fresh device registration
       location.reload();
     } catch (err) {
       console.error('Failed to unregister device:', err);
-      setClearing(false);
+      setBusy(false);
     }
   }
 
   return (
     <section class="settings__section settings__section--danger">
       <h2 class="settings__heading">Danger Zone</h2>
-      <p class="settings__help">These actions are permanent and cannot be undone.</p>
-      {cleared && <p class="settings__help" style="color:var(--color-success)">Feed data cleared.</p>}
       <div class="settings__danger-actions">
-        <button
-          class="btn btn--ghost btn--sm"
-          onClick={handleClearFeedData}
-          disabled={clearing}
-        >
-          {clearing ? '…' : 'Clear local feed data'}
-        </button>
         <button
           class="btn btn--ghost btn--sm settings__danger-btn"
           onClick={handleUnregisterDevice}
-          disabled={clearing}
+          disabled={busy}
         >
-          Unregister this device
+          Sign out this device
         </button>
       </div>
     </section>

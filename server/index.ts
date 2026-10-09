@@ -8,13 +8,12 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 import { initDb } from './db.js';
-import { seedAgentToken, verifyAgentToken } from './auth.js';
-import { registerAgentRoutes, scheduleCleanup } from './agent-routes.js';
+import { seedAgentToken } from './auth.js';
+import { scheduleCleanup } from './maintenance.js';
 import { registerApiRoutes } from './api-routes.js';
 import { registerOAuthRoutes, seedOAuthClients } from './oauth-routes.js';
 import { registerMcpHandler } from './mcp.js';
 import { initPush, notifyNewItems } from './push.js';
-import { SseManager } from './sse-manager.js';
 import type { AppConfig, OAuthClientConfig } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -76,7 +75,7 @@ function loadConfig(): AppConfig {
       subject: process.env.VAPID_SUBJECT,
     },
     rate_limit: {
-      agent_max_per_hour: parseNumber(process.env.AGENT_RATE_LIMIT_PER_HOUR, 60),
+      agent_max_per_hour: parseNumber(process.env.AGENT_RATE_LIMIT_PER_HOUR, 600),
     },
     oauth: {
       clients: parseOauthClients(process.env.OAUTH_CLIENTS_JSON),
@@ -95,14 +94,13 @@ async function start() {
   const config = loadConfig();
 
   if (!config.agent_token_hash) {
-    console.warn('[auth] AGENT_TOKEN_HASH is not set — agent endpoints will reject all requests');
+    console.warn('[auth] AGENT_TOKEN_HASH is not set — HTTP /mcp accepts only tokens created in Settings or via OAuth');
     console.warn('[auth] Generate a token: npm run generate-token');
     console.warn('[auth] Then hash it: node -e "const c=require(\'crypto\');const t=\'YOUR_TOKEN\';console.log(c.createHash(\'sha256\').update(t).digest(\'hex\'))"');
   }
 
   const dbPath = config.db_path;
   const db = initDb(dbPath);
-  const sseManager = new SseManager();
 
   if (config.agent_token_hash) {
     seedAgentToken(db, config.agent_token_hash, 'default');
@@ -177,46 +175,26 @@ async function start() {
   // Form body parsing (for OAuth authorize POST)
   await fastify.register(fastifyFormbody);
 
-  // Auth preHandler for agent routes
-  fastify.addHook('preHandler', async (req, reply) => {
-    if (!req.url.startsWith('/agent/')) return;
-
-    const auth = req.headers.authorization ?? '';
-    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-
-    if (!token) {
-      return reply.status(401).send({ error: 'Missing Authorization header' });
-    }
-
-    const result = verifyAgentToken(db, token);
-    if (!result.valid) {
-      return reply.status(401).send({ error: 'Invalid agent token' });
-    }
-
-    req.userId = result.userId ?? 'local';
-  });
-
-  // Push callback passed to agent routes
+  // Web Push notification when an agent commits new items over HTTP MCP
   const pushCallback = (userId: string, source: string, count: number, latestTitle?: string) =>
     notifyNewItems(db, userId, source, count, latestTitle);
 
-  // Rate limiting — scoped to agent/MCP routes only
+  // Rate limiting — scoped to MCP routes only
   // (skipIf does not exist in @fastify/rate-limit v9; use scoped plugin instead)
   await fastify.register(async (agentScope) => {
     await agentScope.register(fastifyRateLimit, {
-      max: config.rate_limit?.agent_max_per_hour ?? 60,
+      max: config.rate_limit?.agent_max_per_hour ?? 600,
       timeWindow: '1 hour',
       keyGenerator: (req) => {
         const auth = req.headers.authorization ?? '';
         return auth || req.ip;
       },
     });
-    registerAgentRoutes(agentScope, db, pushCallback, sseManager);
-    registerMcpHandler(agentScope, db, pushCallback, sseManager);
+    registerMcpHandler(agentScope, db, pushCallback);
   });
 
   // Register API routes (device session auth provides the primary protection)
-  registerApiRoutes(fastify, db, sseManager, {
+  registerApiRoutes(fastify, db, {
     deviceEnrollmentToken: config.device?.enrollment_token,
   });
 
@@ -240,7 +218,7 @@ async function start() {
 
     // SPA fallback — serve index.html for non-api, non-agent paths
     fastify.setNotFoundHandler(async (req, reply) => {
-      if (!req.url.startsWith('/api/') && !req.url.startsWith('/agent/') && !req.url.startsWith('/oauth/') && !req.url.startsWith('/mcp')) {
+      if (!req.url.startsWith('/api/') && !req.url.startsWith('/oauth/') && !req.url.startsWith('/mcp')) {
         return reply.sendFile('index.html');
       }
       return reply.status(404).send({ error: 'Not found' });

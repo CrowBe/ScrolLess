@@ -1,14 +1,6 @@
 -- ScrolLess Schema
 -- Idempotent — safe to run on every startup.
--- Feed content lives in IndexedDB on the device, NOT on the server.
-
--- Device registrations (edge device identity + public key)
-CREATE TABLE IF NOT EXISTS device_registrations (
-    user_id     TEXT PRIMARY KEY,
-    public_key  TEXT NOT NULL,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    last_seen   TEXT
-);
+-- Feed content lives on the host in content_items; readers fetch it via /api/items.
 
 -- Device proof-of-possession challenges
 CREATE TABLE IF NOT EXISTS device_challenges (
@@ -30,14 +22,6 @@ CREATE TABLE IF NOT EXISTS device_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_device_sessions_device ON device_sessions(device_id, expires_at);
 
--- Free-tier single-active-device rotation state (one row per user)
-CREATE TABLE IF NOT EXISTS free_device_rotation (
-    user_id                  TEXT PRIMARY KEY,
-    active_device_id         TEXT NOT NULL,
-    previous_active_device_id TEXT,
-    grace_expires_at         TEXT
-);
-
 -- Agent API keys (hashed)
 CREATE TABLE IF NOT EXISTS agent_tokens (
     token_hash  TEXT PRIMARY KEY,
@@ -46,18 +30,6 @@ CREATE TABLE IF NOT EXISTS agent_tokens (
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     last_used   TEXT
 );
-
--- Edge relay sync attempts (no feed content)
-CREATE TABLE IF NOT EXISTS sync_attempts (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id      TEXT NOT NULL,
-    source       TEXT NOT NULL,
-    attempted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    item_count   INTEGER NOT NULL DEFAULT 0,
-    status       TEXT NOT NULL,  -- 'relayed' | 'device_offline' | 'error'
-    error        TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_sync_attempts_user ON sync_attempts(user_id, attempted_at DESC);
 
 -- Web Push subscription endpoints
 CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -122,44 +94,8 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
--- Paid-tier encrypted queue, tracked per recipient device
-CREATE TABLE IF NOT EXISTS paid_queue_deliveries (
-    delivery_id      TEXT NOT NULL,
-    user_id          TEXT NOT NULL,
-    device_id        TEXT NOT NULL,
-    payload_envelope TEXT NOT NULL,
-    submitted_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    acked_at         TEXT,
-    expires_at       TEXT NOT NULL,
-    status           TEXT NOT NULL DEFAULT 'queued', -- queued | delivered_unacked | acked | expired
-    PRIMARY KEY (delivery_id, device_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_paid_queue_user ON paid_queue_deliveries(user_id, submitted_at DESC);
-CREATE INDEX IF NOT EXISTS idx_paid_queue_device ON paid_queue_deliveries(device_id, status);
-
-CREATE TABLE IF NOT EXISTS paid_queue_cursor (
-    user_id                TEXT PRIMARY KEY,
-    last_acked_delivery_id TEXT,
-    last_acked_at          TEXT
-);
-
--- Free-tier short-lived relay queue for PWA background push constraints
-CREATE TABLE IF NOT EXISTS free_queue_deliveries (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id          TEXT NOT NULL,
-    payload_envelope TEXT NOT NULL, -- JSON encrypted relay payload
-    queued_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    expires_at       TEXT NOT NULL,
-    delivered_at     TEXT,
-    status           TEXT NOT NULL DEFAULT 'queued' -- queued | delivered | expired
-);
-
-CREATE INDEX IF NOT EXISTS idx_free_queue_user_status ON free_queue_deliveries(user_id, status, queued_at);
-
--- Host-owned readable content pushed by a trusted local agent (MCP agent-push v1).
--- Unlike the legacy relay above, this content is stored on the host and read
--- through the authenticated reader API. Identity is (user_id, source, source_id).
+-- Readable content pushed by a trusted agent over MCP (agent-push v1).
+-- Identity is (user_id, source, source_id).
 CREATE TABLE IF NOT EXISTS content_items (
     id                  TEXT PRIMARY KEY,             -- "ci_" + random hex
     user_id             TEXT NOT NULL DEFAULT 'local',

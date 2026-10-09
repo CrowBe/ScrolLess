@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'preact/hooks';
 import { useFeedItems } from './hooks/useFeedItems';
 import { useUnreadCounts } from './hooks/useUnreadCounts';
-import { openScrollessDb } from './idb';
-import { isHostItemId, updateHostItem } from './api';
-import { emit, HOST_STATE_CHANGED, IDB_UPDATED } from './feed-events';
+import { updateFeedItem } from './api';
+import { emit, ITEM_STATE_CHANGED } from './feed-events';
 import { SourceFilter } from './components/source-filter';
 import { FeedList } from './components/feed-list';
-import { SyncStatus } from './components/sync-status';
 import { DeviceSessionStatusBadge } from './components/device-session-status';
 import { NotificationPrompt } from './components/notification-prompt';
 import { Settings } from './settings';
@@ -70,37 +68,26 @@ export function App() {
     document.title = `ScrolLess — ${VIEW_TO_TITLE[view]}`;
   }, [view]);
 
-  const { items, loading, hasMore, loadMore, patchItem, reload } = useFeedItems({ source, view });
+  const { items, loading, error, hasMore, loadMore, patchItem, reload } = useFeedItems({ source, view });
   const counts = useUnreadCounts();
 
-  async function updateHost(id: string, patch: { is_read?: boolean; is_saved?: boolean }) {
+  async function updateItem(id: string, patch: { is_read?: boolean; is_saved?: boolean }) {
     patchItem(id, patch);
     try {
-      await updateHostItem(id, patch);
-      emit(HOST_STATE_CHANGED);
+      await updateFeedItem(id, patch);
+      emit(ITEM_STATE_CHANGED);
     } catch (err) {
-      console.warn('[App] Failed to update host item:', err);
+      console.warn('[App] Failed to update item:', err);
       void reload();
     }
   }
 
-  async function updateLegacy(id: string, patch: { is_read?: boolean; is_saved?: boolean }) {
-    const db = await openScrollessDb();
-    const item = await db.get('feed_items', id);
-    if (item) {
-      await db.put('feed_items', { ...item, ...patch });
-      emit(IDB_UPDATED);
-    }
+  function handleMarkRead(id: string) {
+    void updateItem(id, { is_read: true });
   }
 
-  async function handleMarkRead(id: string) {
-    const patch = { is_read: true };
-    await (isHostItemId(id) ? updateHost(id, patch) : updateLegacy(id, patch));
-  }
-
-  async function handleToggleSave(id: string, currentlySaved: boolean) {
-    const patch = { is_saved: !currentlySaved };
-    await (isHostItemId(id) ? updateHost(id, patch) : updateLegacy(id, patch));
+  function handleToggleSave(id: string, currentlySaved: boolean) {
+    void updateItem(id, { is_saved: !currentlySaved });
   }
 
   return (
@@ -109,7 +96,6 @@ export function App() {
         <span class="app-header__logo">ScrolLess</span>
         <div class="app-header__right">
           <DeviceSessionStatusBadge />
-          <SyncStatus />
         </div>
       </header>
 
@@ -131,8 +117,9 @@ export function App() {
             view={view}
             items={items}
             loading={loading}
+            error={error}
             hasMore={hasMore}
-            onLoadMore={() => { void loadMore(); }}
+            onLoadMore={() => { void (error ? reload() : loadMore()); }}
             onMarkRead={handleMarkRead}
             onToggleSave={handleToggleSave}
             onOpenSettings={() => setView('settings')}

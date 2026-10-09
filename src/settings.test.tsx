@@ -9,16 +9,13 @@ vi.mock('./api', () => ({
   revokeToken: vi.fn(),
   getPreferences: vi.fn(),
   updatePreferences: vi.fn(),
-  getSyncStatus: vi.fn(),
 }));
 
 vi.mock('./idb', () => ({
-  openScrollessDb: vi.fn().mockResolvedValue({
-    getAll: vi.fn().mockResolvedValue([]),
-  }),
+  openScrollessDb: vi.fn(),
 }));
 
-import { createToken, getSources, getTokens, getPreferences, updatePreferences, getSyncStatus } from './api';
+import { createToken, getSources, getTokens, getPreferences, updatePreferences } from './api';
 
 describe('Settings', () => {
   beforeEach(() => {
@@ -27,18 +24,12 @@ describe('Settings', () => {
     (getTokens as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (getPreferences as ReturnType<typeof vi.fn>).mockResolvedValue({
       blocked_keywords: ['sponsored'],
-      retention_days: 7,
       max_items_per_source: 50,
     });
     (updatePreferences as ReturnType<typeof vi.fn>).mockImplementation(async (payload) => ({
       blocked_keywords: payload.blocked_keywords ?? ['sponsored'],
-      retention_days: payload.retention_days ?? 7,
       max_items_per_source: payload.max_items_per_source ?? 50,
     }));
-    (getSyncStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
-      missed: [],
-      next_sync_estimate: null,
-    });
   });
 
   it('renders token label input with form-input styling class', async () => {
@@ -56,12 +47,11 @@ describe('Settings', () => {
       expect(getSources).toHaveBeenCalled();
       expect(getTokens).toHaveBeenCalledTimes(1);
       expect(getPreferences).toHaveBeenCalledTimes(1);
-      expect(getSyncStatus).toHaveBeenCalledTimes(1);
     });
 
     expect(screen.getByRole('heading', { name: 'Add Source' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Preferences' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Sync Health' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Agent Connection' })).toBeInTheDocument();
   });
 
   it('keeps create token disabled until the label is at least 3 characters', async () => {
@@ -144,9 +134,6 @@ describe('Settings', () => {
     const blockedKeywords = await screen.findByPlaceholderText('sponsored, giveaway');
     fireEvent.input(blockedKeywords, { target: { value: 'sponsored, giveaway' } });
 
-    const retentionInput = screen.getByDisplayValue('7');
-    fireEvent.input(retentionInput, { target: { value: '14' } });
-
     const maxItemsInput = screen.getByDisplayValue('50');
     fireEvent.input(maxItemsInput, { target: { value: '75' } });
 
@@ -155,7 +142,6 @@ describe('Settings', () => {
     await waitFor(() => {
       expect(updatePreferences).toHaveBeenCalledWith({
         blocked_keywords: ['sponsored', 'giveaway'],
-        retention_days: 14,
         max_items_per_source: 75,
       });
     });

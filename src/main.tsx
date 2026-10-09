@@ -2,8 +2,6 @@ import { render } from 'preact';
 import { useState } from 'preact/hooks';
 import { App } from './app';
 import { startDeviceSession, saveEnrollmentToken, EnrollmentTokenRequiredError } from './bootstrap/device-session';
-import { runRetentionCleanup } from './retention';
-import { syncPreferencesToIdb } from './api';
 import './styles.css';
 
 // Register service worker
@@ -24,18 +22,7 @@ function Root() {
 
   // Start device session once on mount (re-runs after enrollment token is submitted)
   if (!ready && !initError && !needsEnrollmentToken) {
-    startDeviceSession({
-      onReady: () => {
-        setReady(true);
-        // Sync server preferences to IDB so retention and other local logic uses the correct values
-        syncPreferencesToIdb().catch((err) => {
-          console.warn('[preferences] Sync to IDB failed:', err);
-        });
-        runRetentionCleanup().catch((err) => {
-          console.warn('[retention] Cleanup failed:', err);
-        });
-      },
-    }).catch((err) => {
+    startDeviceSession().then(() => setReady(true)).catch((err) => {
       if (err instanceof EnrollmentTokenRequiredError) {
         setNeedsEnrollmentToken(true);
       } else {
