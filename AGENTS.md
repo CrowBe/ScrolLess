@@ -5,7 +5,7 @@ ScrolLess is a work-in-progress personal feed host. Today an agent pushes readab
 ## Source of truth
 
 - Before changing ownership, collection, inference or rendering, read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/RUNTIME_CONTRACT.md](docs/RUNTIME_CONTRACT.md).
-- For deployment, authentication and configuration, read [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- For local setup, authentication and configuration, read [docs/SETUP.md](docs/SETUP.md). Deployment is undefined until after the rebuild.
 - For scope and readiness, use [docs/TASKS.md](docs/TASKS.md) and [docs/pre-release-tasks.md](docs/pre-release-tasks.md). Historical hosted/tier/Expo plans are not current requirements.
 - For collector work, read [skill/SKILL.md](skill/SKILL.md). Distinguish its target workflow from the current MCP/REST protocol.
 - Code proves current behavior. Mark target behavior as pending until verified; resolve OPEN contract gates before enabling dependent behavior.

@@ -44,7 +44,7 @@ The reader is not an endless scroll. Feed and Discover show a fixed number of ca
 | `scrolless://sources/{name}` | Per-source extraction hints and user notes |
 | `collect_feed` prompt | One-shot collection workflow |
 
-Agents on another machine can call the same tools over HTTP at `/mcp` with an agent token (create one in Settings) or OAuth. See [deployment](docs/DEPLOYMENT.md) and the [push contract](docs/RUNTIME_CONTRACT.md#agent-push-contract-v1).
+Agents on another machine can call the same tools over HTTP at `/mcp` with an agent token (create one in Settings) or OAuth. See [setup](docs/SETUP.md) and the [push contract](docs/RUNTIME_CONTRACT.md#agent-push-contract-v1).
 
 ## Where it is heading
 
@@ -52,7 +52,7 @@ Later slices add a scheduled browser worker with bounded Jev decisions, revision
 
 - [Architecture](docs/ARCHITECTURE.md): ownership, components and what is implemented.
 - [Runtime contract](docs/RUNTIME_CONTRACT.md): push contract v1 and the target collection/decision contract.
-- [Deployment](docs/DEPLOYMENT.md): running locally and exposing the host safely.
+- [Setup](docs/SETUP.md): running locally, authentication and configuration. Deployment will be re-evaluated after the rebuild.
 - [Backlog](docs/TASKS.md) and [release checks](docs/pre-release-tasks.md).
 - [Collector skill](skill/SKILL.md): how an agent should collect.
 - [Design system](docs/DESIGN_SYSTEM.md): reader styling.

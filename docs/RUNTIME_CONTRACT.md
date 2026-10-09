@@ -1,6 +1,6 @@
 # Runtime contract
 
-Contract version: **1, target specification**, plus the implemented [agent-push contract v1](#agent-push-contract-v1). The target sections are normative for the browser-worker implementation beginning with [#82](https://github.com/CrowBe/ScrolLess/issues/82); they do not describe a shipped API. [Architecture](ARCHITECTURE.md) defines ownership; [deployment](DEPLOYMENT.md) covers setup.
+Contract version: **1, target specification**, plus the implemented [agent-push contract v1](#agent-push-contract-v1). The target sections are normative for the browser-worker implementation beginning with [#82](https://github.com/CrowBe/ScrolLess/issues/82); they do not describe a shipped API. [Architecture](ARCHITECTURE.md) defines ownership; [setup](SETUP.md) covers running locally.
 
 ## Durable records and identity
 

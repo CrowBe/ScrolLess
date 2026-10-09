@@ -63,4 +63,4 @@ A trusted agent the user runs (for example Claude Code with its own browsing too
 
 The initial product is a personal host, not a multi-tenant cloud service. Billing, tier-dependent queues, Clerk identity, Postgres convergence and Expo prerequisites from the old plans are superseded. Network database adapters, additional engines and native readers may follow concrete needs; none are prerequisites for #82.
 
-Follow [deployment](DEPLOYMENT.md) for setup and [TASKS](TASKS.md) for slices and [release checks](pre-release-tasks.md) for evidence. Any runtime policy marked OPEN in the contract must be resolved in its owning slice before enabling that behavior.
+Follow [setup](SETUP.md) for running locally and [TASKS](TASKS.md) for slices and [release checks](pre-release-tasks.md) for evidence. Any runtime policy marked OPEN in the contract must be resolved in its owning slice before enabling that behavior.

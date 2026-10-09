@@ -1,6 +1,8 @@
-# Deployment
+# Setup
 
 ScrolLess is a work-in-progress personal host. There is no migration path between versions yet: schema changes may drop data.
+
+Deployment is deliberately undefined while the app is rebuilt; it will be re-evaluated afterwards (#84). This page covers running it locally and its configuration.
 
 ## Local setup
 
@@ -49,18 +51,6 @@ Readers fetch `/api/*` with a device session. On first load the reader creates a
 
 Client `VITE_*` values are browser-visible and must never contain database or inference secrets.
 
-## Exposing the host
-
-A private network such as a Tailnet can supply reachability and transport protection; it does not replace application authentication. Keep the enrollment token and agent tokens secret, use TLS for anything beyond loopback, and do not expose an unauthenticated listener.
-
 ## Backups
 
 The SQLite file is the whole state. Back it up with SQLite's online backup (`sqlite3 data/scrolless.db ".backup backup.db"`) rather than copying a live WAL database. Search indexes and reader caches do not exist yet.
-
-## Target topology
-
-Later slices add a trusted browser worker and Jev gateway next to the host API (see [architecture](ARCHITECTURE.md)). Their configuration groups — data connection and inference gateway — are described in the [runtime contract](RUNTIME_CONTRACT.md) and are not implemented.
-
-## Former Vercel integration
-
-Vercel Git deployment is disconnected; see the [removal record](VERCEL_REMOVAL.md). Archived provider instructions are historical only.
