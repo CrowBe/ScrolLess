@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'preact/hooks';
-import { openScrollessDb } from '../idb';
+import { getFeedStats } from '../api';
+import { FEED_CHANGED, ITEM_STATE_CHANGED } from '../feed-events';
 
 export interface UnreadCounts {
   total: number;
@@ -12,33 +13,31 @@ export function useUnreadCounts(): UnreadCounts {
 
   async function recalculate() {
     try {
-      const db = await openScrollessDb();
-      const all = await db.getAll('feed_items');
-      const by_source: Record<string, { total: number; unread: number }> = {};
-      let unread = 0;
-
-      for (const item of all) {
-        if (!by_source[item.source]) {
-          by_source[item.source] = { total: 0, unread: 0 };
-        }
-        by_source[item.source].total++;
-        if (!item.is_read) {
-          by_source[item.source].unread++;
-          unread++;
-        }
+      const stats = await getFeedStats();
+      const by_source: UnreadCounts['by_source'] = {};
+      for (const row of stats.by_source) {
+        by_source[row.source] = { total: row.count, unread: row.unread };
       }
-
-      setCounts({ total: all.length, unread, by_source });
+      setCounts({ total: stats.total, unread: stats.unread, by_source });
     } catch (err) {
-      console.warn('[useUnreadCounts] Failed to load from IndexedDB:', err);
+      console.warn('[useUnreadCounts] Failed to load stats:', err);
     }
   }
 
   useEffect(() => {
     void recalculate();
-    window.addEventListener('scrolless:idb-updated', recalculate);
-    return () => window.removeEventListener('scrolless:idb-updated', recalculate);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    const onChange = () => { void recalculate(); };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void recalculate();
+    };
+    window.addEventListener(FEED_CHANGED, onChange);
+    window.addEventListener(ITEM_STATE_CHANGED, onChange);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener(FEED_CHANGED, onChange);
+      window.removeEventListener(ITEM_STATE_CHANGED, onChange);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   return counts;

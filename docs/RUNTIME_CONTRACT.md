@@ -1,6 +1,6 @@
 # Runtime contract
 
-Contract version: **1, target specification**. This document is normative for the personal-host implementation beginning with [#82](https://github.com/CrowBe/ScrolLess/issues/82); it does not describe a shipped API. Concrete transport schemas, endpoint names and configuration keys must be versioned in that implementation. [Architecture](ARCHITECTURE.md) defines ownership; [deployment](DEPLOYMENT.md) defines migration.
+Contract version: **1, target specification**, plus the implemented [agent-push contract v1](#agent-push-contract-v1). The target sections are normative for the browser-worker implementation beginning with [#82](https://github.com/CrowBe/ScrolLess/issues/82); they do not describe a shipped API. [Architecture](ARCHITECTURE.md) defines ownership; [deployment](DEPLOYMENT.md) covers setup.
 
 ## Durable records and identity
 
@@ -106,6 +106,27 @@ Search indexes eligible retained source content independently of projection shap
 | Ambiguous | Partial/uncertain evidence → recorded observation → unresolved decision | No automatic accept or infinite reclassification; explicit policy controls review/visibility/refetch |
 | Interrupted | Resume durable stage after lease expiry → reuse receipt/result or retry same operation key within remaining budget | No duplicate committed item; possible repeated external call is accounted for; uncommitted results remain invisible |
 
+## Agent-push contract v1
+
+Implemented in [content-store.ts](../server/content-store.ts) and [mcp-content-tools.ts](../server/mcp-content-tools.ts). This is the first readable-content path; it covers a subset of this contract and does not claim the leased-job, revision-ledger or gateway requirements above.
+
+| Concern | v1 behavior |
+|---|---|
+| Collector | An external agent the user runs. ScrolLess makes no inference calls; the agent's model sits outside the Jev gateway |
+| Transport and auth | Stdio MCP (local process boundary, owner `local`) or HTTP `/mcp` with agent/OAuth token. Readers use `/api/items` with a device session; any authenticated reader reads the single owner's feed |
+| Identity | `(owner, source, source_id)`. Normalised URL hash is stored as an index only |
+| Idempotency | Push is an upsert keyed by identity. Same payload → `unchanged`; changed fingerprint (`fp1`, SHA-256 of captured fields) → `updated` with `revision + 1`. Read/save state survives updates |
+| Receipts | Per item: `created`, `updated`, `unchanged`, `blocked` (with reason) or `rejected` (with reason). One bad item does not fail the batch |
+| Validation | Max 200 items per push; title 1,000, preview 4,000, body 100,000 characters; http(s) URLs ≤ 2,048; ≤ 20 tags; flat metadata ≤ 8 KB; source names `^[a-z0-9][a-z0-9_-]{0,63}$` |
+| Unknown values | Missing fields stay null. `published_at` is stored only when it parses; the raw text is kept. The reader shows first-seen time when publication time is unknown |
+| Eligibility | Deterministic blocked keywords (title, author, preview, body; case-insensitive). No semantic classification, so no unresolved state exists in v1. Current keywords also apply at read time |
+| Hidden-body retention | Blocked items are recorded metadata-only (identity, URL, title, author, fingerprint, reason); preview, body, thumbnail and metadata are not retained. Re-pushing after unblocking restores them |
+| Retention | Host items are not expired |
+| User state | `PATCH /api/items/:id` with optional `expected_version`; a stale version returns 409 with current state |
+| Pagination | Newest first by `COALESCE(published_at, first_seen_at)`, stable opaque cursor |
+| Reader sessions | Feed and Discover draw a fixed number of unread items (`session_size` preference, 5–100, default 20) per session, newest first. Ranking by learned preference is pending (slice B) |
+| Swipe feedback | `PUT /api/items/:id/feedback` with `like`, `dislike` or `save`; one verdict per item, re-swiping replaces it. Swiping marks the item read; `save` also saves. The row snapshots source, author, content type and tags for preference learning. `DELETE` undoes and restores the pre-swipe read/save state. A dislike never hides other items by itself |
+
 ## Implementation gates
 
 These choices were not settled in the planning thread. An implementation PR must record the selected values, user-facing semantics and tests here (or link a versioned contract extension) before enabling the dependent behavior. Missing configuration must fail closed for that capability, not pick an undocumented policy.
@@ -119,6 +140,5 @@ These choices were not settled in the planning thread. An implementation PR must
 | Durable recovery limits | #83 | Lease durations, retry/backoff caps, crash tests and policy for uncertain external usage |
 | Body/history/saved retention | #84, #87 | Durations, backup/restore, saved-content exception and deletion scopes; history does not inherit body expiry |
 | Offline conflict handling | First slice enabling offline mutations | Conditional merge/reject policy, pending-state UX and cache-reset protection |
-| Migration reconciliation | #84 | Cross-device identity/read-save conflicts, unavailable keys/devices, import receipts and rollback evidence |
 
 Optional future scope: network database/API adapters, additional browser engines, screenshot decisions, native clients, semantic search and multi-user hosting. Each requires its own evidence and scope; the current contract does not commit to universal plugin machinery.

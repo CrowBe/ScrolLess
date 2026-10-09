@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'preact/hooks';
 import { useFeedItems } from './hooks/useFeedItems';
 import { useUnreadCounts } from './hooks/useUnreadCounts';
-import { openScrollessDb, type FeedItem } from './idb';
-import type { FeedItemResponse } from './types';
+import { updateFeedItem } from './api';
+import { emit, ITEM_STATE_CHANGED } from './feed-events';
 import { SourceFilter } from './components/source-filter';
 import { FeedList } from './components/feed-list';
-import { SyncStatus } from './components/sync-status';
+import { SwipeSession } from './components/swipe-session';
 import { DeviceSessionStatusBadge } from './components/device-session-status';
 import { NotificationPrompt } from './components/notification-prompt';
 import { Settings } from './settings';
@@ -42,25 +42,6 @@ const NAV_ITEMS: Array<{ id: View; icon: string; label: string }> = [
   { id: 'settings', icon: 'settings', label: 'Settings' },
 ];
 
-/** Map IndexedDB FeedItem to the FeedItemResponse shape expected by card components. */
-function toResponse(item: FeedItem): FeedItemResponse {
-  return {
-    id: item.id,
-    source: item.source,
-    title: item.title,
-    author: item.author,
-    url: item.url,
-    content_preview: item.content_preview,
-    thumbnail_url: item.thumbnail_url,
-    tags: item.tags,
-    is_discovery: item.is_discovery,
-    published_at: item.published_at,
-    fetched_at: item.fetched_at,
-    is_read: item.is_read,
-    is_saved: item.is_saved,
-  };
-}
-
 export function App() {
   const [view, setViewState] = useState<View>(viewFromHash);
   const [source, setSource] = useState('');
@@ -88,28 +69,33 @@ export function App() {
     document.title = `ScrolLess — ${VIEW_TO_TITLE[view]}`;
   }, [view]);
 
-  const { items, loading } = useFeedItems({ source, view });
+  // Feed and Discover are swipe sessions; only Saved is a list
+  const isDeckView = view === 'feed' || view === 'discover';
+  const { items, loading, error, hasMore, loadMore, patchItem, reload } = useFeedItems({
+    source: '',
+    view: view === 'saved' ? 'saved' : 'inactive',
+  });
   const counts = useUnreadCounts();
+  const moreAvailable = source ? counts.by_source[source]?.unread ?? 0 : counts.unread;
 
-  async function handleMarkRead(id: string) {
-    const db = await openScrollessDb();
-    const item = await db.get('feed_items', id);
-    if (item) {
-      await db.put('feed_items', { ...item, is_read: true });
-      window.dispatchEvent(new CustomEvent('scrolless:idb-updated'));
+  async function updateItem(id: string, patch: { is_read?: boolean; is_saved?: boolean }) {
+    patchItem(id, patch);
+    try {
+      await updateFeedItem(id, patch);
+      emit(ITEM_STATE_CHANGED);
+    } catch (err) {
+      console.warn('[App] Failed to update item:', err);
+      void reload();
     }
   }
 
-  async function handleToggleSave(id: string, currentlySaved: boolean) {
-    const db = await openScrollessDb();
-    const item = await db.get('feed_items', id);
-    if (item) {
-      await db.put('feed_items', { ...item, is_saved: !currentlySaved });
-      window.dispatchEvent(new CustomEvent('scrolless:idb-updated'));
-    }
+  function handleMarkRead(id: string) {
+    void updateItem(id, { is_read: true });
   }
 
-  const displayItems = items.map(toResponse);
+  function handleToggleSave(id: string, currentlySaved: boolean) {
+    void updateItem(id, { is_saved: !currentlySaved });
+  }
 
   return (
     <div class="app">
@@ -117,14 +103,13 @@ export function App() {
         <span class="app-header__logo">ScrolLess</span>
         <div class="app-header__right">
           <DeviceSessionStatusBadge />
-          <SyncStatus />
         </div>
       </header>
 
-      <main id="main-content" class="app-main" tabindex={-1}>
+      <main id="main-content" class={`app-main${isDeckView ? ' app-main--deck' : ''}`} tabindex={-1}>
         <NotificationPrompt />
 
-        {(view === 'feed' || view === 'discover') && (
+        {isDeckView && (
           <SourceFilter
             counts={counts}
             source={source}
@@ -134,13 +119,22 @@ export function App() {
 
         {view === 'settings' ? (
           <Settings />
+        ) : isDeckView ? (
+          <SwipeSession
+            key={view}
+            view={view}
+            source={source}
+            moreAvailable={moreAvailable}
+            onOpenSettings={() => setView('settings')}
+          />
         ) : (
           <FeedList
             view={view}
-            items={displayItems}
+            items={items}
             loading={loading}
-            hasMore={false}
-            onLoadMore={() => {}}
+            error={error}
+            hasMore={hasMore}
+            onLoadMore={() => { void (error ? reload() : loadMore()); }}
             onMarkRead={handleMarkRead}
             onToggleSave={handleToggleSave}
             onOpenSettings={() => setView('settings')}

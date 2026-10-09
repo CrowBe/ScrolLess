@@ -1,6 +1,6 @@
 # Personal-host architecture
 
-Status: agreed target established by [#81](https://github.com/CrowBe/ScrolLess/issues/81); implementation pending. The [runtime contract](RUNTIME_CONTRACT.md) defines behavioral requirements. Code remains the evidence for what runs today. The old relay architecture is preserved in the [archive](archive/README.md).
+Status: target established by [#81](https://github.com/CrowBe/ScrolLess/issues/81). The agent-push path below is implemented; the browser worker, Jev gateway and durable job ledger are pending. The [runtime contract](RUNTIME_CONTRACT.md) defines behavioral requirements; code is the evidence for what runs today. Older designs are in the [archive](archive/README.md).
 
 ## Ownership
 
@@ -10,7 +10,7 @@ A personal collector writes readable content to a user-selected store; readers a
 |---|---|---|
 | Source content and revisions | Configured host data store | Reader cache, derived search index |
 | Observations, identities, aliases and decisions | Host durable ledger | Worker holds temporary observations |
-| Preferences, exclusions and read/save state | Host data store | Client may hold pending offline mutations |
+| Preferences, exclusions and read/save state | Host data store | None yet; offline mutations are future work |
 | Enrichment and presentation projections | Host versioned records | Reader renders validated projections |
 | Jobs, attempts, budgets and checkpoints | Host data store | Worker executes a leased attempt |
 | Search | Host query/index service | Rebuildable index over permitted source content |
@@ -45,23 +45,21 @@ Source content, enrichment and presentation are separate records. Code enumerate
 
 Search indexes source content independently of presentation. Searching the captured corpus (#85) differs from topical discovery (#86), which obtains candidates and enters the same ledger/eligibility pipeline. Hidden bodies are not implicitly searchable.
 
+## Agent-push path (implemented)
+
+A trusted agent the user runs (for example Claude Code with its own browsing tools) acts as the collector: it extracts readable items and calls the MCP `push_items` tool, over stdio ([mcp-stdio.ts](../server/mcp-stdio.ts)) or authenticated HTTP ([mcp.ts](../server/mcp.ts)). ScrolLess stores them in the host SQLite store ([content-store.ts](../server/content-store.ts)) and readers fetch them through `/api/items`. ScrolLess itself performs no inference on this path; the agent's model is the user's choice and outside the Jev gateway. Pushed content is evidence, not instructions: fields are length-limited, links must be http(s), and no item field can change sources, preferences or permissions. Behavior is recorded in [agent-push contract v1](RUNTIME_CONTRACT.md#agent-push-contract-v1). The Jev gateway, leased jobs and scheduled browser collection below remain target work.
+
 ## Current code versus target
 
-This map is a starting point for migration, not a claim that target services exist.
-
-| Current code | Current responsibility | Target change |
+| Code | Responsibility today | Target change |
 |---|---|---|
-| [agent-routes.ts](../server/agent-routes.ts), [mcp.ts](../server/mcp.ts) | Encrypted submissions and collector context | Replace ingestion semantics through a versioned contract; retire old prompts deliberately |
-| [sse-manager.ts](../server/sse-manager.ts) | Device relay and delivery | Feed availability comes from durable host commit, independent of an open reader |
-| [db.ts](../server/db.ts), [schema.sql](../sql/schema.sql) | SQLite operational and queue state | Add authoritative content, ledger and runtime operations; preserve old data during migration |
-| [idb.ts](../src/idb.ts), [device-session.ts](../src/bootstrap/device-session.ts) | Device-owned content and decryption | Import/readback first, then optional cache and offline mutations |
-| [crypto.ts](../src/crypto.ts) | Device payload decryption | Retain while old encrypted data needs it; remove only after verified cutover |
-| [api-routes.ts](../server/api-routes.ts), [auth.ts](../server/auth.ts), [oauth-routes.ts](../server/oauth-routes.ts) | Existing API and identity paths | Define and enforce host reader/collector/admin scopes without assuming existing auth suffices |
-
-The present server defaults to `0.0.0.0` in [index.ts](../server/index.ts); the development instructions explicitly bind loopback. Existing MCP prompts and platform resource files describe legacy collection behavior. Their presence is not evidence that the target contract is implemented.
+| [mcp-content-tools.ts](../server/mcp-content-tools.ts), [mcp-stdio.ts](../server/mcp-stdio.ts), [mcp.ts](../server/mcp.ts) | MCP push tools over stdio and HTTP | Add job/attempt scope once a worker exists |
+| [content-store.ts](../server/content-store.ts), [schema.sql](../sql/schema.sql) | Items keyed by `(owner, source, source_id)`, fingerprint/revision counter, metadata-only blocked records, read/save state | Separate observations, immutable revisions, decisions and projections |
+| [api-routes.ts](../server/api-routes.ts), [auth.ts](../server/auth.ts), [oauth-routes.ts](../server/oauth-routes.ts) | Reader device sessions, agent tokens, OAuth | Distinct reader/collector/admin scopes |
+| [src/](../src) reader | Swipe sessions for Feed/Discover (like, dislike, save, undo, full-screen card), Saved list; IndexedDB holds only the device signing key | Preference-ranked sessions; optional rebuildable cache and offline mutations |
 
 ## Scope and authority
 
 The initial product is a personal host, not a multi-tenant cloud service. Billing, tier-dependent queues, Clerk identity, Postgres convergence and Expo prerequisites from the old plans are superseded. Network database adapters, additional engines and native readers may follow concrete needs; none are prerequisites for #82.
 
-Follow [deployment/migration](DEPLOYMENT.md) to preserve existing user data. Follow [TASKS](TASKS.md) for slices and [release checks](pre-release-tasks.md) for evidence. Any runtime policy marked OPEN in the contract must be resolved in its owning slice before enabling that behavior.
+Follow [deployment](DEPLOYMENT.md) for setup and [TASKS](TASKS.md) for slices and [release checks](pre-release-tasks.md) for evidence. Any runtime policy marked OPEN in the contract must be resolved in its owning slice before enabling that behavior.

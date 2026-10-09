@@ -1,16 +1,18 @@
 # Replacement backlog
 
-The personal-host direction supersedes the old relay/hosted architecture. [Architecture](ARCHITECTURE.md) defines ownership; [runtime contract](RUNTIME_CONTRACT.md) defines behavior and OPEN gates. GitHub issues own scoped execution; this table records sequence, not completed implementation.
+The personal-host direction supersedes the old relay/hosted architecture, which has been removed from the code. [Architecture](ARCHITECTURE.md) defines ownership; [runtime contract](RUNTIME_CONTRACT.md) defines behavior and OPEN gates. GitHub issues own scoped execution; this table records sequence, not completed implementation.
 
 | Order | Issue | Deliverable and dependency |
 |---|---|---|
 | 1 | [#81](https://github.com/CrowBe/ScrolLess/issues/81) | Documentation/runtime contract only; this change |
 | 2 | [#82](https://github.com/CrowBe/ScrolLess/issues/82) | One real browser source through Jev, SQLite and reader; resolve first-slice contract gates |
 | 3 | [#83](https://github.com/CrowBe/ScrolLess/issues/83) | Resumable collection and revision-aware decisions; prove interruptions and reuse |
-| 4 | [#84](https://github.com/CrowBe/ScrolLess/issues/84) | Scheduling, personal-host deployment, backups and verified existing-data migration |
+| 4 | [#84](https://github.com/CrowBe/ScrolLess/issues/84) | Scheduling, personal-host deployment and backups |
 | 5 | [#85](https://github.com/CrowBe/ScrolLess/issues/85) | Search the captured corpus independently of presentation |
 | 6 | [#86](https://github.com/CrowBe/ScrolLess/issues/86) | Topical news discovery entering the same collection pipeline |
 | 7 | [#87](https://github.com/CrowBe/ScrolLess/issues/87) | Ownership-aware deletion/reset for host data, observation history and client cache |
+
+Agent push ([contract v1](RUNTIME_CONTRACT.md#agent-push-contract-v1)) delivers readable content to the host ahead of #82: a user-run agent collects and pushes over MCP. #82 still owns the Jev gateway and browser-worker proof.
 
 Search, discovery and reset may be prioritized independently once their foundations exist. A slice may implement only one supported adapter/engine; it must not weaken the durable contract to imply broader support.
 

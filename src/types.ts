@@ -10,6 +10,7 @@ export interface FeedItemResponse {
   author?: string;
   url: string;
   content_preview?: string;
+  body?: string;
   thumbnail_url?: string;
   action_label?: string;
   action_icon?: string;
@@ -20,33 +21,6 @@ export interface FeedItemResponse {
   fetched_at: string;
   is_read: boolean;
   is_saved: boolean;
-}
-
-export interface FeedResponse {
-  items: FeedItemResponse[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
-export interface SourceStats {
-  source: string;
-  count: number;
-  unread: number;
-}
-
-export interface Stats {
-  total: number;
-  unread: number;
-  by_source: SourceStats[];
-}
-
-export interface SyncLogEntry {
-  source: string;
-  attempted_at: string;
-  status: 'device_offline' | 'error';
-  item_count: number;
-  error?: string;
 }
 
 export interface PushPayload {

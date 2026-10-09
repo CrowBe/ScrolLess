@@ -1,59 +1,5 @@
 // Server-side types
 
-export interface AgentFeedResponse {
-  relayed?: number;
-  queued?: number;
-  queue_ttl_minutes?: number;
-}
-
-export interface AgentEncryptedFeedItem {
-  source_id: string;
-  url: string;
-  published_at: string;
-  is_discovery?: boolean;
-  encrypted_fields: string;
-}
-
-export interface AgentEncryptedFeedPayload {
-  source: string;
-  ephemeral_public_key: string;
-  items: AgentEncryptedFeedItem[];
-}
-
-export interface AgentStateSource {
-  last_sync: string | null;
-  item_count: number;
-}
-
-export interface AgentState {
-  sources: Record<string, AgentStateSource>;
-}
-
-export interface AgentPreferences {
-  blocked_keywords: string[];
-  max_items_per_source: number;
-}
-
-export interface AgentSyncSource {
-  name: string;
-  enabled: boolean;
-  urls?: string[];
-  last_sync?: string | null;
-  max_items?: number;
-  scraping_resource?: string;
-}
-
-export interface AgentSyncContext {
-  encryption?: {
-    public_key: string;
-    algorithm: 'ECIES-P256-AES256GCM';
-  };
-  sources: AgentSyncSource[];
-  filters: {
-    blocked_keywords: string[];
-  };
-}
-
 export interface OAuthClientConfig {
   client_id: string;
   redirect_uris: string[];

@@ -1,4 +1,4 @@
-import type { SyncLogEntry, UserSource } from './types';
+import type { UserSource } from './types';
 import { apiUrl } from './config';
 import { getCachedSessionToken } from './bootstrap/device-session';
 
@@ -28,14 +28,10 @@ async function req<T>(url: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function getSyncStatus(): Promise<{ missed: SyncLogEntry[]; next_sync_estimate: string | null }> {
-  return req<{ missed: SyncLogEntry[]; next_sync_estimate: string | null }>('/api/sync/status');
-}
-
 export interface AppPreferences {
   blocked_keywords: string[];
-  retention_days: number;
   max_items_per_source: number;
+  session_size: number;
 }
 
 export function getPreferences(): Promise<AppPreferences> {
@@ -125,16 +121,91 @@ export function revokeToken(hash: string): Promise<{ ok: boolean }> {
   return req(`/api/v1/tokens/${encodeURIComponent(hash)}`, { method: 'DELETE' });
 }
 
-export async function syncPreferencesToIdb(): Promise<void> {
-  const { openScrollessDb } = await import('./idb');
-  const prefs = await getPreferences();
-  const db = await openScrollessDb();
-  const entries: Array<{ key: import('./idb').PreferenceKey; value: unknown }> = [
-    { key: 'blocked_keywords', value: prefs.blocked_keywords },
-    { key: 'retention_days', value: prefs.retention_days },
-    { key: 'max_items_per_source', value: prefs.max_items_per_source },
-  ];
-  await Promise.all(entries.map(e => db.put('preferences', e)));
+// Feed content pushed by the agent over MCP, stored on the host.
+export interface FeedItem {
+  id: string;
+  source: string;
+  source_id: string;
+  url: string;
+  title: string;
+  author: string | null;
+  content_preview: string | null;
+  body: string | null;
+  thumbnail_url: string | null;
+  content_type: string | null;
+  tags: string[];
+  metadata: Record<string, string | number | boolean | null> | null;
+  is_discovery: boolean;
+  published_at: string | null;
+  first_seen_at: string;
+  is_read: boolean;
+  is_saved: boolean;
+  state_version: number;
+}
+
+export interface FeedPage {
+  items: FeedItem[];
+  next_cursor: string | null;
+}
+
+export interface FeedStats {
+  total: number;
+  unread: number;
+  by_source: Array<{ source: string; count: number; unread: number }>;
+}
+
+export function getFeedItems(params: { view?: string; source?: string; cursor?: string | null; limit?: number; unreadOnly?: boolean }): Promise<FeedPage> {
+  const query = new URLSearchParams();
+  if (params.unreadOnly) query.set('unread', '1');
+  if (params.view) query.set('view', params.view);
+  if (params.source) query.set('source', params.source);
+  if (params.cursor) query.set('cursor', params.cursor);
+  if (params.limit) query.set('limit', String(params.limit));
+  return req<FeedPage>(`/api/items?${query.toString()}`);
+}
+
+export function getFeedStats(): Promise<FeedStats> {
+  return req<FeedStats>('/api/items/stats');
+}
+
+export function updateFeedItem(
+  id: string,
+  data: { is_read?: boolean; is_saved?: boolean; expected_version?: number }
+): Promise<{ id: string; is_read: boolean; is_saved: boolean; state_version: number }> {
+  return req(`/api/items/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+}
+
+export function markAllRead(source?: string): Promise<{ updated: number }> {
+  return req('/api/items/mark-read', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(source ? { source } : {}),
+  });
+}
+
+export type Verdict = 'like' | 'dislike' | 'save';
+
+export interface FeedbackResult {
+  item: { id: string; is_read: boolean; is_saved: boolean; state_version: number };
+  verdict: Verdict | null;
+}
+
+/** Record a swipe verdict. Marks the item read; 'save' also saves it. */
+export function sendFeedback(id: string, verdict: Verdict): Promise<FeedbackResult> {
+  return req(`/api/items/${encodeURIComponent(id)}/feedback`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ verdict }),
+  });
+}
+
+/** Undo a swipe, restoring the item's pre-swipe read/save state. */
+export function undoFeedback(id: string): Promise<FeedbackResult> {
+  return req(`/api/items/${encodeURIComponent(id)}/feedback`, { method: 'DELETE' });
 }
 
 // Re-export for convenience

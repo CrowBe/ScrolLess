@@ -2,7 +2,7 @@
 
 ## Target URLs
 
-Navigate to each URL listed in `config.platforms.news.sites`. These are the front pages or feed pages of news sites the user wants to follow. No login is required for public news sites.
+Navigate to each URL listed for the source in `get_collection_context`. These are the front pages or feed pages of news sites the user wants to follow. No login is required for public news sites.
 
 Example sites and their characteristics:
 - `https://news.ycombinator.com` — Hacker News front page. Tech-focused link aggregator.
@@ -17,7 +17,7 @@ For each article/story on the page, extract:
 
 | Field | Where to find it | Notes |
 |---|---|---|
-| `source_id` | Hash of the article URL | Use a stable hash so the device can deduplicate consistently |
+| `source_id` | Canonical article URL | Stable across runs, so re-pushing is idempotent |
 | `title` | Article headline | The main title text |
 | `author` | Publication name or article author | Use the site name if individual author isn't shown |
 | `url` | Article link URL | The canonical URL of the article (not the site's internal redirect) |
@@ -71,12 +71,7 @@ Exception: Hacker News shows 30 items per page. If `max_items_per_source` is hig
 
 ## Timestamp Handling
 
-News sites vary widely in timestamp format:
-- Relative: "2 hours ago", "Yesterday"
-- Absolute: "March 22, 2026", "2026-03-22T14:30:00Z"
-- Mixed: "Mar 22" (date only, no time)
-
-Convert all to ISO 8601. If only a date is available (no time), use midnight UTC: `2026-03-22T00:00:00Z`.
+Prefer an exact timestamp from the page: a `<time datetime="…">` attribute or the tooltip on the time link. If only relative text is visible ("2 hours ago", "3h"), push that text unchanged as `published_at` — the host keeps it raw and orders the item by when it was first seen. Do not compute a time from relative text. Date-only values may be pushed as `YYYY-MM-DD`.
 
 ## Error Handling per Site
 

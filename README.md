@@ -1,52 +1,64 @@
 # ScrolLess
 
-ScrolLess is moving to a personal feed collector: a browser worker on your machine gathers content, Jev makes bounded decisions, and a user-selected data store holds the readable feed. Clients read through an authenticated ScrolLess API.
+ScrolLess is a personal feed you run yourself. An agent you already use (Claude Code, Claude Desktop or any MCP client) collects content from your sources and pushes readable items into a local ScrolLess server over MCP. You read the feed in the ScrolLess web app.
 
-**Migration status:** this is the agreed target, not the current application. Issue [#81](https://github.com/CrowBe/ScrolLess/issues/81) establishes the documentation contract only. Current code still encrypts agent submissions, relays ciphertext and stores decrypted feed content in each reader's IndexedDB. The personal-host collector, gateway and authoritative content API remain implementation work.
-
-## Target flow
+Work in progress: the data model and APIs can change without migration.
 
 ```text
-Signed-in browser → collector worker → authoritative data connection
-                          ↕                        ↕
-                    Jev gateway             authenticated API → readers
+Your agent ──MCP (stdio or HTTP)──▶ ScrolLess host (SQLite) ──/api/items──▶ reader
 ```
 
-The worker owns browser execution; Jev selects among code-defined choices. The host owns source content, observation history, preferences, read/save state, projections, collection jobs and search. IndexedDB may provide a rebuildable offline cache.
+## Quick start
 
-Two interfaces are configurable:
-
-- **Data connection:** a local database, network database or authenticated data API through a supported adapter. SQLite is the first implementation. Database credentials stay in trusted processes; browsers receive scoped API access.
-- **Inference gateway:** translates requests and responses, checks capabilities and routes within the configured privacy policy. Jev is the sole initial inference dependency. Hosted inference sends selected observations externally; a compatible local implementation must be validated for the required decisions. Local-only never falls back to hosted.
-
-The target needs no application-level feed encryption, device content keys or ciphertext relay. Authentication and secure transport remain required independently of that decision. A personal machine or LAN host reached over a private network is a supported deployment direction; it does not imply anonymous access.
-
-## Start here
-
-- [Architecture](docs/ARCHITECTURE.md): ownership, boundaries and current-code map.
-- [Runtime contract](docs/RUNTIME_CONTRACT.md): durable collection, decisions, rendering and unresolved implementation gates.
-- [Deployment and migration](docs/DEPLOYMENT.md): current development setup, target deployment and preservation of existing data.
-- [Backlog](docs/TASKS.md): #81–#87 and implementation order.
-- [Release checks](docs/pre-release-tasks.md): evidence required before declaring the new runtime ready.
-- [Collector skill](skill/SKILL.md): workflow and target/current protocol boundary.
-- [Design system](docs/DESIGN_SYSTEM.md): existing reader styling.
-
-## Run the current application for development
-
-Requires Node.js 20+ as declared in [package.json](package.json).
+Requires Node.js 20+.
 
 ```bash
+git clone https://github.com/CrowBe/ScrolLess.git && cd ScrolLess
 npm ci
-HOST=127.0.0.1 npm run dev
+npm run mcp:config   # prints the command/JSON for your MCP client
 ```
 
-This starts the existing backend on port 3333 and the Vite reader on port 5173. It does **not** start a Jev collector. Agent ingestion needs credentials and the existing encrypted payload protocol; see [deployment](docs/DEPLOYMENT.md). Do not submit target readable-content records to today's relay endpoints.
+Register the stdio server with your agent, e.g. Claude Code:
 
-Useful verification commands are `npm test`, `npm run test:server`, `npm run test:all`, `npm run build` and `npm run validate:boot`. See their definitions in [package.json](package.json).
+```bash
+claude mcp add scrolless --scope user -- "$PWD/node_modules/.bin/tsx" "$PWD/server/mcp-stdio.ts"
+```
 
-## Implementation sequence
+Start the reader, add sources in Settings, then ask your agent to collect (or run the `collect_feed` prompt):
 
-First establish this contract, then prove one browser source → Jev → SQLite → reader in [#82](https://github.com/CrowBe/ScrolLess/issues/82). Recovery, scheduling, migration, search, discovery and deletion follow as bounded slices. The old hosted/tier/Expo plans are [historical](docs/archive/README.md), not competing roadmaps.
+```bash
+HOST=127.0.0.1 npm run dev   # reader at http://localhost:5173, API on :3333
+```
+
+The stdio server needs no token: your agent launches it as a local process and it writes to `data/scrolless.db` (override with `DB_PATH`, which must match the web server's). Browsing is done by the agent with whatever browsing tools it has; ScrolLess stores and serves what it pushes.
+
+The reader is not an endless scroll. Feed and Discover show a fixed number of cards per session (Settings → Cards per session): swipe right to like, left to pass, up to save, tap to read full screen. Buttons and arrow keys do the same; Z undoes. Your swipes are stored on the host to learn your preferences.
+
+| MCP surface | Purpose |
+|---|---|
+| `get_collection_context` | Enabled sources, URLs, limits and blocked keywords |
+| `push_items` | Store readable items for one source; idempotent per `(source, source_id)`; per-item receipts |
+| `list_items` | Read back what is stored |
+| `scrolless://guide/push` | Item schema and collection rules for the agent |
+| `scrolless://sources/{name}` | Per-source extraction hints and user notes |
+| `collect_feed` prompt | One-shot collection workflow |
+
+Agents on another machine can call the same tools over HTTP at `/mcp` with an agent token (create one in Settings) or OAuth. See [deployment](docs/DEPLOYMENT.md) and the [push contract](docs/RUNTIME_CONTRACT.md#agent-push-contract-v1).
+
+## Where it is heading
+
+Later slices add a scheduled browser worker with bounded Jev decisions, revision history, search and discovery on top of the same host store. Those are target designs, not shipped behavior.
+
+- [Architecture](docs/ARCHITECTURE.md): ownership, components and what is implemented.
+- [Runtime contract](docs/RUNTIME_CONTRACT.md): push contract v1 and the target collection/decision contract.
+- [Deployment](docs/DEPLOYMENT.md): running locally and exposing the host safely.
+- [Backlog](docs/TASKS.md) and [release checks](docs/pre-release-tasks.md).
+- [Collector skill](skill/SKILL.md): how an agent should collect.
+- [Design system](docs/DESIGN_SYSTEM.md): reader styling.
+
+## Development
+
+Verification: `npm test` (reader), `npm run test:server`, `npm run test:all`, `npm run typecheck`, `npm run typecheck:client`, `npm run build`, `npm run validate:boot`.
 
 ## Licence
 

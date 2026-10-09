@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/preact';
+import { render, screen, fireEvent, waitFor } from '@testing-library/preact';
 import { SourceFilter } from './source-filter';
 import type { UnreadCounts } from '../hooks/useUnreadCounts';
 
-// SourceFilter now reads/writes IndexedDB directly for mark-all-read.
-// The api.markAllRead export was removed when feed content moved to IndexedDB.
+const markAllRead = vi.fn();
+vi.mock('../api', () => ({ markAllRead: (...args: unknown[]) => markAllRead(...args) }));
 
 const counts: UnreadCounts = {
   total: 20,
@@ -68,6 +68,17 @@ describe('SourceFilter', () => {
   it('shows Mark all read button', () => {
     render(<SourceFilter {...defaultProps} />);
     expect(screen.getByText('Mark all read')).toBeInTheDocument();
+  });
+
+  it('marks the selected source read and signals a feed reload', async () => {
+    markAllRead.mockResolvedValue({ updated: 3 });
+    const listener = vi.fn();
+    window.addEventListener('scrolless:feed-changed', listener);
+    render(<SourceFilter {...defaultProps} source="youtube" />);
+    fireEvent.click(screen.getByText('Mark all read'));
+    await waitFor(() => expect(listener).toHaveBeenCalled());
+    expect(markAllRead).toHaveBeenCalledWith('youtube');
+    window.removeEventListener('scrolless:feed-changed', listener);
   });
 
   it('disables Mark all read when there are no unread items', () => {

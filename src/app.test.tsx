@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { App } from './app';
 
 vi.mock('./hooks/useFeedItems', () => ({
-  useFeedItems: () => ({ items: [], loading: false }),
+  useFeedItems: () => ({ items: [], loading: false, error: null, hasMore: false, loadMore: vi.fn(), patchItem: vi.fn(), reload: vi.fn() }),
 }));
 
 vi.mock('./hooks/useUnreadCounts', () => ({
@@ -14,13 +14,14 @@ vi.mock('./components/source-filter', () => ({
   SourceFilter: () => <div>SourceFilter</div>,
 }));
 
+vi.mock('./components/swipe-session', () => ({
+  SwipeSession: () => <div>SwipeSession</div>,
+}));
+
 vi.mock('./components/feed-list', () => ({
   FeedList: () => <div>FeedList</div>,
 }));
 
-vi.mock('./components/sync-status', () => ({
-  SyncStatus: () => <div>SyncStatus</div>,
-}));
 
 vi.mock('./components/device-session-status', () => ({
   DeviceSessionStatusBadge: () => <div>DeviceSessionStatusBadge</div>,
@@ -40,5 +41,17 @@ describe('App', () => {
     render(<App />);
 
     expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
+  });
+
+  it('shows the swipe session for Feed and the list for Saved', () => {
+    window.location.hash = '#/feed';
+    const { unmount } = render(<App />);
+    expect(screen.getByText('SwipeSession')).toBeInTheDocument();
+    unmount();
+
+    window.location.hash = '#/saved';
+    render(<App />);
+    expect(screen.getByText('FeedList')).toBeInTheDocument();
+    expect(screen.queryByText('SwipeSession')).not.toBeInTheDocument();
   });
 });

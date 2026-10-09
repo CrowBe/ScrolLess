@@ -12,6 +12,8 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "build": "vite build && node build-sw.mjs",
     "start": "NODE_ENV=production tsx server/index.ts",
+    "mcp": "tsx server/mcp-stdio.ts",
+    "mcp:config": "node scripts/mcp-config.mjs",
     "generate-token": "node --input-type=module -e \"import {randomBytes} from 'crypto'; console.log(randomBytes(32).toString('hex'))\"",
     "test": "vitest run",
     "test:server": "vitest run --config vitest.server.config.ts",

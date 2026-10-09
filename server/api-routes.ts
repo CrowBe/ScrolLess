@@ -3,18 +3,17 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 import fastifyRateLimit from '@fastify/rate-limit';
 import { z } from 'zod';
-import type { SseManager } from './sse-manager.js';
 import { readPreferences, sanitizeBlockedKeywords } from './preferences.js';
+import { ContentError, getStats, listItems, markAllRead, recordFeedback, removeFeedback, updateItemState } from './content-store.js';
+
+const SESSION_SIZE_MIN = 5;
+const SESSION_SIZE_MAX = 100;
 
 interface ApiRouteOptions {
   deviceEnrollmentToken?: string;
 }
 
 const deviceIdSchema = z.string().regex(/^dev_[A-Za-z0-9._-]+$/, 'device_id must start with dev_');
-const deviceRegisterSchema = z.object({
-  public_key: z.string().trim().min(1, 'public_key is required'),
-  device_id: deviceIdSchema,
-});
 const deviceChallengeSchema = z.object({
   device_id: deviceIdSchema,
   public_key: z.string().trim().min(1, 'public_key is required'),
@@ -36,10 +35,6 @@ const sourcePatchSchema = z.object({
 }).refine((body) => body.enabled !== undefined || body.urls !== undefined || body.max_items !== undefined, {
   message: 'nothing to update',
 });
-const queueAckSchema = z.object({
-  delivery_id: z.string().trim().min(1, 'delivery_id is required'),
-  device_id: deviceIdSchema,
-});
 const pushSubscribeSchema = z.object({
   endpoint: z.string().url('endpoint must be a valid URL'),
   keys: z.object({
@@ -49,15 +44,36 @@ const pushSubscribeSchema = z.object({
 });
 const preferencesPatchSchema = z.object({
   blocked_keywords: z.array(z.string()).optional(),
-  retention_days: z.number().int().min(1).max(365).optional(),
   max_items_per_source: z.number().int().min(1).max(500).optional(),
+  session_size: z.number().int().min(SESSION_SIZE_MIN).max(SESSION_SIZE_MAX).optional(),
 }).refine(
   (body) =>
     body.blocked_keywords !== undefined ||
-    body.retention_days !== undefined ||
-    body.max_items_per_source !== undefined,
+    body.max_items_per_source !== undefined ||
+    body.session_size !== undefined,
   { message: 'nothing to update' }
 );
+
+const itemsQuerySchema = z.object({
+  view: z.enum(['feed', 'discover', 'saved', 'all']).optional(),
+  unread: z.enum(['0', '1']).optional(),
+  source: z.string().trim().min(1).max(64).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  cursor: z.string().max(1_000).optional(),
+});
+const itemPatchSchema = z.object({
+  is_read: z.boolean().optional(),
+  is_saved: z.boolean().optional(),
+  expected_version: z.number().int().min(0).optional(),
+}).refine((body) => body.is_read !== undefined || body.is_saved !== undefined, {
+  message: 'nothing to update',
+});
+const feedbackSchema = z.object({
+  verdict: z.enum(['like', 'dislike', 'save']),
+});
+const markReadSchema = z.object({
+  source: z.string().trim().min(1).max(64).optional(),
+});
 
 function parseBody<T>(
   schema: z.ZodType<T>,
@@ -73,73 +89,41 @@ function parseBody<T>(
   return parsed.data;
 }
 
-function resolveDeviceRotation(deviceId: string, userId: string, db: Database.Database): string | null {
-  const rotation = db.prepare(
-    `SELECT active_device_id, previous_active_device_id, grace_expires_at
-     FROM free_device_rotation
-     WHERE user_id = ?`
-  ).get(userId) as {
-    active_device_id: string;
-    previous_active_device_id: string | null;
-    grace_expires_at: string | null;
-  } | undefined;
-
-  if (!rotation) return deviceId;
-  if (rotation.active_device_id === deviceId) return deviceId;
-  if (
-    rotation.previous_active_device_id === deviceId &&
-    rotation.grace_expires_at &&
-    new Date(rotation.grace_expires_at) > new Date()
-  ) {
-    return deviceId;
-  }
-  return null;
-}
-
 function lookupSessionToken(plain: string, db: Database.Database): string | null {
   const tokenHash = createHash('sha256').update(plain).digest('hex');
   const session = db.prepare(
     `SELECT device_id FROM device_sessions WHERE token_hash = ? AND expires_at > datetime('now')`
   ).get(tokenHash) as { device_id: string } | undefined;
-  if (!session) return null;
-  return resolveDeviceRotation(session.device_id, 'local', db);
+  return session ? session.device_id : null;
 }
 
+/**
+ * The personal host has a single owner, 'local'. Reader devices authenticate
+ * with a session token from challenge/verify; every authenticated device acts
+ * for that owner. Returns the owner ID, or null when unauthenticated.
+ */
 function getRequestUserId(req: FastifyRequest, db: Database.Database): string | null {
-  // dev_* devices must authenticate via session token issued after challenge/verify
   const authHeader = req.headers['authorization'];
   if (authHeader) {
     const match = /^Bearer (dsess_[A-Za-z0-9]+)$/.exec(authHeader);
-    if (match) return lookupSessionToken(match[1], db);
     // Unrecognised Authorization header — reject even in dev mode
-    return null;
+    return match && lookupSessionToken(match[1], db) ? 'local' : null;
   }
 
   // No auth headers: fall back to 'local' in non-production only
   return process.env.NODE_ENV === 'production' ? null : 'local';
 }
 
-function getStreamUserId(req: FastifyRequest, db: Database.Database): string | null {
-  // Try Authorization header first (standard requests)
-  const fromHeader = getRequestUserId(req, db);
-  if (fromHeader) return fromHeader;
-
-  // EventSource cannot set headers — accept session token via ?token= query param
-  const q = req.query as { token?: string };
-  if (!q.token?.startsWith('dsess_')) return null;
-  return lookupSessionToken(q.token, db);
-}
-
 export function registerApiRoutes(
   fastify: FastifyInstance,
   db: Database.Database,
-  sseManager?: SseManager,
   options?: ApiRouteOptions
 ): void {
   const enrollmentToken = options?.deviceEnrollmentToken?.trim() || null;
 
   const hasValidEnrollmentToken = (providedRaw: string | undefined): boolean => {
-    if (!enrollmentToken) return true;
+    // Without a configured token, enrollment is open outside production only
+    if (!enrollmentToken) return process.env.NODE_ENV !== 'production';
     if (!providedRaw) return false;
     const expected = Buffer.from(enrollmentToken);
     const received = Buffer.from(providedRaw);
@@ -176,22 +160,6 @@ export function registerApiRoutes(
     } catch {
       return false;
     }
-  };
-
-  const registerDeviceHandler = async (req: FastifyRequest, reply: FastifyReply) => {
-    if (!requireEnrollmentToken(req, reply)) return;
-    const body = parseBody(deviceRegisterSchema, req.body, reply);
-    if (!body) return;
-
-    db.prepare(`
-      INSERT INTO device_registrations (user_id, public_key, last_seen)
-      VALUES (?, ?, NULL)
-      ON CONFLICT(user_id) DO UPDATE SET
-        public_key = excluded.public_key,
-        last_seen = NULL
-    `).run(body.device_id, body.public_key);
-
-    return reply.status(201).send({ user_id: body.device_id, ok: true });
   };
 
   const challengeHandler = async (req: FastifyRequest, reply: FastifyReply) => {
@@ -258,35 +226,6 @@ export function registerApiRoutes(
       `UPDATE device_challenges SET consumed_at = ? WHERE challenge_id = ?`
     ).run(new Date().toISOString(), body.challenge_id);
 
-    db.prepare(`
-      INSERT INTO device_registrations (user_id, public_key, last_seen)
-      VALUES (?, ?, NULL)
-      ON CONFLICT(user_id) DO UPDATE SET
-        public_key = excluded.public_key,
-        last_seen = NULL
-    `).run(body.device_id, challenge.public_key);
-
-    const existingRotation = db.prepare(
-      `SELECT active_device_id FROM free_device_rotation WHERE user_id = 'local'`
-    ).get() as { active_device_id: string } | undefined;
-
-    let graceExpiresAt: string | null = null;
-    if (!existingRotation) {
-      db.prepare(`
-        INSERT INTO free_device_rotation (user_id, active_device_id, previous_active_device_id, grace_expires_at)
-        VALUES ('local', ?, NULL, NULL)
-      `).run(body.device_id);
-    } else if (existingRotation.active_device_id !== body.device_id) {
-      graceExpiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-      db.prepare(`
-        UPDATE free_device_rotation
-        SET previous_active_device_id = active_device_id,
-            active_device_id = ?,
-            grace_expires_at = ?
-        WHERE user_id = 'local'
-      `).run(body.device_id, graceExpiresAt);
-    }
-
     const sessionPlain = `dsess_${randomBytes(24).toString('hex')}`;
     const sessionHash = createHash('sha256').update(sessionPlain).digest('hex');
     const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -297,7 +236,6 @@ export function registerApiRoutes(
     return reply.send({
       ok: true,
       user_id: body.device_id,
-      grace_expires_at: graceExpiresAt,
       session_token: sessionPlain,
       session_expires_at: sessionExpiresAt,
     });
@@ -311,112 +249,8 @@ export function registerApiRoutes(
       timeWindow: '1 minute',
       keyGenerator: (req) => req.ip,
     });
-    scope.post('/api/v1/device/register', registerDeviceHandler);
     scope.post('/api/v1/device/challenge', challengeHandler);
     scope.post('/api/v1/device/verify', verifyHandler);
-  });
-
-  // GET /api/stream — SSE relay endpoint
-  fastify.get('/api/stream', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getStreamUserId(req, db);
-    if (!userId || !userId.startsWith('dev_')) {
-      return reply.status(401).send({ error: 'Valid device session token required' });
-    }
-    if (!sseManager) {
-      return reply.status(503).send({ error: 'SSE manager unavailable' });
-    }
-
-    sseManager.register(userId, reply);
-    db.prepare(`UPDATE device_registrations SET last_seen = datetime('now') WHERE user_id = ?`).run(userId);
-
-    // Expire stale queued rows
-    db.prepare(`
-      UPDATE free_queue_deliveries
-      SET status = 'expired'
-      WHERE user_id = ?
-        AND status = 'queued'
-        AND expires_at <= datetime('now')
-    `).run(userId);
-
-    // Drain any queued payloads immediately on reconnect
-    const queuedRows = db.prepare(`
-      SELECT id, payload_envelope
-      FROM free_queue_deliveries
-      WHERE user_id = ?
-        AND status = 'queued'
-        AND expires_at > datetime('now')
-      ORDER BY queued_at ASC
-      LIMIT 25
-    `).all(userId) as Array<{ id: number; payload_envelope: string }>;
-
-    for (const row of queuedRows) {
-      try {
-        const payload = JSON.parse(row.payload_envelope) as Record<string, unknown>;
-        const delivered = sseManager.send(userId, 'feed_items', payload);
-        if (delivered) {
-          db.prepare(`
-            UPDATE free_queue_deliveries
-            SET status = 'delivered', delivered_at = datetime('now')
-            WHERE id = ?
-          `).run(row.id);
-        } else {
-          break;
-        }
-      } catch {
-        db.prepare(`
-          UPDATE free_queue_deliveries
-          SET status = 'expired'
-          WHERE id = ?
-        `).run(row.id);
-      }
-    }
-
-    req.raw.on('close', () => {
-      sseManager.remove(userId, reply);
-    });
-  });
-
-  // GET /api/sync/status
-  fastify.get('/api/sync/status', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
-    const missed = db.prepare(`
-      SELECT source, attempted_at, status, item_count
-      FROM sync_attempts
-      WHERE user_id = ?
-        AND status != 'relayed'
-        AND attempted_at >= datetime('now', '-1 day')
-      ORDER BY attempted_at DESC
-    `).all(userId) as Array<{
-      source: string;
-      attempted_at: string;
-      status: 'device_offline' | 'error';
-      item_count: number;
-    }>;
-
-    const relayedRows = db.prepare(`
-      SELECT attempted_at
-      FROM sync_attempts
-      WHERE user_id = ? AND status = 'relayed'
-      ORDER BY attempted_at DESC
-      LIMIT 10
-    `).all(userId) as Array<{ attempted_at: string }>;
-
-    let nextSyncEstimate: string | null = null;
-    if (relayedRows.length >= 2) {
-      const timestamps = relayedRows
-        .map((row) => Date.parse(row.attempted_at))
-        .filter((ts) => !Number.isNaN(ts))
-        .sort((a, b) => a - b);
-      if (timestamps.length >= 2) {
-        const intervals = timestamps.slice(1).map((ts, idx) => ts - timestamps[idx]);
-        const avgInterval = intervals.reduce((sum, n) => sum + n, 0) / intervals.length;
-        const last = timestamps[timestamps.length - 1];
-        nextSyncEstimate = new Date(last + avgInterval).toISOString();
-      }
-    }
-
-    return reply.send({ missed, next_sync_estimate: nextSyncEstimate });
   });
 
   // GET /api/preferences
@@ -439,8 +273,8 @@ export function registerApiRoutes(
         body.blocked_keywords !== undefined
           ? sanitizeBlockedKeywords(body.blocked_keywords)
           : current.blocked_keywords,
-      retention_days: body.retention_days ?? current.retention_days,
       max_items_per_source: body.max_items_per_source ?? current.max_items_per_source,
+      session_size: body.session_size ?? current.session_size,
     };
 
     const save = db.transaction(() => {
@@ -450,8 +284,8 @@ export function registerApiRoutes(
          ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`
       );
       upsert.run(userId, 'blocked_keywords', JSON.stringify(next.blocked_keywords));
-      upsert.run(userId, 'retention_days', JSON.stringify(next.retention_days));
       upsert.run(userId, 'max_items_per_source', JSON.stringify(next.max_items_per_source));
+      upsert.run(userId, 'session_size', JSON.stringify(next.session_size));
     });
 
     save();
@@ -596,6 +430,91 @@ export function registerApiRoutes(
     return reply.send({ ok: true });
   });
 
+  // ── Host content ──
+  const requireReader = (req: FastifyRequest, reply: FastifyReply): string | null => {
+    const owner = getRequestUserId(req, db);
+    if (!owner) reply.status(401).send({ error: 'Unauthorized device' });
+    return owner;
+  };
+
+  // GET /api/items — readable host feed, newest first, cursor-paginated
+  fastify.get('/api/items', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    const query = parseBody(itemsQuerySchema, req.query, reply);
+    if (!query) return;
+
+    try {
+      const result = listItems(db, owner, {
+        view: query.view ?? 'feed',
+        source: query.source?.toLowerCase(),
+        limit: query.limit ?? 50,
+        cursor: query.cursor,
+        unreadOnly: query.unread === '1',
+      });
+      return reply.send(result);
+    } catch (err) {
+      if (err instanceof ContentError && err.code === 'invalid_cursor') {
+        return reply.status(400).send({ error: err.message });
+      }
+      throw err;
+    }
+  });
+
+  // GET /api/items/stats — counts for the source filter
+  fastify.get('/api/items/stats', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    return reply.send(getStats(db, owner));
+  });
+
+  // POST /api/items/mark-read — mark all (or one source's) items read
+  fastify.post('/api/items/mark-read', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    const body = parseBody(markReadSchema, req.body ?? {}, reply);
+    if (!body) return;
+    return reply.send({ updated: markAllRead(db, owner, body.source?.toLowerCase()) });
+  });
+
+  // PUT /api/items/:id/feedback — record a swipe verdict (marks read; save also saves)
+  fastify.put('/api/items/:id/feedback', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    const { id } = req.params as { id: string };
+    const body = parseBody(feedbackSchema, req.body, reply);
+    if (!body) return;
+    const result = recordFeedback(db, owner, id, body.verdict);
+    if (!result) return reply.status(404).send({ error: 'item not found' });
+    return reply.send(result);
+  });
+
+  // DELETE /api/items/:id/feedback — undo a swipe
+  fastify.delete('/api/items/:id/feedback', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    const { id } = req.params as { id: string };
+    const result = removeFeedback(db, owner, id);
+    if (!result) return reply.status(404).send({ error: 'feedback not found' });
+    return reply.send(result);
+  });
+
+  // PATCH /api/items/:id — read/save state with optional optimistic concurrency
+  fastify.patch('/api/items/:id', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    const { id } = req.params as { id: string };
+    const body = parseBody(itemPatchSchema, req.body, reply);
+    if (!body) return;
+
+    const result = updateItemState(db, owner, id, body);
+    if (!result.ok) {
+      if (result.code === 'not_found') return reply.status(404).send({ error: 'item not found' });
+      return reply.status(409).send({ error: 'version conflict', current: result.state });
+    }
+    return reply.send(result.state);
+  });
+
   // GET /api/v1/tokens
   fastify.get('/api/v1/tokens', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = getRequestUserId(req, db);
@@ -634,59 +553,5 @@ export function registerApiRoutes(
     return reply.send({ ok: true });
   });
 
-  // POST /api/v1/queue/ack
-  fastify.post('/api/v1/queue/ack', async (req: FastifyRequest, reply: FastifyReply) => {
-    const userId = getRequestUserId(req, db);
-    if (!userId) return reply.status(401).send({ error: 'Unauthorized device' });
 
-    const body = parseBody(queueAckSchema, req.body, reply);
-    if (!body) return;
-
-    // Verify the device_id in the body belongs to the authenticated user
-    const deviceRow = db.prepare(
-      `SELECT user_id FROM device_registrations WHERE user_id = ?`
-    ).get(body.device_id) as { user_id: string } | undefined;
-
-    if (!deviceRow || deviceRow.user_id !== userId) {
-      return reply.status(403).send({ error: 'device_id does not belong to authenticated user' });
-    }
-
-    const existing = db.prepare(`
-      SELECT user_id, acked_at
-      FROM paid_queue_deliveries
-      WHERE delivery_id = ? AND device_id = ?
-    `).get(body.delivery_id, body.device_id) as { user_id: string; acked_at: string | null } | undefined;
-
-    if (!existing) {
-      return reply.status(404).send({ error: 'delivery not found' });
-    }
-
-    if (!existing.acked_at) {
-      const now = new Date().toISOString();
-      db.prepare(`
-        UPDATE paid_queue_deliveries
-        SET acked_at = ?, status = 'acked'
-        WHERE delivery_id = ? AND device_id = ?
-      `).run(now, body.delivery_id, body.device_id);
-
-      const hasAnyAck = db.prepare(`
-        SELECT 1 as ok
-        FROM paid_queue_deliveries
-        WHERE delivery_id = ? AND acked_at IS NOT NULL
-        LIMIT 1
-      `).get(body.delivery_id) as { ok: number } | undefined;
-
-      if (hasAnyAck) {
-        db.prepare(`
-          INSERT INTO paid_queue_cursor (user_id, last_acked_delivery_id, last_acked_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(user_id) DO UPDATE SET
-            last_acked_delivery_id = excluded.last_acked_delivery_id,
-            last_acked_at = excluded.last_acked_at
-        `).run(existing.user_id, body.delivery_id, now);
-      }
-    }
-
-    return reply.send({ ok: true, status: 'acked' });
-  });
 }

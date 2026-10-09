@@ -16,7 +16,7 @@ For each video on the page, extract:
 | `title` | Video title text | Full title, not truncated |
 | `author` | Channel name below the title | |
 | `url` | Full video URL | `https://www.youtube.com/watch?v={source_id}` |
-| `published_at` | Relative timestamp (e.g. "2 hours ago") | Convert to ISO 8601. If only a relative time is shown, compute from current time. |
+| `published_at` | Timestamp under the title | See Timestamp Handling — exact if available, else the displayed text |
 | `thumbnail_url` | Video thumbnail image `src` | Prefer `mqdefault.jpg` quality or whatever is displayed |
 | `content_preview` | Not usually visible on sub feed | Leave empty if not available |
 | `tags` | Not available on this page | Omit or leave empty |
@@ -35,7 +35,7 @@ For each video on the page, extract:
 The subscriptions page loads more videos as you scroll down. To get more items:
 
 1. Start extracting from the top of the page
-2. If you haven't reached `max_items_per_source` and haven't hit content older than `last_sync`:
+2. If you haven't reached `max_items_per_source` and haven't hit content you saw before `last_sync_at`:
    - Scroll down to trigger lazy loading
    - Wait for new content to appear
    - Continue extracting
@@ -46,11 +46,7 @@ The subscriptions page loads more videos as you scroll down. To get more items:
 
 ## Timestamp Handling
 
-YouTube shows relative timestamps on the subscription feed:
-- "3 minutes ago", "2 hours ago", "1 day ago", "3 weeks ago"
-- Convert these to ISO 8601 by subtracting from the current time
-- Be aware that "1 day ago" could mean anywhere from 24 to 47 hours ago — approximate is fine
-- For items showing a specific date (older content), parse the date directly
+Prefer an exact timestamp from the page: a `<time datetime="…">` attribute or the tooltip on the time link. If only relative text is visible ("2 hours ago", "3h"), push that text unchanged as `published_at` — the host keeps it raw and orders the item by when it was first seen. Do not compute a time from relative text. Date-only values may be pushed as `YYYY-MM-DD`.
 
 ## Edge Cases
 

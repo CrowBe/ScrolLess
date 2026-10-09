@@ -1,5 +1,6 @@
 import type { UnreadCounts } from '../hooks/useUnreadCounts';
-import { openScrollessDb } from '../idb';
+import { markAllRead } from '../api';
+import { emit, FEED_CHANGED } from '../feed-events';
 import { displayName } from '../source-labels';
 
 interface Props {
@@ -31,16 +32,12 @@ export function SourceFilter({
 
   async function handleMarkAllRead() {
     if (unreadCount === 0) return;
-    const db = await openScrollessDb();
-    const all = await db.getAll('feed_items');
-    const tx = db.transaction('feed_items', 'readwrite');
-    for (const item of all) {
-      if (item.is_read) continue;
-      if (source && item.source !== source) continue;
-      await tx.store.put({ ...item, is_read: true });
+    try {
+      await markAllRead(source || undefined);
+      emit(FEED_CHANGED);
+    } catch (err) {
+      console.warn('[SourceFilter] Failed to mark items read:', err);
     }
-    await tx.done;
-    window.dispatchEvent(new CustomEvent('scrolless:idb-updated'));
   }
 
   return (

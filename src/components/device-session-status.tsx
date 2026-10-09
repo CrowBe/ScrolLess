@@ -5,26 +5,17 @@ import {
   type DeviceSessionStatus,
 } from '../bootstrap/device-session';
 
-function statusMeta(status: DeviceSessionStatus): { icon: string; text: string; className: string } {
-  if (status.state === 'stream_active') {
-    return { icon: 'cloud_done', text: 'Stream active', className: 'device-session-status--ok' };
-  }
-  if (status.state === 'stream_disconnected') {
-    return { icon: 'cloud_off', text: 'Stream disconnected', className: 'device-session-status--warn' };
-  }
-  return { icon: 'person_off', text: 'Not registered', className: 'device-session-status--error' };
-}
-
+/** Header badge shown only when the reader is not authenticated. */
 export function DeviceSessionStatusBadge() {
   const [status, setStatus] = useState<DeviceSessionStatus>(getDeviceSessionStatus);
 
   useEffect(() => subscribeDeviceSessionStatus(setStatus), []);
 
-  const meta = statusMeta(status);
+  if (status.state !== 'error') return null;
   return (
-    <div class={`device-session-status ${meta.className}`} title={status.lastError ?? undefined}>
-      <span class="material-symbols-outlined device-session-status__icon">{meta.icon}</span>
-      <span class="device-session-status__text">{meta.text}</span>
+    <div class="device-session-status device-session-status--error" title={status.lastError ?? undefined}>
+      <span class="material-symbols-outlined device-session-status__icon">person_off</span>
+      <span class="device-session-status__text">Not signed in</span>
     </div>
   );
 }
