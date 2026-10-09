@@ -189,6 +189,7 @@ function PreferencesSection() {
       const updated = await updatePreferences({
         blocked_keywords: nextBlockedKeywords,
         max_items_per_source: preferences.max_items_per_source,
+        session_size: preferences.session_size,
       });
       setPreferences(updated);
       setBlockedKeywordsInput(updated.blocked_keywords.join(', '));
@@ -237,6 +238,25 @@ function PreferencesSection() {
             }}
           />
           <span class="settings__help">Comma-separated. Matching items are hidden from your feed and stored without their content.</span>
+        </label>
+
+        <label class="settings__prefs-field">
+          <span class="settings__prefs-label">Cards per session</span>
+          <input
+            class="form-input settings__prefs-number"
+            type="number"
+            min="5"
+            max="100"
+            value={String(preferences.session_size)}
+            onInput={(e) => {
+              setPreferences({
+                ...preferences,
+                session_size: Number((e.target as HTMLInputElement).value),
+              });
+              setSaved(false);
+            }}
+          />
+          <span class="settings__help">How many cards each swipe session holds before you're caught up.</span>
         </label>
 
         <label class="settings__prefs-field">

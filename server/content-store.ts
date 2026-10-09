@@ -423,6 +423,7 @@ export interface ListOptions {
   limit?: number;
   cursor?: string;
   includeBlocked?: boolean;
+  unreadOnly?: boolean;
 }
 
 export interface ListResult {
@@ -468,6 +469,7 @@ export function listItems(db: Database.Database, userId: string, opts: ListOptio
   if (opts.view === 'feed') where.push('is_discovery = 0');
   if (opts.view === 'discover') where.push('is_discovery = 1');
   if (opts.view === 'saved') where.push('is_saved = 1');
+  if (opts.unreadOnly) where.push('is_read = 0');
   if (opts.source) {
     where.push('source = ?');
     params.push(opts.source);
@@ -576,4 +578,79 @@ export function markAllRead(db: Database.Database, userId: string, source?: stri
        WHERE user_id = ? AND is_read = 0`
     ).run(userId);
   return result.changes;
+}
+
+export type Verdict = 'like' | 'dislike' | 'save';
+
+export interface FeedbackResult {
+  item: ItemState;
+  verdict: Verdict | null;
+}
+
+/**
+ * Record a swipe verdict. Swiping marks the item read; `save` also saves it.
+ * Re-swiping replaces the verdict but keeps the original pre-swipe state so
+ * undo always restores what the reader saw before the first swipe.
+ */
+export function recordFeedback(
+  db: Database.Database,
+  userId: string,
+  id: string,
+  verdict: Verdict,
+  now: Date = new Date()
+): FeedbackResult | null {
+  const run = db.transaction(() => {
+    const row = db.prepare(
+      `SELECT id, source, author, content_type, tags, is_read, is_saved, state_version
+       FROM content_items WHERE user_id = ? AND id = ?`
+    ).get(userId, id) as Pick<ContentRow, 'id' | 'source' | 'author' | 'content_type' | 'tags' | 'is_read' | 'is_saved' | 'state_version'> | undefined;
+    if (!row) return null;
+
+    const existing = db.prepare(
+      `SELECT prev_is_read, prev_is_saved FROM item_feedback WHERE user_id = ? AND item_id = ?`
+    ).get(userId, id) as { prev_is_read: number; prev_is_saved: number } | undefined;
+
+    db.prepare(`
+      INSERT INTO item_feedback (user_id, item_id, verdict, source, author, content_type, tags, prev_is_read, prev_is_saved, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, item_id) DO UPDATE SET verdict = excluded.verdict, created_at = excluded.created_at
+    `).run(
+      userId, id, verdict, row.source, row.author, row.content_type, row.tags,
+      existing?.prev_is_read ?? row.is_read, existing?.prev_is_saved ?? row.is_saved, now.toISOString()
+    );
+
+    // Re-swiping away from save restores the pre-swipe saved state
+    const isSaved = verdict === 'save' ? 1 : (existing?.prev_is_saved ?? row.is_saved);
+    db.prepare(
+      `UPDATE content_items SET is_read = 1, is_saved = ?, state_version = state_version + 1 WHERE id = ?`
+    ).run(isSaved, id);
+
+    return {
+      item: { id, is_read: true, is_saved: isSaved === 1, state_version: row.state_version + 1 },
+      verdict,
+    };
+  });
+  return run();
+}
+
+/** Undo a swipe: delete the verdict and restore the pre-swipe read/save state. */
+export function removeFeedback(db: Database.Database, userId: string, id: string): FeedbackResult | null {
+  const run = db.transaction(() => {
+    const feedback = db.prepare(
+      `SELECT prev_is_read, prev_is_saved FROM item_feedback WHERE user_id = ? AND item_id = ?`
+    ).get(userId, id) as { prev_is_read: number; prev_is_saved: number } | undefined;
+    if (!feedback) return null;
+
+    db.prepare(`DELETE FROM item_feedback WHERE user_id = ? AND item_id = ?`).run(userId, id);
+    db.prepare(
+      `UPDATE content_items SET is_read = ?, is_saved = ?, state_version = state_version + 1 WHERE id = ?`
+    ).run(feedback.prev_is_read, feedback.prev_is_saved, id);
+    const row = db.prepare(`SELECT state_version FROM content_items WHERE id = ?`).get(id) as { state_version: number };
+
+    return {
+      item: { id, is_read: feedback.prev_is_read === 1, is_saved: feedback.prev_is_saved === 1, state_version: row.state_version },
+      verdict: null,
+    };
+  });
+  return run();
 }

@@ -4,7 +4,10 @@ import type Database from 'better-sqlite3';
 import fastifyRateLimit from '@fastify/rate-limit';
 import { z } from 'zod';
 import { readPreferences, sanitizeBlockedKeywords } from './preferences.js';
-import { ContentError, getStats, listItems, markAllRead, updateItemState } from './content-store.js';
+import { ContentError, getStats, listItems, markAllRead, recordFeedback, removeFeedback, updateItemState } from './content-store.js';
+
+const SESSION_SIZE_MIN = 5;
+const SESSION_SIZE_MAX = 100;
 
 interface ApiRouteOptions {
   deviceEnrollmentToken?: string;
@@ -42,15 +45,18 @@ const pushSubscribeSchema = z.object({
 const preferencesPatchSchema = z.object({
   blocked_keywords: z.array(z.string()).optional(),
   max_items_per_source: z.number().int().min(1).max(500).optional(),
+  session_size: z.number().int().min(SESSION_SIZE_MIN).max(SESSION_SIZE_MAX).optional(),
 }).refine(
   (body) =>
     body.blocked_keywords !== undefined ||
-    body.max_items_per_source !== undefined,
+    body.max_items_per_source !== undefined ||
+    body.session_size !== undefined,
   { message: 'nothing to update' }
 );
 
 const itemsQuerySchema = z.object({
   view: z.enum(['feed', 'discover', 'saved', 'all']).optional(),
+  unread: z.enum(['0', '1']).optional(),
   source: z.string().trim().min(1).max(64).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
   cursor: z.string().max(1_000).optional(),
@@ -61,6 +67,9 @@ const itemPatchSchema = z.object({
   expected_version: z.number().int().min(0).optional(),
 }).refine((body) => body.is_read !== undefined || body.is_saved !== undefined, {
   message: 'nothing to update',
+});
+const feedbackSchema = z.object({
+  verdict: z.enum(['like', 'dislike', 'save']),
 });
 const markReadSchema = z.object({
   source: z.string().trim().min(1).max(64).optional(),
@@ -265,6 +274,7 @@ export function registerApiRoutes(
           ? sanitizeBlockedKeywords(body.blocked_keywords)
           : current.blocked_keywords,
       max_items_per_source: body.max_items_per_source ?? current.max_items_per_source,
+      session_size: body.session_size ?? current.session_size,
     };
 
     const save = db.transaction(() => {
@@ -275,6 +285,7 @@ export function registerApiRoutes(
       );
       upsert.run(userId, 'blocked_keywords', JSON.stringify(next.blocked_keywords));
       upsert.run(userId, 'max_items_per_source', JSON.stringify(next.max_items_per_source));
+      upsert.run(userId, 'session_size', JSON.stringify(next.session_size));
     });
 
     save();
@@ -439,6 +450,7 @@ export function registerApiRoutes(
         source: query.source?.toLowerCase(),
         limit: query.limit ?? 50,
         cursor: query.cursor,
+        unreadOnly: query.unread === '1',
       });
       return reply.send(result);
     } catch (err) {
@@ -463,6 +475,28 @@ export function registerApiRoutes(
     const body = parseBody(markReadSchema, req.body ?? {}, reply);
     if (!body) return;
     return reply.send({ updated: markAllRead(db, owner, body.source?.toLowerCase()) });
+  });
+
+  // PUT /api/items/:id/feedback — record a swipe verdict (marks read; save also saves)
+  fastify.put('/api/items/:id/feedback', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    const { id } = req.params as { id: string };
+    const body = parseBody(feedbackSchema, req.body, reply);
+    if (!body) return;
+    const result = recordFeedback(db, owner, id, body.verdict);
+    if (!result) return reply.status(404).send({ error: 'item not found' });
+    return reply.send(result);
+  });
+
+  // DELETE /api/items/:id/feedback — undo a swipe
+  fastify.delete('/api/items/:id/feedback', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    const { id } = req.params as { id: string };
+    const result = removeFeedback(db, owner, id);
+    if (!result) return reply.status(404).send({ error: 'feedback not found' });
+    return reply.send(result);
   });
 
   // PATCH /api/items/:id — read/save state with optional optimistic concurrency

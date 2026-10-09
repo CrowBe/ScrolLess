@@ -92,6 +92,7 @@ describe('GET/PATCH /api/preferences', () => {
     expect(res.json()).toEqual({
       blocked_keywords: ['sponsored'],
       max_items_per_source: 50,
+      session_size: 20,
     });
   });
 
@@ -109,6 +110,7 @@ describe('GET/PATCH /api/preferences', () => {
     expect(res.json()).toEqual({
       blocked_keywords: ['sponsored', 'giveaway'],
       max_items_per_source: 25,
+      session_size: 20,
     });
 
     const rows = db.prepare(
@@ -500,6 +502,36 @@ describe('/api/items (host content)', () => {
 
     const savedView = await app.inject({ method: 'GET', url: '/api/items?view=saved' });
     expect((savedView.json() as { items: Array<{ id: string }> }).items.map((i) => i.id)).toEqual([id]);
+  });
+
+  it('lists only unread items when unread=1', async () => {
+    const { items } = (await app.inject({ method: 'GET', url: '/api/items' })).json() as { items: Array<{ id: string }> };
+    await app.inject({ method: 'PATCH', url: `/api/items/${items[0].id}`, payload: { is_read: true } });
+    const unread = await app.inject({ method: 'GET', url: '/api/items?unread=1' });
+    expect((unread.json() as { items: Array<{ title: string }> }).items.map((i) => i.title)).toEqual(['First']);
+  });
+
+  it('records swipe feedback and undoes it', async () => {
+    const { items } = (await app.inject({ method: 'GET', url: '/api/items' })).json() as { items: Array<{ id: string }> };
+    const id = items[0].id;
+
+    const saved = await app.inject({ method: 'PUT', url: `/api/items/${id}/feedback`, payload: { verdict: 'save' } });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toMatchObject({ verdict: 'save', item: { is_read: true, is_saved: true } });
+
+    const bad = await app.inject({ method: 'PUT', url: `/api/items/${id}/feedback`, payload: { verdict: 'meh' } });
+    expect(bad.statusCode).toBe(400);
+    expect((await app.inject({ method: 'PUT', url: '/api/items/ci_nope/feedback', payload: { verdict: 'like' } })).statusCode).toBe(404);
+
+    const undo = await app.inject({ method: 'DELETE', url: `/api/items/${id}/feedback` });
+    expect(undo.json()).toMatchObject({ verdict: null, item: { is_read: false, is_saved: false } });
+    expect((await app.inject({ method: 'DELETE', url: `/api/items/${id}/feedback` })).statusCode).toBe(404);
+  });
+
+  it('validates session_size preference bounds', async () => {
+    expect((await app.inject({ method: 'PATCH', url: '/api/preferences', payload: { session_size: 2 } })).statusCode).toBe(400);
+    const ok = await app.inject({ method: 'PATCH', url: '/api/preferences', payload: { session_size: 10 } });
+    expect(ok.json()).toMatchObject({ session_size: 10 });
   });
 
   it('reports stats and marks all read', async () => {

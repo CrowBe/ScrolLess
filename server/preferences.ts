@@ -3,11 +3,13 @@ import type Database from 'better-sqlite3';
 export interface AppPreferences {
   blocked_keywords: string[];
   max_items_per_source: number;
+  session_size: number;
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
   blocked_keywords: [],
   max_items_per_source: 50,
+  session_size: 20,
 };
 
 export function sanitizeBlockedKeywords(value: unknown): string[] {
@@ -19,7 +21,7 @@ export function sanitizeBlockedKeywords(value: unknown): string[] {
 
 export function readPreferences(db: Database.Database, userId: string): AppPreferences {
   const rows = db.prepare(
-    `SELECT key, value FROM user_preferences WHERE user_id = ? AND key IN ('blocked_keywords', 'max_items_per_source')`
+    `SELECT key, value FROM user_preferences WHERE user_id = ? AND key IN ('blocked_keywords', 'max_items_per_source', 'session_size')`
   ).all(userId) as Array<{ key: string; value: string }>;
 
   const values = new Map(rows.map((row) => [row.key, row.value]));
@@ -35,9 +37,11 @@ export function readPreferences(db: Database.Database, userId: string): AppPrefe
   };
 
   const maxItemsPerSource = Number(getJsonValue('max_items_per_source'));
+  const sessionSize = Number(getJsonValue('session_size'));
 
   return {
     blocked_keywords: sanitizeBlockedKeywords(getJsonValue('blocked_keywords')),
     max_items_per_source: Number.isFinite(maxItemsPerSource) ? maxItemsPerSource : DEFAULT_PREFERENCES.max_items_per_source,
+    session_size: Number.isFinite(sessionSize) ? sessionSize : DEFAULT_PREFERENCES.session_size,
   };
 }

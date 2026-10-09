@@ -25,10 +25,12 @@ describe('Settings', () => {
     (getPreferences as ReturnType<typeof vi.fn>).mockResolvedValue({
       blocked_keywords: ['sponsored'],
       max_items_per_source: 50,
+      session_size: 20,
     });
     (updatePreferences as ReturnType<typeof vi.fn>).mockImplementation(async (payload) => ({
       blocked_keywords: payload.blocked_keywords ?? ['sponsored'],
       max_items_per_source: payload.max_items_per_source ?? 50,
+      session_size: payload.session_size ?? 20,
     }));
   });
 
@@ -134,6 +136,8 @@ describe('Settings', () => {
     const blockedKeywords = await screen.findByPlaceholderText('sponsored, giveaway');
     fireEvent.input(blockedKeywords, { target: { value: 'sponsored, giveaway' } });
 
+    fireEvent.input(screen.getByDisplayValue('20'), { target: { value: '12' } });
+
     const maxItemsInput = screen.getByDisplayValue('50');
     fireEvent.input(maxItemsInput, { target: { value: '75' } });
 
@@ -143,6 +147,7 @@ describe('Settings', () => {
       expect(updatePreferences).toHaveBeenCalledWith({
         blocked_keywords: ['sponsored', 'giveaway'],
         max_items_per_source: 75,
+        session_size: 12,
       });
     });
 

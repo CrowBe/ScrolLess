@@ -124,6 +124,8 @@ Implemented in [content-store.ts](../server/content-store.ts) and [mcp-content-t
 | Retention | Host items are not expired |
 | User state | `PATCH /api/items/:id` with optional `expected_version`; a stale version returns 409 with current state |
 | Pagination | Newest first by `COALESCE(published_at, first_seen_at)`, stable opaque cursor |
+| Reader sessions | Feed and Discover draw a fixed number of unread items (`session_size` preference, 5–100, default 20) per session, newest first. Ranking by learned preference is pending (slice B) |
+| Swipe feedback | `PUT /api/items/:id/feedback` with `like`, `dislike` or `save`; one verdict per item, re-swiping replaces it. Swiping marks the item read; `save` also saves. The row snapshots source, author, content type and tags for preference learning. `DELETE` undoes and restores the pre-swipe read/save state. A dislike never hides other items by itself |
 
 ## Implementation gates
 

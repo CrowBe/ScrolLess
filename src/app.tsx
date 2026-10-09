@@ -5,6 +5,7 @@ import { updateFeedItem } from './api';
 import { emit, ITEM_STATE_CHANGED } from './feed-events';
 import { SourceFilter } from './components/source-filter';
 import { FeedList } from './components/feed-list';
+import { SwipeSession } from './components/swipe-session';
 import { DeviceSessionStatusBadge } from './components/device-session-status';
 import { NotificationPrompt } from './components/notification-prompt';
 import { Settings } from './settings';
@@ -68,8 +69,14 @@ export function App() {
     document.title = `ScrolLess — ${VIEW_TO_TITLE[view]}`;
   }, [view]);
 
-  const { items, loading, error, hasMore, loadMore, patchItem, reload } = useFeedItems({ source, view });
+  // Feed and Discover are swipe sessions; only Saved is a list
+  const isDeckView = view === 'feed' || view === 'discover';
+  const { items, loading, error, hasMore, loadMore, patchItem, reload } = useFeedItems({
+    source: '',
+    view: view === 'saved' ? 'saved' : 'inactive',
+  });
   const counts = useUnreadCounts();
+  const moreAvailable = source ? counts.by_source[source]?.unread ?? 0 : counts.unread;
 
   async function updateItem(id: string, patch: { is_read?: boolean; is_saved?: boolean }) {
     patchItem(id, patch);
@@ -99,10 +106,10 @@ export function App() {
         </div>
       </header>
 
-      <main id="main-content" class="app-main" tabindex={-1}>
+      <main id="main-content" class={`app-main${isDeckView ? ' app-main--deck' : ''}`} tabindex={-1}>
         <NotificationPrompt />
 
-        {(view === 'feed' || view === 'discover') && (
+        {isDeckView && (
           <SourceFilter
             counts={counts}
             source={source}
@@ -112,6 +119,14 @@ export function App() {
 
         {view === 'settings' ? (
           <Settings />
+        ) : isDeckView ? (
+          <SwipeSession
+            key={view}
+            view={view}
+            source={source}
+            moreAvailable={moreAvailable}
+            onOpenSettings={() => setView('settings')}
+          />
         ) : (
           <FeedList
             view={view}

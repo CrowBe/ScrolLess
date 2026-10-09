@@ -31,6 +31,7 @@ async function req<T>(url: string, options?: RequestInit): Promise<T> {
 export interface AppPreferences {
   blocked_keywords: string[];
   max_items_per_source: number;
+  session_size: number;
 }
 
 export function getPreferences(): Promise<AppPreferences> {
@@ -129,6 +130,7 @@ export interface FeedItem {
   title: string;
   author: string | null;
   content_preview: string | null;
+  body: string | null;
   thumbnail_url: string | null;
   content_type: string | null;
   tags: string[];
@@ -152,8 +154,9 @@ export interface FeedStats {
   by_source: Array<{ source: string; count: number; unread: number }>;
 }
 
-export function getFeedItems(params: { view?: string; source?: string; cursor?: string | null; limit?: number }): Promise<FeedPage> {
+export function getFeedItems(params: { view?: string; source?: string; cursor?: string | null; limit?: number; unreadOnly?: boolean }): Promise<FeedPage> {
   const query = new URLSearchParams();
+  if (params.unreadOnly) query.set('unread', '1');
   if (params.view) query.set('view', params.view);
   if (params.source) query.set('source', params.source);
   if (params.cursor) query.set('cursor', params.cursor);
@@ -182,6 +185,27 @@ export function markAllRead(source?: string): Promise<{ updated: number }> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(source ? { source } : {}),
   });
+}
+
+export type Verdict = 'like' | 'dislike' | 'save';
+
+export interface FeedbackResult {
+  item: { id: string; is_read: boolean; is_saved: boolean; state_version: number };
+  verdict: Verdict | null;
+}
+
+/** Record a swipe verdict. Marks the item read; 'save' also saves it. */
+export function sendFeedback(id: string, verdict: Verdict): Promise<FeedbackResult> {
+  return req(`/api/items/${encodeURIComponent(id)}/feedback`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ verdict }),
+  });
+}
+
+/** Undo a swipe, restoring the item's pre-swipe read/save state. */
+export function undoFeedback(id: string): Promise<FeedbackResult> {
+  return req(`/api/items/${encodeURIComponent(id)}/feedback`, { method: 'DELETE' });
 }
 
 // Re-export for convenience

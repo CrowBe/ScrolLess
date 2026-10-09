@@ -129,3 +129,21 @@ CREATE TABLE IF NOT EXISTS content_items (
 );
 CREATE INDEX IF NOT EXISTS idx_content_feed ON content_items(user_id, eligibility, sort_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_content_source ON content_items(user_id, source, sort_at DESC);
+
+-- One swipe verdict per item. Feature snapshot (source, author, type, tags)
+-- feeds preference learning even if the item is later edited or removed.
+-- prev_* hold the item's read/save state before the swipe so undo can restore it.
+CREATE TABLE IF NOT EXISTS item_feedback (
+    user_id         TEXT NOT NULL DEFAULT 'local',
+    item_id         TEXT NOT NULL REFERENCES content_items(id) ON DELETE CASCADE,
+    verdict         TEXT NOT NULL,                -- like | dislike | save
+    source          TEXT NOT NULL,
+    author          TEXT,
+    content_type    TEXT,
+    tags            TEXT NOT NULL DEFAULT '[]',
+    prev_is_read    INTEGER NOT NULL,
+    prev_is_saved   INTEGER NOT NULL,
+    created_at      TEXT NOT NULL,
+    PRIMARY KEY (user_id, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_user ON item_feedback(user_id, created_at DESC);

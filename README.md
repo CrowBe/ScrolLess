@@ -32,6 +32,8 @@ HOST=127.0.0.1 npm run dev   # reader at http://localhost:5173, API on :3333
 
 The stdio server needs no token: your agent launches it as a local process and it writes to `data/scrolless.db` (override with `DB_PATH`, which must match the web server's). Browsing is done by the agent with whatever browsing tools it has; ScrolLess stores and serves what it pushes.
 
+The reader is not an endless scroll. Feed and Discover show a fixed number of cards per session (Settings → Cards per session): swipe right to like, left to pass, up to save, tap to read full screen. Buttons and arrow keys do the same; Z undoes. Your swipes are stored on the host to learn your preferences.
+
 | MCP surface | Purpose |
 |---|---|
 | `get_collection_context` | Enabled sources, URLs, limits and blocked keywords |

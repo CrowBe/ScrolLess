@@ -14,6 +14,10 @@ vi.mock('./components/source-filter', () => ({
   SourceFilter: () => <div>SourceFilter</div>,
 }));
 
+vi.mock('./components/swipe-session', () => ({
+  SwipeSession: () => <div>SwipeSession</div>,
+}));
+
 vi.mock('./components/feed-list', () => ({
   FeedList: () => <div>FeedList</div>,
 }));
@@ -37,5 +41,17 @@ describe('App', () => {
     render(<App />);
 
     expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
+  });
+
+  it('shows the swipe session for Feed and the list for Saved', () => {
+    window.location.hash = '#/feed';
+    const { unmount } = render(<App />);
+    expect(screen.getByText('SwipeSession')).toBeInTheDocument();
+    unmount();
+
+    window.location.hash = '#/saved';
+    render(<App />);
+    expect(screen.getByText('FeedList')).toBeInTheDocument();
+    expect(screen.queryByText('SwipeSession')).not.toBeInTheDocument();
   });
 });

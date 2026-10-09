@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { ContentError, getStats, listItems, markAllRead, pushItems, updateItemState, type PushItem } from './content-store.js';
+import { ContentError, getStats, listItems, markAllRead, pushItems, recordFeedback, removeFeedback, updateItemState, type PushItem } from './content-store.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -141,5 +141,51 @@ describe('listItems / state', () => {
     expect(getStats(db, 'local')).toMatchObject({ total: 2, unread: 1 });
     expect(markAllRead(db, 'local', 'news')).toBe(1);
     expect(getStats(db, 'local').unread).toBe(0);
+  });
+});
+
+describe('swipe feedback', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = createTestDb(); });
+  afterEach(() => { db.close(); });
+
+  function feedbackRow(id: string) {
+    return db.prepare('SELECT verdict, source, author, content_type, tags FROM item_feedback WHERE item_id = ?').get(id);
+  }
+
+  it('records a verdict with a feature snapshot and marks the item read', () => {
+    const { receipts } = pushItems(db, 'local', 'news', [item({ author: 'Ada', content_type: 'article', tags: ['db'] })]);
+    const id = receipts[0].id!;
+
+    const result = recordFeedback(db, 'local', id, 'like');
+    expect(result).toMatchObject({ verdict: 'like', item: { is_read: true, is_saved: false } });
+    expect(feedbackRow(id)).toEqual({ verdict: 'like', source: 'news', author: 'Ada', content_type: 'article', tags: '["db"]' });
+    expect(listItems(db, 'local', { unreadOnly: true }).items).toHaveLength(0);
+  });
+
+  it('save saves; re-swiping replaces the verdict and undo restores the original state', () => {
+    const { receipts } = pushItems(db, 'local', 'news', [item()]);
+    const id = receipts[0].id!;
+
+    expect(recordFeedback(db, 'local', id, 'save')?.item.is_saved).toBe(true);
+    expect(recordFeedback(db, 'local', id, 'dislike')?.item.is_saved).toBe(false);
+    expect(feedbackRow(id)).toMatchObject({ verdict: 'dislike' });
+
+    const undone = removeFeedback(db, 'local', id);
+    expect(undone).toMatchObject({ verdict: null, item: { is_read: false, is_saved: false } });
+    expect(feedbackRow(id)).toBeUndefined();
+    expect(removeFeedback(db, 'local', id)).toBeNull();
+  });
+
+  it('keeps an item saved before the swipe saved after undo', () => {
+    const { receipts } = pushItems(db, 'local', 'news', [item()]);
+    const id = receipts[0].id!;
+    updateItemState(db, 'local', id, { is_saved: true });
+    recordFeedback(db, 'local', id, 'like');
+    expect(removeFeedback(db, 'local', id)?.item).toMatchObject({ is_read: false, is_saved: true });
+  });
+
+  it('returns null for unknown items', () => {
+    expect(recordFeedback(db, 'local', 'ci_missing', 'like')).toBeNull();
   });
 });

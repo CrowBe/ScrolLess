@@ -10,6 +10,7 @@ export interface FeedItemResponse {
   author?: string;
   url: string;
   content_preview?: string;
+  body?: string;
   thumbnail_url?: string;
   action_label?: string;
   action_icon?: string;

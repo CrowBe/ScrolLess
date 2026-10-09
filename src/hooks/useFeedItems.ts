@@ -12,7 +12,7 @@ interface UseFeedItemsOptions {
 
 const PAGE_SIZE = 50;
 
-function toResponse(item: FeedItem): FeedItemResponse {
+export function toResponse(item: FeedItem): FeedItemResponse {
   return {
     id: item.id,
     source: item.source,
@@ -21,6 +21,7 @@ function toResponse(item: FeedItem): FeedItemResponse {
     author: item.author ?? undefined,
     url: item.url,
     content_preview: item.content_preview ?? undefined,
+    body: item.body ?? undefined,
     thumbnail_url: item.thumbnail_url ?? undefined,
     metadata: item.metadata ?? undefined,
     tags: item.tags,

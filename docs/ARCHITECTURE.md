@@ -56,7 +56,7 @@ A trusted agent the user runs (for example Claude Code with its own browsing too
 | [mcp-content-tools.ts](../server/mcp-content-tools.ts), [mcp-stdio.ts](../server/mcp-stdio.ts), [mcp.ts](../server/mcp.ts) | MCP push tools over stdio and HTTP | Add job/attempt scope once a worker exists |
 | [content-store.ts](../server/content-store.ts), [schema.sql](../sql/schema.sql) | Items keyed by `(owner, source, source_id)`, fingerprint/revision counter, metadata-only blocked records, read/save state | Separate observations, immutable revisions, decisions and projections |
 | [api-routes.ts](../server/api-routes.ts), [auth.ts](../server/auth.ts), [oauth-routes.ts](../server/oauth-routes.ts) | Reader device sessions, agent tokens, OAuth | Distinct reader/collector/admin scopes |
-| [src/](../src) reader | Fetches `/api/items`; IndexedDB holds only the device signing key | Optional rebuildable cache and offline mutations |
+| [src/](../src) reader | Swipe sessions for Feed/Discover (like, dislike, save, undo, full-screen card), Saved list; IndexedDB holds only the device signing key | Preference-ranked sessions; optional rebuildable cache and offline mutations |
 
 ## Scope and authority
 
