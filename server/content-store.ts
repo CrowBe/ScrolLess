@@ -494,6 +494,29 @@ export function listItems(db: Database.Database, userId: string, opts: ListOptio
   };
 }
 
+/**
+ * Unread, currently eligible items for a reader session, newest first. The
+ * session ranker (server/taste.ts) reorders this pool; it never widens it.
+ */
+export function listSessionCandidates(
+  db: Database.Database,
+  userId: string,
+  opts: { view: 'feed' | 'discover'; source?: string; limit: number }
+): ContentItem[] {
+  const where = [`user_id = ?`, `eligibility = 'accepted'`, `is_read = 0`, opts.view === 'discover' ? 'is_discovery = 1' : 'is_discovery = 0'];
+  const params: unknown[] = [userId];
+  if (opts.source) {
+    where.push('source = ?');
+    params.push(opts.source);
+  }
+  const kw = keywordFilter(db, userId);
+  const rows = db.prepare(
+    `SELECT * FROM content_items WHERE ${where.join(' AND ')}${kw.sql}
+     ORDER BY sort_at DESC, id DESC LIMIT ?`
+  ).all(...params, ...kw.params, opts.limit) as ContentRow[];
+  return rows.map(toItem);
+}
+
 export interface ContentStats {
   total: number;
   unread: number;

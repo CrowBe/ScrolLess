@@ -7,7 +7,7 @@ The personal-host direction supersedes the old relay/hosted architecture, which 
 | 1 | [#81](https://github.com/CrowBe/ScrolLess/issues/81) | Documentation/runtime contract only; this change |
 | 2 | [#82](https://github.com/CrowBe/ScrolLess/issues/82) | One real browser source through Jev, SQLite and reader; resolve first-slice contract gates |
 | 3 | [#83](https://github.com/CrowBe/ScrolLess/issues/83) | Resumable collection and revision-aware decisions; prove interruptions and reuse |
-| 4 | [#84](https://github.com/CrowBe/ScrolLess/issues/84) | Scheduling, personal-host deployment and backups |
+| 4 | [#84](https://github.com/CrowBe/ScrolLess/issues/84) | Scheduling and backups; deployment target re-evaluated after the rebuild |
 | 5 | [#85](https://github.com/CrowBe/ScrolLess/issues/85) | Search the captured corpus independently of presentation |
 | 6 | [#86](https://github.com/CrowBe/ScrolLess/issues/86) | Topical news discovery entering the same collection pipeline |
 | 7 | [#87](https://github.com/CrowBe/ScrolLess/issues/87) | Ownership-aware deletion/reset for host data, observation history and client cache |

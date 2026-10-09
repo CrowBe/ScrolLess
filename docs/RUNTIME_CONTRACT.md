@@ -1,6 +1,6 @@
 # Runtime contract
 
-Contract version: **1, target specification**, plus the implemented [agent-push contract v1](#agent-push-contract-v1). The target sections are normative for the browser-worker implementation beginning with [#82](https://github.com/CrowBe/ScrolLess/issues/82); they do not describe a shipped API. [Architecture](ARCHITECTURE.md) defines ownership; [deployment](DEPLOYMENT.md) covers setup.
+Contract version: **1, target specification**, plus the implemented [agent-push contract v1](#agent-push-contract-v1). The target sections are normative for the browser-worker implementation beginning with [#82](https://github.com/CrowBe/ScrolLess/issues/82); they do not describe a shipped API. [Architecture](ARCHITECTURE.md) defines ownership; [setup](SETUP.md) covers running locally.
 
 ## Durable records and identity
 
@@ -124,7 +124,9 @@ Implemented in [content-store.ts](../server/content-store.ts) and [mcp-content-t
 | Retention | Host items are not expired |
 | User state | `PATCH /api/items/:id` with optional `expected_version`; a stale version returns 409 with current state |
 | Pagination | Newest first by `COALESCE(published_at, first_seen_at)`, stable opaque cursor |
-| Reader sessions | Feed and Discover draw a fixed number of unread items (`session_size` preference, 5–100, default 20) per session, newest first. Ranking by learned preference is pending (slice B) |
+| Reader sessions | `GET /api/items/session?view=feed\|discover[&source=]` draws `session_size` (5–100, default 20) unread, eligible items, ranked by learned taste with a discovery share; newest first until the first swipe. Ranking reorders only; it never hides an eligible item. Each card carries its slot (`ranked`, `discovery`, `recent`), score, evidence and full score breakdown. Algorithm `rank2`: [ranking](RANKING.md) |
+| Ranking config | Every tunable (signal weights and switches, verdict weights, fading, caution, freshness, discovery share, pool size, muted signals) is a per-owner preference: `GET`/`PATCH /api/ranking`, `POST /api/ranking/reset`, Settings → Ranking. Patches are validated against fixed ranges; an unreadable stored config falls back to defaults. Reset keeps swipe history |
+| Agent taste summary | MCP `get_taste_profile` (and `taste_summary` in `get_collection_context`) returns swipe counts, up to 8 liked and passed signals per kind (\|score\| ≥ 0.2), a one-paragraph summary and a read-only copy of the ranking config. Muted signals and switched-off kinds are excluded. Labels from pushed content are flattened and truncated to 80 characters. No MCP tool changes ranking |
 | Swipe feedback | `PUT /api/items/:id/feedback` with `like`, `dislike` or `save`; one verdict per item, re-swiping replaces it. Swiping marks the item read; `save` also saves. The row snapshots source, author, content type and tags for preference learning. `DELETE` undoes and restores the pre-swipe read/save state. A dislike never hides other items by itself |
 
 ## Implementation gates

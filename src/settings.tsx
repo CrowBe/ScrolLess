@@ -4,6 +4,7 @@ import type { UserSource } from './types';
 import type { AgentToken, AppPreferences } from './api';
 import { SourceList } from './components/source-list';
 import { AddSourceForm } from './components/add-source-form';
+import { RankingSection } from './components/ranking-settings';
 import { openScrollessDb } from './idb';
 
 function AgentTokens() {
@@ -309,6 +310,7 @@ export function Settings() {
   return (
     <div class="settings">
       <PreferencesSection />
+      <RankingSection />
 
       <AgentConnectionSection />
 

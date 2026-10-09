@@ -4,6 +4,8 @@ import type Database from 'better-sqlite3';
 import fastifyRateLimit from '@fastify/rate-limit';
 import { z } from 'zod';
 import { readPreferences, sanitizeBlockedKeywords } from './preferences.js';
+import { rankingPatchSchema, resetRankingConfig, updateRankingConfig } from './ranking-config.js';
+import { drawSession, reviewRanking } from './taste.js';
 import { ContentError, getStats, listItems, markAllRead, recordFeedback, removeFeedback, updateItemState } from './content-store.js';
 
 const SESSION_SIZE_MIN = 5;
@@ -60,6 +62,10 @@ const itemsQuerySchema = z.object({
   source: z.string().trim().min(1).max(64).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
   cursor: z.string().max(1_000).optional(),
+});
+const sessionQuerySchema = z.object({
+  view: z.enum(['feed', 'discover']).optional(),
+  source: z.string().trim().min(1).max(64).optional(),
 });
 const itemPatchSchema = z.object({
   is_read: z.boolean().optional(),
@@ -459,6 +465,40 @@ export function registerApiRoutes(
       }
       throw err;
     }
+  });
+
+  // GET /api/items/session — one swipe session ranked by learned taste, with discovery cards
+  fastify.get('/api/items/session', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    const query = parseBody(sessionQuerySchema, req.query, reply);
+    if (!query) return;
+    return reply.send(drawSession(db, owner, { view: query.view ?? 'feed', source: query.source?.toLowerCase() }));
+  });
+
+  // GET /api/ranking — the ranking config and every learned signal, for review
+  fastify.get('/api/ranking', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    return reply.send(reviewRanking(db, owner));
+  });
+
+  // PATCH /api/ranking — change weights, switch parts off, mute signals
+  fastify.patch('/api/ranking', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    const body = parseBody(rankingPatchSchema, req.body, reply);
+    if (!body) return;
+    updateRankingConfig(db, owner, body);
+    return reply.send(reviewRanking(db, owner));
+  });
+
+  // POST /api/ranking/reset — default weights; swipe history is kept
+  fastify.post('/api/ranking/reset', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    resetRankingConfig(db, owner);
+    return reply.send(reviewRanking(db, owner));
   });
 
   // GET /api/items/stats — counts for the source filter

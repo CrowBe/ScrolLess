@@ -32,18 +32,19 @@ HOST=127.0.0.1 npm run dev   # reader at http://localhost:5173, API on :3333
 
 The stdio server needs no token: your agent launches it as a local process and it writes to `data/scrolless.db` (override with `DB_PATH`, which must match the web server's). Browsing is done by the agent with whatever browsing tools it has; ScrolLess stores and serves what it pushes.
 
-The reader is not an endless scroll. Feed and Discover show a fixed number of cards per session (Settings → Cards per session): swipe right to like, left to pass, up to save, tap to read full screen. Buttons and arrow keys do the same; Z undoes. Your swipes are stored on the host to learn your preferences.
+The reader is not an endless scroll. Feed and Discover show a fixed number of cards per session (Settings → Cards per session): swipe right to like, left to pass, up to save, tap to read full screen. Buttons and arrow keys do the same; Z undoes. Your swipes are stored on the host and rank later sessions toward what you like, while a share of each session is held back for unfamiliar items, marked *Discovery*. The algorithm is fully open: tap **Why this card?** on any card for its score arithmetic, and change any weight, switch parts off or mute single signals in Settings → Ranking ([how ranking works](docs/RANKING.md)). Your agent reads your learned taste to choose what to collect but cannot change ranking.
 
 | MCP surface | Purpose |
 |---|---|
-| `get_collection_context` | Enabled sources, URLs, limits and blocked keywords |
+| `get_collection_context` | Enabled sources, URLs, limits, blocked keywords and a taste summary |
+| `get_taste_profile` | Liked and passed sources, authors, formats and topics learned from swipes |
 | `push_items` | Store readable items for one source; idempotent per `(source, source_id)`; per-item receipts |
 | `list_items` | Read back what is stored |
 | `scrolless://guide/push` | Item schema and collection rules for the agent |
 | `scrolless://sources/{name}` | Per-source extraction hints and user notes |
 | `collect_feed` prompt | One-shot collection workflow |
 
-Agents on another machine can call the same tools over HTTP at `/mcp` with an agent token (create one in Settings) or OAuth. See [deployment](docs/DEPLOYMENT.md) and the [push contract](docs/RUNTIME_CONTRACT.md#agent-push-contract-v1).
+Agents on another machine can call the same tools over HTTP at `/mcp` with an agent token (create one in Settings) or OAuth. See [setup](docs/SETUP.md) and the [push contract](docs/RUNTIME_CONTRACT.md#agent-push-contract-v1).
 
 ## Where it is heading
 
@@ -51,7 +52,8 @@ Later slices add a scheduled browser worker with bounded Jev decisions, revision
 
 - [Architecture](docs/ARCHITECTURE.md): ownership, components and what is implemented.
 - [Runtime contract](docs/RUNTIME_CONTRACT.md): push contract v1 and the target collection/decision contract.
-- [Deployment](docs/DEPLOYMENT.md): running locally and exposing the host safely.
+- [Ranking](docs/RANKING.md): how sessions are ranked and how to change it.
+- [Setup](docs/SETUP.md): running locally, authentication and configuration. Deployment will be re-evaluated after the rebuild.
 - [Backlog](docs/TASKS.md) and [release checks](docs/pre-release-tasks.md).
 - [Collector skill](skill/SKILL.md): how an agent should collect.
 - [Design system](docs/DESIGN_SYSTEM.md): reader styling.

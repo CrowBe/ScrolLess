@@ -8,7 +8,7 @@ These are pending verification requirements for the target runtime, not claims t
 - [ ] **Authorization (#82):** reader, collector and administration scopes enforce owner/source boundaries; browser bundles contain no database/inference credentials. Private-network deployment still enforces API access.
 - [ ] **Durability (#83):** repeated unchanged items reuse decisions; edited items invalidate correctly; blocked/ignored history survives body expiry. Kill/restart during stages and ambiguous writes; verify checkpoint, idempotency, fencing and budget recovery.
 - [ ] **Rendering (#82/#83):** projections persist across reads, unknown versions degrade to generic cards, source content remains intact and read/save/navigation/accessibility stay deterministic.
-- [ ] **Operations (#84):** bounded scheduling survives restarts, reports source failures and does not overlap work unsafely. Verify deployment on the selected personal host/network topology.
+- [ ] **Operations (#84):** bounded scheduling survives restarts, reports source failures and does not overlap work unsafely. Deployment target is undecided and is re-evaluated after the rebuild.
 - [ ] **Restore (#84):** restore an authoritative backup to an isolated location and verify feed, ledger, saved/read state and resumed jobs. Declare unavailable device/key cases.
 - [ ] **Search (#85):** index source content independently of projections; enforce current eligibility after preference changes and rebuild without inference.
 - [ ] **Discovery (#86):** record acquisition provenance and use the same identity, eligibility and budget rules as subscription collection.

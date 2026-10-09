@@ -9,13 +9,16 @@ vi.mock('./api', () => ({
   revokeToken: vi.fn(),
   getPreferences: vi.fn(),
   updatePreferences: vi.fn(),
+  getRanking: vi.fn(),
+  updateRanking: vi.fn(),
+  resetRanking: vi.fn(),
 }));
 
 vi.mock('./idb', () => ({
   openScrollessDb: vi.fn(),
 }));
 
-import { createToken, getSources, getTokens, getPreferences, updatePreferences } from './api';
+import { createToken, getSources, getTokens, getPreferences, getRanking, updatePreferences } from './api';
 
 describe('Settings', () => {
   beforeEach(() => {
@@ -27,6 +30,7 @@ describe('Settings', () => {
       max_items_per_source: 50,
       session_size: 20,
     });
+    (getRanking as ReturnType<typeof vi.fn>).mockResolvedValue(new Promise(() => {}));
     (updatePreferences as ReturnType<typeof vi.fn>).mockImplementation(async (payload) => ({
       blocked_keywords: payload.blocked_keywords ?? ['sponsored'],
       max_items_per_source: payload.max_items_per_source ?? 50,

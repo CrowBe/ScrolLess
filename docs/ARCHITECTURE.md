@@ -56,10 +56,11 @@ A trusted agent the user runs (for example Claude Code with its own browsing too
 | [mcp-content-tools.ts](../server/mcp-content-tools.ts), [mcp-stdio.ts](../server/mcp-stdio.ts), [mcp.ts](../server/mcp.ts) | MCP push tools over stdio and HTTP | Add job/attempt scope once a worker exists |
 | [content-store.ts](../server/content-store.ts), [schema.sql](../sql/schema.sql) | Items keyed by `(owner, source, source_id)`, fingerprint/revision counter, metadata-only blocked records, read/save state | Separate observations, immutable revisions, decisions and projections |
 | [api-routes.ts](../server/api-routes.ts), [auth.ts](../server/auth.ts), [oauth-routes.ts](../server/oauth-routes.ts) | Reader device sessions, agent tokens, OAuth | Distinct reader/collector/admin scopes |
-| [src/](../src) reader | Swipe sessions for Feed/Discover (like, dislike, save, undo, full-screen card), Saved list; IndexedDB holds only the device signing key | Preference-ranked sessions; optional rebuildable cache and offline mutations |
+| [taste.ts](../server/taste.ts), [ranking-config.ts](../server/ranking-config.ts) | Taste profile from swipe verdicts; owner-editable, fully explained ranking with a discovery share ([ranking](RANKING.md)); agent taste summary | Semantic features once enrichment exists |
+| [src/](../src) reader | Host-ranked swipe sessions for Feed/Discover (like, dislike, save, undo, full-screen card, discovery badge, "Why this card?"), Saved list, Settings → Ranking; IndexedDB holds only the device signing key | Optional rebuildable cache and offline mutations |
 
 ## Scope and authority
 
 The initial product is a personal host, not a multi-tenant cloud service. Billing, tier-dependent queues, Clerk identity, Postgres convergence and Expo prerequisites from the old plans are superseded. Network database adapters, additional engines and native readers may follow concrete needs; none are prerequisites for #82.
 
-Follow [deployment](DEPLOYMENT.md) for setup and [TASKS](TASKS.md) for slices and [release checks](pre-release-tasks.md) for evidence. Any runtime policy marked OPEN in the contract must be resolved in its owning slice before enabling that behavior.
+Follow [setup](SETUP.md) for running locally and [TASKS](TASKS.md) for slices and [release checks](pre-release-tasks.md) for evidence. Any runtime policy marked OPEN in the contract must be resolved in its owning slice before enabling that behavior.

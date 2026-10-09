@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createContentMcpServer } from './mcp-content-tools.js';
-import type { PushResult } from './content-store.js';
+import { recordFeedback, type PushResult } from './content-store.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -39,7 +39,7 @@ describe('content MCP server', () => {
 
   it('exposes the push tools, guide and prompt', async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(['get_collection_context', 'list_items', 'push_items']);
+    expect(tools.map((t) => t.name).sort()).toEqual(['get_collection_context', 'get_taste_profile', 'list_items', 'push_items']);
 
     const guide = await client.readResource({ uri: 'scrolless://guide/push' });
     expect((guide.contents[0] as { text: string }).text).toContain('push_items');
@@ -57,6 +57,30 @@ describe('content MCP server', () => {
     expect(context.sources).toEqual([
       expect.objectContaining({ name: 'youtube', enabled: true, urls: ['https://www.youtube.com/feed/subscriptions'] }),
     ]);
+  });
+
+  it('summarises learned taste for the agent', async () => {
+    const context = JSON.parse(textOf(await client.callTool({ name: 'get_collection_context', arguments: {} }))) as { taste_summary: string };
+    expect(context.taste_summary).toMatch(/No swipe feedback yet/);
+
+    const push = JSON.parse(textOf(await client.callTool({
+      name: 'push_items',
+      arguments: {
+        source: 'youtube',
+        items: [{ source_id: 'v1', url: 'https://www.youtube.com/watch?v=v1', title: 'Rust talk', author: 'Chan', tags: ['Rust'] }],
+      },
+    }))) as PushResult;
+    recordFeedback(db, 'local', push.receipts[0].id!, 'save');
+
+    const taste = JSON.parse(textOf(await client.callTool({ name: 'get_taste_profile', arguments: {} }))) as {
+      feedback: { total: number; saves: number };
+      liked: { tags: Array<{ name: string }>; authors: Array<{ name: string; source: string }> };
+      summary: string;
+    };
+    expect(taste.feedback).toMatchObject({ total: 1, saves: 1 });
+    expect(taste.liked.tags).toEqual([expect.objectContaining({ name: 'rust' })]);
+    expect(taste.liked.authors).toEqual([expect.objectContaining({ name: 'Chan', source: 'youtube' })]);
+    expect(taste.summary).toMatch(/Leans toward: topics rust/);
   });
 
   it('pushes items and reads them back', async () => {

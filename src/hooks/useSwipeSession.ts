@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
-import { getFeedItems, getPreferences, sendFeedback, undoFeedback, type Verdict } from '../api';
+import { getSession, sendFeedback, undoFeedback, type SessionItem, type Verdict } from '../api';
 import { emit, ITEM_STATE_CHANGED } from '../feed-events';
 import type { FeedItemResponse } from '../types';
 import { toResponse } from './useFeedItems';
@@ -17,10 +17,20 @@ export type Tally = Record<Verdict, number>;
 
 const EMPTY_TALLY: Tally = { like: 0, dislike: 0, save: 0 };
 
+function toSessionCard(item: SessionItem): FeedItemResponse {
+  return {
+    ...toResponse(item),
+    session_slot: item.session.slot,
+    session_reasons: item.session.reasons,
+    session_breakdown: item.session.breakdown,
+    session_score: item.session.score,
+  };
+}
+
 /**
- * A bounded review session: a fixed number of unread cards drawn when the
- * session starts. Each swipe records a verdict on the host; undo reverts the
- * most recent one.
+ * A bounded review session: the host draws a fixed number of unread cards,
+ * ranked by learned taste with a share held back for discovery. Each swipe
+ * records a verdict on the host; undo reverts the most recent one.
  */
 export function useSwipeSession(opts: SwipeSessionOptions) {
   const [cards, setCards] = useState<FeedItemResponse[]>([]);
@@ -38,18 +48,10 @@ export function useSwipeSession(opts: SwipeSessionOptions) {
     setLoading(true);
     setError(null);
     try {
-      const sessionSize = await getPreferences()
-        .then((prefs) => prefs.session_size)
-        .catch(() => DEFAULT_SESSION_SIZE);
-      const page = await getFeedItems({
-        view: opts.view,
-        source: opts.source,
-        unreadOnly: true,
-        limit: sessionSize,
-      });
+      const page = await getSession({ view: opts.view, source: opts.source });
       if (gen !== generation.current) return;
-      setSize(sessionSize);
-      setCards(page.items.map(toResponse));
+      setSize(page.size);
+      setCards(page.items.map(toSessionCard));
       setIndex(0);
       setHistory([]);
       setTally(EMPTY_TALLY);
