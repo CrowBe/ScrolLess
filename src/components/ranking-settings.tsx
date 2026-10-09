@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'preact/hooks';
-import { getRanking, resetRanking, updateRanking, type RankingConfig, type RankingReview, type SignalKind } from '../api';
+import { getRanking, resetRanking, updateRanking, type LearnedSignal, type RankingConfig, type RankingReview, type SignalKind } from '../api';
 
 const SIGNALS: Array<{ kind: SignalKind; label: string; help: string }> = [
   { kind: 'source', label: 'Source', help: 'Where it came from (YouTube, news, …)' },
@@ -9,6 +9,13 @@ const SIGNALS: Array<{ kind: SignalKind; label: string; help: string }> = [
 ];
 
 const KIND_LABEL: Record<SignalKind, string> = { source: 'Source', author: 'Author', type: 'Format', tag: 'Topic' };
+
+function statusText(s: LearnedSignal, minSignalSwipes: number): string | null {
+  if (s.status === 'learning') return `learning ${s.swipes}/${minSignalSwipes}`;
+  if (s.status === 'muted') return 'muted';
+  if (s.status === 'off') return 'off';
+  return null;
+}
 const SIGNALS_SHOWN = 25;
 
 interface NumberFieldProps {
@@ -125,6 +132,36 @@ export function RankingSection() {
         }}
       >
         <fieldset class="ranking__group">
+          <legend class="settings__prefs-label">Evidence before anything changes</legend>
+          <div class="ranking__row">
+            <NumberField
+              label="Swipes before ranking starts"
+              value={draft.evidence.min_swipes}
+              min={0}
+              max={1000}
+              step={5}
+              onChange={(min_swipes) => edit({ evidence: { ...draft.evidence, min_swipes } })}
+            />
+            <span class="settings__help">
+              {review.ranking_active
+                ? `Ranking is on (${review.feedback.total} swipes).`
+                : `Newest first for now: ${review.feedback.total} of ${review.config.evidence.min_swipes} swipes.`}
+            </span>
+          </div>
+          <div class="ranking__row">
+            <NumberField
+              label="Swipes before a signal counts"
+              value={draft.evidence.min_signal_swipes}
+              min={1}
+              max={100}
+              step={1}
+              onChange={(min_signal_swipes) => edit({ evidence: { ...draft.evidence, min_signal_swipes } })}
+            />
+            <span class="settings__help">An author, topic, format or source needs this many swipes of its own before it affects ranking.</span>
+          </div>
+        </fieldset>
+
+        <fieldset class="ranking__group">
           <legend class="settings__prefs-label">Signals</legend>
           {SIGNALS.map(({ kind, label, help }) => (
             <div key={kind} class="ranking__row">
@@ -237,11 +274,14 @@ export function RankingSection() {
       ) : (
         <ul class="ranking__signals">
           {signals.map((s) => (
-            <li key={s.key} class={`ranking__signal${s.active ? '' : ' ranking__signal--inactive'}`}>
+            <li key={s.key} class={`ranking__signal${s.status === 'active' ? '' : ' ranking__signal--inactive'}`}>
               <span class="ranking__signal-kind">{KIND_LABEL[s.kind]}</span>
               <span class="ranking__signal-label">
                 {s.label}
                 {s.source && s.kind === 'author' ? ` (${s.source})` : ''}
+                {statusText(s, review.config.evidence.min_signal_swipes) && (
+                  <span class="ranking__signal-status"> · {statusText(s, review.config.evidence.min_signal_swipes)}</span>
+                )}
               </span>
               <span class="ranking__signal-score" title={`${s.likes} liked · ${s.saves} saved · ${s.dislikes} passed`}>
                 {s.score >= 0 ? '+' : ''}{s.score.toFixed(2)}

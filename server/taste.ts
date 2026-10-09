@@ -15,7 +15,7 @@ import { FEATURE_KINDS, readRankingConfig, type FeatureKind, type RankingConfig 
 // Every tunable lives in RankingConfig (server/ranking-config.ts) and every
 // card carries the arithmetic behind its score. docs/RANKING.md walks through it.
 
-export const RANKING_VERSION = 'rank2';
+export const RANKING_VERSION = 'rank3';
 
 export const SUMMARY = {
   /** Minimum |score| for a signal to appear in the agent summary. */
@@ -41,6 +41,22 @@ export interface FeatureStat {
   score: number;
   /** Muted signals are listed for review but ignored by ranking and summaries. */
   muted: boolean;
+  /** Has at least evidence.min_signal_swipes swipes; until then the signal is still learning and has no effect. */
+  qualified: boolean;
+}
+
+export type SignalStatus = 'active' | 'learning' | 'muted' | 'off';
+
+/** Why a learned signal does or does not affect ranking. */
+export function signalStatus(stat: FeatureStat, config: RankingConfig): SignalStatus {
+  if (stat.muted) return 'muted';
+  if (!config.signals[stat.kind].enabled) return 'off';
+  return stat.qualified ? 'active' : 'learning';
+}
+
+/** Ranking reorders sessions only once there are this many swipes in total. */
+export function rankingActive(profile: TasteProfile, config: RankingConfig): boolean {
+  return profile.feedback.total > 0 && profile.feedback.total >= config.evidence.min_swipes;
 }
 
 export interface TasteProfile {
@@ -128,7 +144,7 @@ export function buildTasteProfile(
         // Rows are newest first, so the label keeps the most recent casing
         stat = {
           key: f.key, kind: f.kind, label: f.label, source: f.source,
-          likes: 0, saves: 0, dislikes: 0, evidence: 0, score: 0, muted: muted.has(f.key), weighted: 0,
+          likes: 0, saves: 0, dislikes: 0, evidence: 0, score: 0, muted: muted.has(f.key), qualified: false, weighted: 0,
         };
         sums.set(f.key, stat);
       }
@@ -143,7 +159,12 @@ export function buildTasteProfile(
   const features = new Map<string, FeatureStat>();
   for (const [key, { weighted, ...stat }] of sums) {
     const denominator = stat.evidence + config.prior;
-    features.set(key, { ...stat, score: denominator > 0 ? weighted / denominator : 0 });
+    const swipes = stat.likes + stat.saves + stat.dislikes;
+    features.set(key, {
+      ...stat,
+      score: denominator > 0 ? weighted / denominator : 0,
+      qualified: swipes >= config.evidence.min_signal_swipes,
+    });
   }
   return { ranking_version: RANKING_VERSION, feedback, features };
 }
@@ -175,7 +196,7 @@ function reasonFor(part: ScorePart): string {
 }
 
 /**
- * Score one item: for each enabled, unmuted learned signal it carries, add
+ * Score one item: for each enabled, unmuted signal with enough swipes it carries, add
  * learned score × signal weight (tag weight split evenly across its learned
  * tags), then add freshness weight × 0.5^(age / half-life).
  */
@@ -188,6 +209,8 @@ export function scoreItem(profile: TasteProfile, item: ContentItem, config: Rank
     const stat = profile.features.get(f.key);
     if (!stat || stat.muted || !config.signals[f.kind].enabled) continue;
     evidence += stat.evidence;
+    // Still learning: counts toward familiarity for discovery, not toward the score
+    if (!stat.qualified) continue;
     if (f.kind === 'tag') {
       tags.push(stat);
       continue;
@@ -244,8 +267,10 @@ export interface SessionResult {
   config: RankingConfig;
   /** Cards drawn for discovery in this session. */
   discovery_count: number;
-  /** Swipes behind the profile; 0 means the session fell back to newest first. */
+  /** Swipes behind the profile. */
   feedback_count: number;
+  /** False until feedback_count reaches evidence.min_swipes; the session is then newest first. */
+  ranking_active: boolean;
   items: SessionItem[];
 }
 
@@ -270,7 +295,7 @@ function compareRanked(a: { item: ContentItem; score: ItemScore }, b: { item: Co
  * newest `pool_size`. Most slots go to the highest-scoring items; when
  * discovery is enabled, `share` of them are drawn from the rest, weighted by
  * 1 / (1 + evidence) so unfamiliar items are likelier, and spread through the
- * deck. With no swipes yet the session is newest first.
+ * deck. Until there are evidence.min_swipes swipes the session is newest first.
  */
 export function drawSession(db: Database.Database, userId: string, opts: SessionOptions): SessionResult {
   const now = opts.now ?? new Date();
@@ -279,9 +304,10 @@ export function drawSession(db: Database.Database, userId: string, opts: Session
   const config = readRankingConfig(db, userId);
   const profile = buildTasteProfile(db, userId, config, now);
   const candidates = listSessionCandidates(db, userId, { view: opts.view, source: opts.source, limit: config.pool_size });
-  const base = { ranking_version: RANKING_VERSION, size, config, feedback_count: profile.feedback.total };
+  const active = rankingActive(profile, config);
+  const base = { ranking_version: RANKING_VERSION, size, config, feedback_count: profile.feedback.total, ranking_active: active };
 
-  if (profile.feedback.total === 0) {
+  if (!active) {
     const items = candidates.slice(0, size).map((item) => ({
       ...item,
       session: { slot: 'recent' as const, score: 0, evidence: 0, reasons: [], breakdown: [] },
@@ -369,6 +395,8 @@ export interface TasteSummary {
   liked: Groups;
   passed: Groups;
   summary: string;
+  /** False until there are evidence.min_swipes swipes; liked/passed are empty until then. */
+  ranking_active: boolean;
 }
 
 const KIND_GROUP: Record<FeatureKind, keyof Groups> = {
@@ -382,7 +410,7 @@ function emptyGroups(): Groups {
 /** Learned signals the current config actually uses, strongest first. */
 function activeStats(profile: TasteProfile, config: RankingConfig): FeatureStat[] {
   return [...profile.features.values()]
-    .filter((s) => !s.muted && config.signals[s.kind].enabled)
+    .filter((s) => signalStatus(s, config) === 'active')
     .sort((a, b) => Math.abs(b.score) - Math.abs(a.score));
 }
 
@@ -393,7 +421,9 @@ export function summarizeTaste(db: Database.Database, userId: string, now: Date 
   const liked = emptyGroups();
   const passed = emptyGroups();
 
-  for (const stat of activeStats(profile, config)) {
+  // Below the evidence bar there is nothing to steer collection with yet
+  const stats = rankingActive(profile, config) ? activeStats(profile, config) : [];
+  for (const stat of stats) {
     if (Math.abs(stat.score) < SUMMARY.threshold) continue;
     const group = (stat.score > 0 ? liked : passed)[KIND_GROUP[stat.kind]];
     if (group.length >= SUMMARY.limit) continue;
@@ -414,6 +444,7 @@ export function summarizeTaste(db: Database.Database, userId: string, now: Date 
     liked,
     passed,
     summary: describe(profile.feedback.total, liked, passed, config),
+    ranking_active: rankingActive(profile, config),
   };
 }
 
@@ -422,8 +453,9 @@ export interface RankingReview {
   config: RankingConfig;
   feedback: TasteProfile['feedback'];
   summary: string;
-  /** Every learned signal, strongest first, including muted and disabled kinds. */
-  signals: Array<FeatureStat & { active: boolean }>;
+  ranking_active: boolean;
+  /** Every learned signal, strongest first, with whether and why it affects ranking. */
+  signals: Array<FeatureStat & { status: SignalStatus; swipes: number }>;
 }
 
 /** Everything the ranker knows and uses, for the owner to review. */
@@ -432,12 +464,13 @@ export function reviewRanking(db: Database.Database, userId: string, now: Date =
   const profile = buildTasteProfile(db, userId, config, now);
   const signals = [...profile.features.values()]
     .sort((a, b) => Math.abs(b.score) - Math.abs(a.score))
-    .map((s) => ({ ...publicStat(s), active: !s.muted && config.signals[s.kind].enabled }));
+    .map((s) => ({ ...publicStat(s), status: signalStatus(s, config), swipes: s.likes + s.saves + s.dislikes }));
   return {
     ranking_version: RANKING_VERSION,
     config,
     feedback: profile.feedback,
     summary: summarizeTaste(db, userId, now).summary,
+    ranking_active: rankingActive(profile, config),
     signals,
   };
 }
@@ -454,6 +487,9 @@ function describeGroups(groups: Groups): string {
 
 function describe(total: number, liked: Groups, passed: Groups, config: RankingConfig): string {
   if (total === 0) return 'No swipe feedback yet. Collect broadly; sessions are newest first until the user swipes.';
+  if (total < config.evidence.min_swipes) {
+    return `${total} of ${config.evidence.min_swipes} swipes needed before ranking starts. Collect broadly; sessions are newest first until then.`;
+  }
   const lines = [`Based on ${total} swipe${total === 1 ? '' : 's'}.`];
   const likes = describeGroups(liked);
   const passes = describeGroups(passed);

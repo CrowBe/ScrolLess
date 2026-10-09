@@ -80,6 +80,8 @@ to choose *which* items to collect when a source offers more than its limit,
 and to pick discovery items (\`is_discovery: true\`) the user is likely to
 enjoy. It is not a filter:
 
+- Until the user has swiped enough, the summary says so and has no likes or
+  passes. Collect broadly then.
 - Still collect subscription items regardless of taste; the reader ranks them.
 - Only \`blocked_keywords\` block content. A "passed" author or topic is a
   weak signal, not a reason to drop everything from it.
