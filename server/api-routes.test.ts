@@ -6,6 +6,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createSign, generateKeyPairSync } from 'crypto';
 import { registerApiRoutes } from './api-routes.js';
+import { pushItems } from './content-store.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -507,3 +508,81 @@ describe('POST /api/v1/queue/ack', () => {
 });
 
 // Note: GET /api/feed is removed — feed content lives in device IndexedDB only.
+
+describe('/api/items (host content)', () => {
+  let db: Database.Database;
+  let app: FastifyInstance;
+  const originalEnv = process.env.NODE_ENV;
+
+  beforeEach(async () => {
+    db = createTestDb();
+    pushItems(db, 'local', 'news', [
+      { source_id: 'a', url: 'https://example.com/a', title: 'First', published_at: '2026-10-01T00:00:00Z' },
+      { source_id: 'b', url: 'https://example.com/b', title: 'Second', published_at: '2026-10-02T00:00:00Z' },
+      { source_id: 'c', url: 'https://example.com/c', title: 'Found', is_discovery: true },
+    ]);
+    app = Fastify();
+    registerApiRoutes(app, db);
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    process.env.NODE_ENV = originalEnv;
+    await app.close();
+    db.close();
+  });
+
+  it('lists the feed view newest first with pagination', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/items?limit=1' });
+    expect(res.statusCode).toBe(200);
+    const page = res.json() as { items: Array<{ title: string }>; next_cursor: string };
+    expect(page.items.map((i) => i.title)).toEqual(['Second']);
+
+    const next = await app.inject({ method: 'GET', url: `/api/items?limit=1&cursor=${page.next_cursor}` });
+    expect((next.json() as { items: Array<{ title: string }> }).items.map((i) => i.title)).toEqual(['First']);
+
+    const discover = await app.inject({ method: 'GET', url: '/api/items?view=discover' });
+    expect((discover.json() as { items: Array<{ title: string }> }).items.map((i) => i.title)).toEqual(['Found']);
+  });
+
+  it('rejects bad queries and cursors', async () => {
+    expect((await app.inject({ method: 'GET', url: '/api/items?view=nope' })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'GET', url: '/api/items?cursor=garbage' })).statusCode).toBe(400);
+  });
+
+  it('updates read/save state with conflict detection', async () => {
+    const { items } = (await app.inject({ method: 'GET', url: '/api/items' })).json() as { items: Array<{ id: string }> };
+    const id = items[0].id;
+
+    const saved = await app.inject({ method: 'PATCH', url: `/api/items/${id}`, payload: { is_saved: true, expected_version: 0 } });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toMatchObject({ is_saved: true, state_version: 1 });
+
+    const stale = await app.inject({ method: 'PATCH', url: `/api/items/${id}`, payload: { is_read: true, expected_version: 0 } });
+    expect(stale.statusCode).toBe(409);
+
+    const missing = await app.inject({ method: 'PATCH', url: '/api/items/ci_nope', payload: { is_read: true } });
+    expect(missing.statusCode).toBe(404);
+
+    const savedView = await app.inject({ method: 'GET', url: '/api/items?view=saved' });
+    expect((savedView.json() as { items: Array<{ id: string }> }).items.map((i) => i.id)).toEqual([id]);
+  });
+
+  it('reports stats and marks all read', async () => {
+    expect((await app.inject({ method: 'GET', url: '/api/items/stats' })).json()).toMatchObject({ total: 3, unread: 3 });
+    const res = await app.inject({ method: 'POST', url: '/api/items/mark-read', payload: { source: 'news' } });
+    expect(res.json()).toEqual({ updated: 3 });
+    expect((await app.inject({ method: 'GET', url: '/api/items/stats' })).json()).toMatchObject({ unread: 0 });
+  });
+
+  it('requires a device session in production', async () => {
+    process.env.NODE_ENV = 'production';
+    expect((await app.inject({ method: 'GET', url: '/api/items' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/api/items', headers: { authorization: 'Bearer dsess_bogus' } })).statusCode).toBe(401);
+
+    const { session_token } = await createVerifiedDevice('dev_reader', app);
+    const res = await app.inject({ method: 'GET', url: '/api/items', headers: { authorization: `Bearer ${session_token}` } });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { items: unknown[] }).items).toHaveLength(2);
+  });
+});

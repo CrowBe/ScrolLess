@@ -1,6 +1,6 @@
 # AGENTS.md
 
-ScrolLess is moving to a personal collector writing readable feed content to a user-selected store, with clients reading through an authenticated API. Issue #81 supersedes the old relay-only target; existing code still implements that legacy flow.
+ScrolLess is moving to a personal collector writing readable feed content to a user-selected store, with clients reading through an authenticated API. Issue #81 supersedes the old relay-only target. Agent push (an MCP client pushes readable items via `push_items`) is implemented; the legacy encrypted relay still runs alongside.
 
 ## Source of truth
 
@@ -22,6 +22,6 @@ Preserve legacy content, keys and queues until import and authenticated readback
 
 Use a branch and PR starting from freshly fetched `origin/main`. Keep unrelated changes intact; use an isolated worktree when the checkout is mixed. Prefer one issue-sized slice.
 
-Keep existing route groups separate: `/agent/*` in `server/agent-routes.ts`, `/mcp` in `server/mcp.ts`, `/oauth/*` in `server/oauth-routes.ts`, `/api/*` in `server/api-routes.ts`. Extract shared parsing/default logic into dedicated modules when needed.
+Keep existing route groups separate: `/agent/*` in `server/agent-routes.ts`, `/mcp` in `server/mcp.ts` (agent-push tools in `server/mcp-content-tools.ts`, shared with the stdio entry `server/mcp-stdio.ts`), `/oauth/*` in `server/oauth-routes.ts`, `/api/*` in `server/api-routes.ts`. Extract shared parsing/default logic into dedicated modules when needed.
 
 Align code, tests and contract at the seam being changed. Run the smallest relevant verification while iterating, then broader checks for substantial application changes; commands live in `package.json`. Add nested instructions only when a directory develops distinct rules.

@@ -137,5 +137,75 @@ export async function syncPreferencesToIdb(): Promise<void> {
   await Promise.all(entries.map(e => db.put('preferences', e)));
 }
 
+// Host content (agent-push v1). Items pushed by the local MCP agent live on
+// the host; ids start with "ci_" so the reader can tell them from legacy
+// IndexedDB items.
+export interface HostItem {
+  id: string;
+  source: string;
+  source_id: string;
+  url: string;
+  title: string;
+  author: string | null;
+  content_preview: string | null;
+  thumbnail_url: string | null;
+  content_type: string | null;
+  tags: string[];
+  metadata: Record<string, string | number | boolean | null> | null;
+  is_discovery: boolean;
+  published_at: string | null;
+  first_seen_at: string;
+  is_read: boolean;
+  is_saved: boolean;
+  state_version: number;
+}
+
+export interface HostItemPage {
+  items: HostItem[];
+  next_cursor: string | null;
+}
+
+export interface HostItemStats {
+  total: number;
+  unread: number;
+  by_source: Array<{ source: string; count: number; unread: number }>;
+}
+
+export function isHostItemId(id: string): boolean {
+  return id.startsWith('ci_');
+}
+
+export function getHostItems(params: { view?: string; source?: string; cursor?: string | null; limit?: number }): Promise<HostItemPage> {
+  const query = new URLSearchParams();
+  if (params.view) query.set('view', params.view);
+  if (params.source) query.set('source', params.source);
+  if (params.cursor) query.set('cursor', params.cursor);
+  if (params.limit) query.set('limit', String(params.limit));
+  return req<HostItemPage>(`/api/items?${query.toString()}`);
+}
+
+export function getHostItemStats(): Promise<HostItemStats> {
+  return req<HostItemStats>('/api/items/stats');
+}
+
+export function updateHostItem(
+  id: string,
+  data: { is_read?: boolean; is_saved?: boolean; expected_version?: number }
+): Promise<{ id: string; is_read: boolean; is_saved: boolean; state_version: number }> {
+  return req(`/api/items/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+}
+
+export function markHostItemsRead(source?: string): Promise<{ updated: number }> {
+  return req('/api/items/mark-read', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(source ? { source } : {}),
+  });
+}
+
 // Re-export for convenience
 export type { FeedItemResponse } from './types';

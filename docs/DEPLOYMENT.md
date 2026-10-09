@@ -26,7 +26,11 @@ The explicit host override matters: [server/index.ts](../server/index.ts) curren
 
 Existing configuration is loaded in [server/index.ts](../server/index.ts) and typed in [server/types.ts](../server/types.ts). `DB_PATH` selects the current SQLite operational database, not an authoritative readable feed database. `AGENT_TOKEN_HASH` authenticates existing agent ingestion; `BASE_URL`, `CORS_ORIGIN`, OAuth/device settings and optional VAPID keys serve the current runtime. Client `VITE_*` values are browser-visible and must never contain database or inference secrets.
 
-Current agent endpoints require encrypted payloads, as defined in [agent-routes.ts](../server/agent-routes.ts) and [legacy payload schema](../skill/resources/schema.json). The existing MCP prompt and platform resources are legacy instructions. Do not send readable target records to them. For historical deployment context see the [archived guide](archive/DEPLOYMENT.md); its hosted roadmap and service-provider instructions are not current deployment recommendations.
+### Agent push over MCP (implemented)
+
+`npm run mcp:config` prints the stdio server command for this checkout. The stdio server ([mcp-stdio.ts](../server/mcp-stdio.ts)) opens the same SQLite file as the web server (`DB_PATH`, default `data/scrolless.db`) and exposes the [agent-push tools](../server/mcp-content-tools.ts); trust comes from the local process boundary. The HTTP `/mcp` endpoint exposes the same tools to agents holding an agent token or OAuth access token. Readers fetch pushed items from `/api/items` with a device session (unauthenticated only outside production). See [agent-push contract v1](RUNTIME_CONTRACT.md#agent-push-contract-v1).
+
+Legacy agent endpoints require encrypted payloads, as defined in [agent-routes.ts](../server/agent-routes.ts) and [legacy payload schema](../skill/resources/schema.json). The legacy MCP `run_feed_sync` prompt, `get_sync_context`/`submit_items` tools and `scrolless://platforms/*` resources remain for the relay. Do not send readable records to them; use `push_items`. For historical deployment context see the [archived guide](archive/DEPLOYMENT.md); its hosted roadmap and service-provider instructions are not current deployment recommendations.
 
 ## Target topology and configuration
 

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { App } from './app';
 
 vi.mock('./hooks/useFeedItems', () => ({
-  useFeedItems: () => ({ items: [], loading: false }),
+  useFeedItems: () => ({ items: [], loading: false, hasMore: false, loadMore: vi.fn(), patchItem: vi.fn(), reload: vi.fn() }),
 }));
 
 vi.mock('./hooks/useUnreadCounts', () => ({

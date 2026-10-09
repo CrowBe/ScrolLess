@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'preact/hooks';
 import { useFeedItems } from './hooks/useFeedItems';
 import { useUnreadCounts } from './hooks/useUnreadCounts';
-import { openScrollessDb, type FeedItem } from './idb';
-import type { FeedItemResponse } from './types';
+import { openScrollessDb } from './idb';
+import { isHostItemId, updateHostItem } from './api';
+import { emit, HOST_STATE_CHANGED, IDB_UPDATED } from './feed-events';
 import { SourceFilter } from './components/source-filter';
 import { FeedList } from './components/feed-list';
 import { SyncStatus } from './components/sync-status';
@@ -42,25 +43,6 @@ const NAV_ITEMS: Array<{ id: View; icon: string; label: string }> = [
   { id: 'settings', icon: 'settings', label: 'Settings' },
 ];
 
-/** Map IndexedDB FeedItem to the FeedItemResponse shape expected by card components. */
-function toResponse(item: FeedItem): FeedItemResponse {
-  return {
-    id: item.id,
-    source: item.source,
-    title: item.title,
-    author: item.author,
-    url: item.url,
-    content_preview: item.content_preview,
-    thumbnail_url: item.thumbnail_url,
-    tags: item.tags,
-    is_discovery: item.is_discovery,
-    published_at: item.published_at,
-    fetched_at: item.fetched_at,
-    is_read: item.is_read,
-    is_saved: item.is_saved,
-  };
-}
-
 export function App() {
   const [view, setViewState] = useState<View>(viewFromHash);
   const [source, setSource] = useState('');
@@ -88,28 +70,38 @@ export function App() {
     document.title = `ScrolLess — ${VIEW_TO_TITLE[view]}`;
   }, [view]);
 
-  const { items, loading } = useFeedItems({ source, view });
+  const { items, loading, hasMore, loadMore, patchItem, reload } = useFeedItems({ source, view });
   const counts = useUnreadCounts();
 
-  async function handleMarkRead(id: string) {
+  async function updateHost(id: string, patch: { is_read?: boolean; is_saved?: boolean }) {
+    patchItem(id, patch);
+    try {
+      await updateHostItem(id, patch);
+      emit(HOST_STATE_CHANGED);
+    } catch (err) {
+      console.warn('[App] Failed to update host item:', err);
+      void reload();
+    }
+  }
+
+  async function updateLegacy(id: string, patch: { is_read?: boolean; is_saved?: boolean }) {
     const db = await openScrollessDb();
     const item = await db.get('feed_items', id);
     if (item) {
-      await db.put('feed_items', { ...item, is_read: true });
-      window.dispatchEvent(new CustomEvent('scrolless:idb-updated'));
+      await db.put('feed_items', { ...item, ...patch });
+      emit(IDB_UPDATED);
     }
+  }
+
+  async function handleMarkRead(id: string) {
+    const patch = { is_read: true };
+    await (isHostItemId(id) ? updateHost(id, patch) : updateLegacy(id, patch));
   }
 
   async function handleToggleSave(id: string, currentlySaved: boolean) {
-    const db = await openScrollessDb();
-    const item = await db.get('feed_items', id);
-    if (item) {
-      await db.put('feed_items', { ...item, is_saved: !currentlySaved });
-      window.dispatchEvent(new CustomEvent('scrolless:idb-updated'));
-    }
+    const patch = { is_saved: !currentlySaved };
+    await (isHostItemId(id) ? updateHost(id, patch) : updateLegacy(id, patch));
   }
-
-  const displayItems = items.map(toResponse);
 
   return (
     <div class="app">
@@ -137,10 +129,10 @@ export function App() {
         ) : (
           <FeedList
             view={view}
-            items={displayItems}
+            items={items}
             loading={loading}
-            hasMore={false}
-            onLoadMore={() => {}}
+            hasMore={hasMore}
+            onLoadMore={() => { void loadMore(); }}
             onMarkRead={handleMarkRead}
             onToggleSave={handleToggleSave}
             onOpenSettings={() => setView('settings')}

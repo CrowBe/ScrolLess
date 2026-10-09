@@ -156,3 +156,40 @@ CREATE TABLE IF NOT EXISTS free_queue_deliveries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_free_queue_user_status ON free_queue_deliveries(user_id, status, queued_at);
+
+-- Host-owned readable content pushed by a trusted local agent (MCP agent-push v1).
+-- Unlike the legacy relay above, this content is stored on the host and read
+-- through the authenticated reader API. Identity is (user_id, source, source_id).
+CREATE TABLE IF NOT EXISTS content_items (
+    id                  TEXT PRIMARY KEY,             -- "ci_" + random hex
+    user_id             TEXT NOT NULL DEFAULT 'local',
+    source              TEXT NOT NULL,
+    source_id           TEXT NOT NULL,
+    url                 TEXT NOT NULL,
+    url_hash            TEXT NOT NULL,                -- SHA-256 of normalised url (index only)
+    title               TEXT NOT NULL,
+    author              TEXT,
+    content_preview     TEXT,
+    body                TEXT,
+    thumbnail_url       TEXT,
+    content_type        TEXT,
+    tags                TEXT NOT NULL DEFAULT '[]',   -- JSON array
+    metadata            TEXT,                         -- JSON object of primitives
+    is_discovery        INTEGER NOT NULL DEFAULT 0,
+    published_at        TEXT,                         -- ISO 8601 when parseable, else NULL
+    published_at_raw    TEXT,                         -- value as supplied by the agent
+    sort_at             TEXT NOT NULL,                -- COALESCE(published_at, first_seen_at)
+    fingerprint         TEXT NOT NULL,
+    revision            INTEGER NOT NULL DEFAULT 1,
+    eligibility         TEXT NOT NULL DEFAULT 'accepted', -- accepted | blocked
+    eligibility_reason  TEXT,
+    is_read             INTEGER NOT NULL DEFAULT 0,
+    is_saved            INTEGER NOT NULL DEFAULT 0,
+    state_version       INTEGER NOT NULL DEFAULT 0,
+    first_seen_at       TEXT NOT NULL,
+    last_seen_at        TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    UNIQUE (user_id, source, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_content_feed ON content_items(user_id, eligibility, sort_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_content_source ON content_items(user_id, source, sort_at DESC);

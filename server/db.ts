@@ -19,6 +19,8 @@ export function initDb(dbPath?: string): Database.Database {
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
+  // The stdio MCP process and the web server may share this file
+  db.pragma('busy_timeout = 5000');
 
   // Execute schema
   const schema = readFileSync(join(__dirname, '../sql/schema.sql'), 'utf8');

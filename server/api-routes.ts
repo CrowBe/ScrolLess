@@ -5,6 +5,7 @@ import fastifyRateLimit from '@fastify/rate-limit';
 import { z } from 'zod';
 import type { SseManager } from './sse-manager.js';
 import { readPreferences, sanitizeBlockedKeywords } from './preferences.js';
+import { ContentError, getStats, listItems, markAllRead, updateItemState } from './content-store.js';
 
 interface ApiRouteOptions {
   deviceEnrollmentToken?: string;
@@ -58,6 +59,23 @@ const preferencesPatchSchema = z.object({
     body.max_items_per_source !== undefined,
   { message: 'nothing to update' }
 );
+
+const itemsQuerySchema = z.object({
+  view: z.enum(['feed', 'discover', 'saved', 'all']).optional(),
+  source: z.string().trim().min(1).max(64).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  cursor: z.string().max(1_000).optional(),
+});
+const itemPatchSchema = z.object({
+  is_read: z.boolean().optional(),
+  is_saved: z.boolean().optional(),
+  expected_version: z.number().int().min(0).optional(),
+}).refine((body) => body.is_read !== undefined || body.is_saved !== undefined, {
+  message: 'nothing to update',
+});
+const markReadSchema = z.object({
+  source: z.string().trim().min(1).max(64).optional(),
+});
 
 function parseBody<T>(
   schema: z.ZodType<T>,
@@ -594,6 +612,72 @@ export function registerApiRoutes(
     }
 
     return reply.send({ ok: true });
+  });
+
+  // ── Host content (agent-push v1) ──
+  // The personal host has a single owner: content is pushed under 'local',
+  // and any authenticated reader session reads the owner's feed.
+  const requireReader = (req: FastifyRequest, reply: FastifyReply): string | null => {
+    if (!getRequestUserId(req, db)) {
+      reply.status(401).send({ error: 'Unauthorized device' });
+      return null;
+    }
+    return 'local';
+  };
+
+  // GET /api/items — readable host feed, newest first, cursor-paginated
+  fastify.get('/api/items', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    const query = parseBody(itemsQuerySchema, req.query, reply);
+    if (!query) return;
+
+    try {
+      const result = listItems(db, owner, {
+        view: query.view ?? 'feed',
+        source: query.source?.toLowerCase(),
+        limit: query.limit ?? 50,
+        cursor: query.cursor,
+      });
+      return reply.send(result);
+    } catch (err) {
+      if (err instanceof ContentError && err.code === 'invalid_cursor') {
+        return reply.status(400).send({ error: err.message });
+      }
+      throw err;
+    }
+  });
+
+  // GET /api/items/stats — counts for the source filter
+  fastify.get('/api/items/stats', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    return reply.send(getStats(db, owner));
+  });
+
+  // POST /api/items/mark-read — mark all (or one source's) items read
+  fastify.post('/api/items/mark-read', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    const body = parseBody(markReadSchema, req.body ?? {}, reply);
+    if (!body) return;
+    return reply.send({ updated: markAllRead(db, owner, body.source?.toLowerCase()) });
+  });
+
+  // PATCH /api/items/:id — read/save state with optional optimistic concurrency
+  fastify.patch('/api/items/:id', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    const { id } = req.params as { id: string };
+    const body = parseBody(itemPatchSchema, req.body, reply);
+    if (!body) return;
+
+    const result = updateItemState(db, owner, id, body);
+    if (!result.ok) {
+      if (result.code === 'not_found') return reply.status(404).send({ error: 'item not found' });
+      return reply.status(409).send({ error: 'version conflict', current: result.state });
+    }
+    return reply.send(result.state);
   });
 
   // GET /api/v1/tokens

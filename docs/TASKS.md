@@ -12,6 +12,8 @@ The personal-host direction supersedes the old relay/hosted architecture. [Archi
 | 6 | [#86](https://github.com/CrowBe/ScrolLess/issues/86) | Topical news discovery entering the same collection pipeline |
 | 7 | [#87](https://github.com/CrowBe/ScrolLess/issues/87) | Ownership-aware deletion/reset for host data, observation history and client cache |
 
+Agent push ([contract v1](RUNTIME_CONTRACT.md#agent-push-contract-v1)) delivers readable content to the host ahead of #82: a user-run agent collects and pushes over MCP. #82 still owns the Jev gateway and browser-worker proof.
+
 Search, discovery and reset may be prioritized independently once their foundations exist. A slice may implement only one supported adapter/engine; it must not weaken the durable contract to imply broader support.
 
 [#54](https://github.com/CrowBe/ScrolLess/issues/54) and [#56](https://github.com/CrowBe/ScrolLess/issues/56) were closed as superseded, not completed implementations. #81 replaces #54's architectural premise; #87 carries forward deletion work under the new ownership model.

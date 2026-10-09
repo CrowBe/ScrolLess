@@ -45,13 +45,18 @@ Source content, enrichment and presentation are separate records. Code enumerate
 
 Search indexes source content independently of presentation. Searching the captured corpus (#85) differs from topical discovery (#86), which obtains candidates and enters the same ledger/eligibility pipeline. Hidden bodies are not implicitly searchable.
 
+## Agent-push path (implemented)
+
+A trusted agent the user runs (for example Claude Code with its own browsing tools) acts as the collector: it extracts readable items and calls the MCP `push_items` tool. ScrolLess stores them in the host SQLite store ([content-store.ts](../server/content-store.ts)) and readers fetch them through `/api/items`. ScrolLess itself performs no inference on this path; the agent's model is the user's choice and outside the Jev gateway. Pushed content is evidence, not instructions: fields are length-limited, links must be http(s), and no item field can change sources, preferences or permissions. Behavior is recorded in [agent-push contract v1](RUNTIME_CONTRACT.md#agent-push-contract-v1). The Jev gateway, leased jobs and scheduled browser collection below remain target work.
+
 ## Current code versus target
 
 This map is a starting point for migration, not a claim that target services exist.
 
 | Current code | Current responsibility | Target change |
 |---|---|---|
-| [agent-routes.ts](../server/agent-routes.ts), [mcp.ts](../server/mcp.ts) | Encrypted submissions and collector context | Replace ingestion semantics through a versioned contract; retire old prompts deliberately |
+| [mcp-content-tools.ts](../server/mcp-content-tools.ts), [mcp-stdio.ts](../server/mcp-stdio.ts), [content-store.ts](../server/content-store.ts) | Agent-push v1: readable items into host SQLite, `/api/items` readback | Extend toward observations/revisions ledger, leased jobs and Jev decisions |
+| [agent-routes.ts](../server/agent-routes.ts), [mcp.ts](../server/mcp.ts) | Legacy encrypted submissions and collector context; HTTP `/mcp` also serves agent-push tools | Retire relay tools/prompts deliberately after migration |
 | [sse-manager.ts](../server/sse-manager.ts) | Device relay and delivery | Feed availability comes from durable host commit, independent of an open reader |
 | [db.ts](../server/db.ts), [schema.sql](../sql/schema.sql) | SQLite operational and queue state | Add authoritative content, ledger and runtime operations; preserve old data during migration |
 | [idb.ts](../src/idb.ts), [device-session.ts](../src/bootstrap/device-session.ts) | Device-owned content and decryption | Import/readback first, then optional cache and offline mutations |

@@ -2,7 +2,42 @@
 
 ScrolLess is moving to a personal feed collector: a browser worker on your machine gathers content, Jev makes bounded decisions, and a user-selected data store holds the readable feed. Clients read through an authenticated ScrolLess API.
 
-**Migration status:** this is the agreed target, not the current application. Issue [#81](https://github.com/CrowBe/ScrolLess/issues/81) establishes the documentation contract only. Current code still encrypts agent submissions, relays ciphertext and stores decrypted feed content in each reader's IndexedDB. The personal-host collector, gateway and authoritative content API remain implementation work.
+**Migration status:** the first working path is **agent push**: run ScrolLess locally as your own MCP server, let an agent (Claude Code, Claude Desktop or any MCP client) collect content and push readable items into your local SQLite store, and read them in the ScrolLess reader. The Jev gateway and scheduled browser collector remain target work. The legacy encrypted relay (ciphertext to each reader's IndexedDB) still runs alongside until existing device data is migrated.
+
+## Quick start: your own local MCP server
+
+Requires Node.js 20+.
+
+```bash
+git clone https://github.com/CrowBe/ScrolLess.git && cd ScrolLess
+npm ci
+npm run mcp:config   # prints the command/JSON for your MCP client
+```
+
+Register the stdio server with your agent, e.g. Claude Code:
+
+```bash
+claude mcp add scrolless --scope user -- "$PWD/node_modules/.bin/tsx" "$PWD/server/mcp-stdio.ts"
+```
+
+Then ask the agent to collect (or use the `collect_feed` prompt). It calls `get_collection_context`, browses your sources with whatever browsing tools it has, and calls `push_items`. Start the reader to see the feed:
+
+```bash
+HOST=127.0.0.1 npm run dev   # reader at http://localhost:5173
+```
+
+The stdio server needs no token: the agent launches it as a local process and it writes to `data/scrolless.db` (override with `DB_PATH`, which must match the web server's). Configure sources and blocked keywords in the reader's Settings.
+
+| MCP surface | Purpose |
+|---|---|
+| `get_collection_context` | Enabled sources, URLs, limits and blocked keywords |
+| `push_items` | Store readable items for one source; idempotent per `(source, source_id)`; per-item receipts |
+| `list_items` | Read back what is stored |
+| `scrolless://guide/push` | Item schema and collection rules for the agent |
+| `scrolless://sources/{name}` | Per-source extraction hints and user notes |
+| `collect_feed` prompt | One-shot collection workflow |
+
+Agents on another machine can use the same tools over HTTP at `/mcp` with an agent token or OAuth (see [deployment](docs/DEPLOYMENT.md)). The contract is recorded in the [runtime contract](docs/RUNTIME_CONTRACT.md#agent-push-contract-v1).
 
 ## Target flow
 
@@ -31,7 +66,7 @@ The target needs no application-level feed encryption, device content keys or ci
 - [Collector skill](skill/SKILL.md): workflow and target/current protocol boundary.
 - [Design system](docs/DESIGN_SYSTEM.md): existing reader styling.
 
-## Run the current application for development
+## Run the application for development
 
 Requires Node.js 20+ as declared in [package.json](package.json).
 
@@ -40,7 +75,7 @@ npm ci
 HOST=127.0.0.1 npm run dev
 ```
 
-This starts the existing backend on port 3333 and the Vite reader on port 5173. It does **not** start a Jev collector. Agent ingestion needs credentials and the existing encrypted payload protocol; see [deployment](docs/DEPLOYMENT.md). Do not submit target readable-content records to today's relay endpoints.
+This starts the backend on port 3333 and the Vite reader on port 5173. It does **not** start a Jev collector. Readable content arrives through the MCP `push_items` tool above; the legacy `/agent/*` routes and MCP `submit_items` still require the encrypted relay payload.
 
 Useful verification commands are `npm test`, `npm run test:server`, `npm run test:all`, `npm run build` and `npm run validate:boot`. See their definitions in [package.json](package.json).
 

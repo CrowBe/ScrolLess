@@ -10,6 +10,7 @@ import { verifyAgentToken } from './auth.js';
 import { getSyncContext, submitEncryptedPayload, type PushCallback } from './agent-routes.js';
 import type { AgentEncryptedFeedPayload } from './types.js';
 import type { SseManager } from './sse-manager.js';
+import { registerContentTools } from './mcp-content-tools.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RESOURCES_DIR = join(__dirname, '../skill/resources');
@@ -89,6 +90,15 @@ export function registerMcpHandler(
       { name: 'scrolless', version: '1.0.0' },
       { capabilities: { resources: {}, tools: {}, prompts: {} } }
     );
+
+    // Agent-push tools: readable items stored on the host
+    registerContentTools(mcp, db, userId, {
+      onCommitted: (result, latestTitle) => {
+        pushCallback?.(userId, result.source, result.counts.created + result.counts.updated, latestTitle).catch(() => {});
+      },
+    });
+
+    // Legacy encrypted relay tools below — kept until existing device data is migrated
 
     // Tool: get_sync_context
     mcp.tool(

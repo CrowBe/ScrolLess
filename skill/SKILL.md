@@ -9,7 +9,9 @@ Before collecting, determine which runtime is actually installed. Read the [runt
 
 ## Runtime boundary
 
-The personal-host workflow below is a target specification. The current repository's MCP `run_feed_sync` prompt, `get_sync_context`, `submit_items`, REST agent routes, [payload schema](resources/schema.json) and platform resources implement the legacy encrypted relay workflow. They are not a compatible target API. Do not submit readable target records to those endpoints or interpret a relay receipt as a durable host write.
+**Implemented: agent push.** When the `scrolless` MCP server exposes `push_items`, read `scrolless://guide/push`, call `get_collection_context`, collect each enabled source with your own browsing tools (hints at `scrolless://sources/{name}`) and push readable items per source. Receipts are durable host writes; verify with `list_items`. See [agent-push contract v1](../docs/RUNTIME_CONTRACT.md#agent-push-contract-v1).
+
+The personal-host workflow below remains a target specification. The MCP `run_feed_sync` prompt, `get_sync_context`, `submit_items`, REST agent routes, [payload schema](resources/schema.json) and `scrolless://platforms/*` resources implement the legacy encrypted relay workflow. Do not submit readable records to those endpoints or interpret a relay receipt as a durable host write.
 
 For an explicitly requested legacy sync, inspect the installed MCP prompt and schemas and follow that protocol while preserving device keys and data. The platform references [YouTube](resources/youtube.md), [X](resources/x.md) and [news](resources/news.md) describe legacy extraction behavior; their timestamp cutoffs, automatic skips and device deduplication assumptions must not be reused in the target worker. Application code and served resources are retired by implementation slices, not by this documentation change.
 

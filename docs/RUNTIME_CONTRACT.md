@@ -106,6 +106,25 @@ Search indexes eligible retained source content independently of projection shap
 | Ambiguous | Partial/uncertain evidence → recorded observation → unresolved decision | No automatic accept or infinite reclassification; explicit policy controls review/visibility/refetch |
 | Interrupted | Resume durable stage after lease expiry → reuse receipt/result or retry same operation key within remaining budget | No duplicate committed item; possible repeated external call is accounted for; uncommitted results remain invisible |
 
+## Agent-push contract v1
+
+Implemented in [content-store.ts](../server/content-store.ts) and [mcp-content-tools.ts](../server/mcp-content-tools.ts). This is the first readable-content path; it covers a subset of this contract and does not claim the leased-job, revision-ledger or gateway requirements above.
+
+| Concern | v1 behavior |
+|---|---|
+| Collector | An external agent the user runs. ScrolLess makes no inference calls; the agent's model sits outside the Jev gateway |
+| Transport and auth | Stdio MCP (local process boundary, owner `local`) or HTTP `/mcp` with agent/OAuth token. Readers use `/api/items` with a device session; any authenticated reader reads the single owner's feed |
+| Identity | `(owner, source, source_id)`. Normalised URL hash is stored as an index only |
+| Idempotency | Push is an upsert keyed by identity. Same payload → `unchanged`; changed fingerprint (`fp1`, SHA-256 of captured fields) → `updated` with `revision + 1`. Read/save state survives updates |
+| Receipts | Per item: `created`, `updated`, `unchanged`, `blocked` (with reason) or `rejected` (with reason). One bad item does not fail the batch |
+| Validation | Max 200 items per push; title 1,000, preview 4,000, body 100,000 characters; http(s) URLs ≤ 2,048; ≤ 20 tags; flat metadata ≤ 8 KB; source names `^[a-z0-9][a-z0-9_-]{0,63}$` |
+| Unknown values | Missing fields stay null. `published_at` is stored only when it parses; the raw text is kept. The reader shows first-seen time when publication time is unknown |
+| Eligibility | Deterministic blocked keywords (title, author, preview, body; case-insensitive). No semantic classification, so no unresolved state exists in v1. Current keywords also apply at read time |
+| Hidden-body retention | Blocked items are recorded metadata-only (identity, URL, title, author, fingerprint, reason); preview, body, thumbnail and metadata are not retained. Re-pushing after unblocking restores them |
+| Retention | Host items are not expired. `retention_days` still applies only to legacy IndexedDB items |
+| User state | `PATCH /api/items/:id` with optional `expected_version`; a stale version returns 409 with current state |
+| Pagination | Newest first by `COALESCE(published_at, first_seen_at)`, stable opaque cursor |
+
 ## Implementation gates
 
 These choices were not settled in the planning thread. An implementation PR must record the selected values, user-facing semantics and tests here (or link a versioned contract extension) before enabling the dependent behavior. Missing configuration must fail closed for that capability, not pick an undocumented policy.
