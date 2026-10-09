@@ -18,7 +18,13 @@ export type Tally = Record<Verdict, number>;
 const EMPTY_TALLY: Tally = { like: 0, dislike: 0, save: 0 };
 
 function toSessionCard(item: SessionItem): FeedItemResponse {
-  return { ...toResponse(item), session_slot: item.session.slot, session_reasons: item.session.reasons };
+  return {
+    ...toResponse(item),
+    session_slot: item.session.slot,
+    session_reasons: item.session.reasons,
+    session_breakdown: item.session.breakdown,
+    session_score: item.session.score,
+  };
 }
 
 /**

@@ -4,7 +4,8 @@ import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { pushItems, recordFeedback, removeFeedback, type PushItem } from './content-store.js';
-import { buildTasteProfile, drawSession, summarizeTaste, TASTE } from './taste.js';
+import { DEFAULT_RANKING, readRankingConfig, resetRankingConfig, updateRankingConfig } from './ranking-config.js';
+import { buildTasteProfile, drawSession, reviewRanking, summarizeTaste, SUMMARY } from './taste.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const NOW = new Date('2026-10-09T00:00:00Z');
@@ -43,7 +44,7 @@ describe('buildTasteProfile', () => {
   afterEach(() => { db.close(); });
 
   it('is empty without feedback', () => {
-    const profile = buildTasteProfile(db, 'local', NOW);
+    const profile = buildTasteProfile(db, 'local', DEFAULT_RANKING, NOW);
     expect(profile.feedback.total).toBe(0);
     expect(profile.features.size).toBe(0);
   });
@@ -58,25 +59,25 @@ describe('buildTasteProfile', () => {
     recordFeedback(db, 'local', ids.b, 'like', NOW);
     recordFeedback(db, 'local', ids.c, 'dislike', NOW);
 
-    const profile = buildTasteProfile(db, 'local', NOW);
+    const profile = buildTasteProfile(db, 'local', DEFAULT_RANKING, NOW);
     expect(profile.feedback).toMatchObject({ total: 3, likes: 1, saves: 1, dislikes: 1 });
     // (2 + 1) / (2 + prior)
-    expect(profile.features.get('author:news/ada')?.score).toBeCloseTo(3 / (2 + TASTE.prior));
-    expect(profile.features.get('author:news/bob')?.score).toBeCloseTo(-1 / (1 + TASTE.prior));
+    expect(profile.features.get('author:news/ada')?.score).toBeCloseTo(3 / (2 + DEFAULT_RANKING.prior));
+    expect(profile.features.get('author:news/bob')?.score).toBeCloseTo(-1 / (1 + DEFAULT_RANKING.prior));
     // Tags and types are case-folded and deduplicated within an item
     expect(profile.features.get('tag:rust')).toMatchObject({ saves: 1, evidence: 1 });
     expect(profile.features.get('type:article')?.score).toBeGreaterThan(0);
     // (2 + 1 - 1) / (3 + prior)
-    expect(profile.features.get('source:news')?.score).toBeCloseTo(2 / (3 + TASTE.prior));
+    expect(profile.features.get('source:news')?.score).toBeCloseTo(2 / (3 + DEFAULT_RANKING.prior));
 
     removeFeedback(db, 'local', ids.c);
-    expect(buildTasteProfile(db, 'local', NOW).features.has('author:news/bob')).toBe(false);
+    expect(buildTasteProfile(db, 'local', DEFAULT_RANKING, NOW).features.has('author:news/bob')).toBe(false);
   });
 
   it('decays older verdicts', () => {
     const ids = push(db, 'news', [item('a', { author: 'Ada' })]);
-    recordFeedback(db, 'local', ids.a, 'like', new Date(NOW.getTime() - TASTE.halfLifeDays * 86_400_000));
-    expect(buildTasteProfile(db, 'local', NOW).features.get('author:news/ada')?.evidence).toBeCloseTo(0.5);
+    recordFeedback(db, 'local', ids.a, 'like', new Date(NOW.getTime() - DEFAULT_RANKING.memory.half_life_days * 86_400_000));
+    expect(buildTasteProfile(db, 'local', DEFAULT_RANKING, NOW).features.get('author:news/ada')?.evidence).toBeCloseTo(0.5);
   });
 });
 
@@ -94,7 +95,7 @@ describe('drawSession', () => {
 
   it('ranks liked features first and spreads discovery cards through the deck', () => {
     setPref(db, 'session_size', 5);
-    setPref(db, 'exploration_share', 0.4);
+    updateRankingConfig(db, 'local', { discovery: { share: 0.4 } });
     // Seed taste: Ada is liked
     const seed = push(db, 'news', [item('seed', { author: 'Ada' })]);
     recordFeedback(db, 'local', seed.seed, 'like', NOW);
@@ -121,7 +122,7 @@ describe('drawSession', () => {
 
   it('prefers unfamiliar items for discovery', () => {
     setPref(db, 'session_size', 2);
-    setPref(db, 'exploration_share', 0.5);
+    updateRankingConfig(db, 'local', { discovery: { share: 0.5 } });
     const seed = push(db, 'news', [item('s1', { author: 'Ada' }), item('s2', { author: 'Bob' })]);
     recordFeedback(db, 'local', seed.s1, 'like', NOW);
     recordFeedback(db, 'local', seed.s2, 'dislike', NOW);
@@ -151,12 +152,83 @@ describe('drawSession', () => {
   });
 
   it('can turn discovery off', () => {
-    setPref(db, 'exploration_share', 0);
+    updateRankingConfig(db, 'local', { discovery: { enabled: false } });
     const ids = push(db, 'news', [item('a', { author: 'Ada' }), item('b'), item('c')]);
     recordFeedback(db, 'local', ids.a, 'like', NOW);
     const session = drawSession(db, 'local', { view: 'feed', now: NOW });
     expect(session.discovery_count).toBe(0);
     expect(session.items.every((i) => i.session.slot === 'ranked')).toBe(true);
+  });
+});
+
+describe('configurable ranking', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = createTestDb(); });
+  afterEach(() => { db.close(); });
+
+  function seedAda() {
+    const ids = push(db, 'news', [item('seed', { author: 'Ada', tags: ['rust'] })]);
+    recordFeedback(db, 'local', ids.seed, 'like', NOW);
+    push(db, 'news', [
+      item('ada', { author: 'Ada', tags: ['rust'], published_at: '2026-09-01T00:00:00Z' }),
+      item('fresh', { author: 'Cy' }),
+    ]);
+  }
+
+  it('explains every card: the breakdown adds up to the score', () => {
+    updateRankingConfig(db, 'local', { discovery: { enabled: false } });
+    seedAda();
+    const [top] = drawSession(db, 'local', { view: 'feed', now: NOW }).items;
+    expect(top.source_id).toBe('ada');
+    expect(top.session.breakdown.map((p) => p.part)).toEqual(['source', 'author', 'tag', 'freshness']);
+    const author = top.session.breakdown.find((p) => p.part === 'author')!;
+    expect(author).toMatchObject({ key: 'author:news/ada', label: 'Ada', weight: 1.5 });
+    expect(author.contribution).toBeCloseTo(author.value * author.weight, 2);
+    const sum = top.session.breakdown.reduce((n, p) => n + p.contribution, 0);
+    expect(sum).toBeCloseTo(top.session.score, 2);
+  });
+
+  it('switches parts off and mutes single signals', () => {
+    updateRankingConfig(db, 'local', { discovery: { enabled: false } });
+    seedAda();
+    // Author and tag off, freshness off: Ada's item only keeps the source signal, shared with Cy
+    updateRankingConfig(db, 'local', { signals: { author: { enabled: false }, tag: { enabled: false } }, freshness: { enabled: false } });
+    let session = drawSession(db, 'local', { view: 'feed', now: NOW });
+    expect(session.items[0].session.breakdown.map((p) => p.part)).toEqual(['source']);
+    // Equal scores fall back to newest first
+    expect(session.items.map((i) => i.source_id)).toEqual(['fresh', 'ada']);
+
+    updateRankingConfig(db, 'local', { signals: { author: { enabled: true } }, muted_features: ['author:news/ada'] });
+    session = drawSession(db, 'local', { view: 'feed', now: NOW });
+    expect(session.items[0].session.breakdown.some((p) => p.part === 'author')).toBe(false);
+
+    const review = reviewRanking(db, 'local', NOW);
+    expect(review.signals.find((s) => s.key === 'author:news/ada')).toMatchObject({ muted: true, active: false });
+    expect(review.signals.find((s) => s.key === 'tag:rust')).toMatchObject({ muted: false, active: false });
+    expect(summarizeTaste(db, 'local', NOW).summary).toContain('switched off ranking by tag');
+  });
+
+  it('reweights verdicts and memory', () => {
+    const ids = push(db, 'news', [item('a', { author: 'Ada' })]);
+    recordFeedback(db, 'local', ids.a, 'like', new Date(NOW.getTime() - 90 * 86_400_000));
+    updateRankingConfig(db, 'local', { verdicts: { like: 3 }, prior: 0, memory: { decay: false } });
+    const stat = buildTasteProfile(db, 'local', readRankingConfig(db, 'local'), NOW).features.get('author:news/ada')!;
+    expect(stat.evidence).toBe(1);
+    expect(stat.score).toBe(3);
+  });
+
+  it('keeps unrelated settings when patching and resets to defaults', () => {
+    updateRankingConfig(db, 'local', { signals: { author: { weight: 4 } } });
+    updateRankingConfig(db, 'local', { signals: { author: { enabled: false } } });
+    expect(readRankingConfig(db, 'local').signals.author).toEqual({ enabled: false, weight: 4 });
+    expect(readRankingConfig(db, 'local').signals.tag).toEqual(DEFAULT_RANKING.signals.tag);
+    expect(resetRankingConfig(db, 'local')).toEqual(DEFAULT_RANKING);
+    expect(readRankingConfig(db, 'local')).toEqual(DEFAULT_RANKING);
+  });
+
+  it('falls back to defaults when the stored config is unreadable', () => {
+    setPref(db, 'ranking', { prior: 'lots' });
+    expect(readRankingConfig(db, 'local')).toEqual(DEFAULT_RANKING);
   });
 });
 
@@ -178,7 +250,7 @@ describe('summarizeTaste', () => {
     expect(summary.feedback.total).toBe(2);
     const author = summary.liked.authors[0];
     expect(author.name).not.toContain('\n');
-    expect(author.name.length).toBeLessThanOrEqual(TASTE.labelLength);
+    expect(author.name.length).toBeLessThanOrEqual(SUMMARY.labelLength);
     expect(summary.liked.tags.map((t) => t.name)).toEqual(['ai']);
     expect(summary.passed.authors.map((a) => a.name)).toEqual(['Bob']);
     expect(summary.passed.types.map((t) => t.name)).toEqual(['video']);

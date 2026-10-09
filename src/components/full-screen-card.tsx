@@ -4,6 +4,7 @@ import type { Verdict } from '../api';
 import { displayName } from '../source-labels';
 import { relativeTime } from '../utils';
 import { VERDICT_UI } from './swipe-deck';
+import { WhyThisCard } from './why-this-card';
 
 interface Props {
   item: FeedItemResponse;
@@ -67,6 +68,7 @@ export function FullScreenCard({ item, onClose, onVerdict }: Props) {
             <span class="material-symbols-outlined">open_in_new</span>
             Open original
           </a>
+          <WhyThisCard item={item} />
         </div>
       </div>
 

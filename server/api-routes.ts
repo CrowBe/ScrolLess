@@ -3,8 +3,9 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 import fastifyRateLimit from '@fastify/rate-limit';
 import { z } from 'zod';
-import { EXPLORATION_SHARE_MAX, readPreferences, sanitizeBlockedKeywords } from './preferences.js';
-import { drawSession, summarizeTaste } from './taste.js';
+import { readPreferences, sanitizeBlockedKeywords } from './preferences.js';
+import { rankingPatchSchema, resetRankingConfig, updateRankingConfig } from './ranking-config.js';
+import { drawSession, reviewRanking } from './taste.js';
 import { ContentError, getStats, listItems, markAllRead, recordFeedback, removeFeedback, updateItemState } from './content-store.js';
 
 const SESSION_SIZE_MIN = 5;
@@ -47,13 +48,11 @@ const preferencesPatchSchema = z.object({
   blocked_keywords: z.array(z.string()).optional(),
   max_items_per_source: z.number().int().min(1).max(500).optional(),
   session_size: z.number().int().min(SESSION_SIZE_MIN).max(SESSION_SIZE_MAX).optional(),
-  exploration_share: z.number().min(0).max(EXPLORATION_SHARE_MAX).optional(),
 }).refine(
   (body) =>
     body.blocked_keywords !== undefined ||
     body.max_items_per_source !== undefined ||
-    body.session_size !== undefined ||
-    body.exploration_share !== undefined,
+    body.session_size !== undefined,
   { message: 'nothing to update' }
 );
 
@@ -282,7 +281,6 @@ export function registerApiRoutes(
           : current.blocked_keywords,
       max_items_per_source: body.max_items_per_source ?? current.max_items_per_source,
       session_size: body.session_size ?? current.session_size,
-      exploration_share: body.exploration_share ?? current.exploration_share,
     };
 
     const save = db.transaction(() => {
@@ -294,7 +292,6 @@ export function registerApiRoutes(
       upsert.run(userId, 'blocked_keywords', JSON.stringify(next.blocked_keywords));
       upsert.run(userId, 'max_items_per_source', JSON.stringify(next.max_items_per_source));
       upsert.run(userId, 'session_size', JSON.stringify(next.session_size));
-      upsert.run(userId, 'exploration_share', JSON.stringify(next.exploration_share));
     });
 
     save();
@@ -479,11 +476,29 @@ export function registerApiRoutes(
     return reply.send(drawSession(db, owner, { view: query.view ?? 'feed', source: query.source?.toLowerCase() }));
   });
 
-  // GET /api/taste — learned taste summary (same view the agent gets)
-  fastify.get('/api/taste', async (req: FastifyRequest, reply: FastifyReply) => {
+  // GET /api/ranking — the ranking config and every learned signal, for review
+  fastify.get('/api/ranking', async (req: FastifyRequest, reply: FastifyReply) => {
     const owner = requireReader(req, reply);
     if (!owner) return;
-    return reply.send(summarizeTaste(db, owner));
+    return reply.send(reviewRanking(db, owner));
+  });
+
+  // PATCH /api/ranking — change weights, switch parts off, mute signals
+  fastify.patch('/api/ranking', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    const body = parseBody(rankingPatchSchema, req.body, reply);
+    if (!body) return;
+    updateRankingConfig(db, owner, body);
+    return reply.send(reviewRanking(db, owner));
+  });
+
+  // POST /api/ranking/reset — default weights; swipe history is kept
+  fastify.post('/api/ranking/reset', async (req: FastifyRequest, reply: FastifyReply) => {
+    const owner = requireReader(req, reply);
+    if (!owner) return;
+    resetRankingConfig(db, owner);
+    return reply.send(reviewRanking(db, owner));
   });
 
   // GET /api/items/stats — counts for the source filter

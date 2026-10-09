@@ -93,7 +93,6 @@ describe('GET/PATCH /api/preferences', () => {
       blocked_keywords: ['sponsored'],
       max_items_per_source: 50,
       session_size: 20,
-      exploration_share: 0.2,
     });
   });
 
@@ -112,7 +111,6 @@ describe('GET/PATCH /api/preferences', () => {
       blocked_keywords: ['sponsored', 'giveaway'],
       max_items_per_source: 25,
       session_size: 20,
-      exploration_share: 0.2,
     });
 
     const rows = db.prepare(
@@ -536,18 +534,39 @@ describe('/api/items (host content)', () => {
     expect(ok.json()).toMatchObject({ session_size: 10 });
   });
 
-  it('validates exploration_share bounds', async () => {
-    expect((await app.inject({ method: 'PATCH', url: '/api/preferences', payload: { exploration_share: 0.9 } })).statusCode).toBe(400);
-    expect((await app.inject({ method: 'PATCH', url: '/api/preferences', payload: { exploration_share: -0.1 } })).statusCode).toBe(400);
-    const ok = await app.inject({ method: 'PATCH', url: '/api/preferences', payload: { exploration_share: 0 } });
-    expect(ok.json()).toMatchObject({ exploration_share: 0 });
+  it('reviews, changes and resets the ranking config', async () => {
+    const review = await app.inject({ method: 'GET', url: '/api/ranking' });
+    expect(review.statusCode).toBe(200);
+    expect(review.json()).toMatchObject({ ranking_version: 'rank2', config: { discovery: { enabled: true, share: 0.2 } }, signals: [] });
+
+    const bad = [
+      { discovery: { share: 0.9 } },
+      { signals: { author: { weight: -1 } } },
+      { verdicts: { like: 'lots' } },
+      { unknown_part: true },
+    ];
+    for (const payload of bad) {
+      expect((await app.inject({ method: 'PATCH', url: '/api/ranking', payload })).statusCode).toBe(400);
+    }
+
+    const changed = await app.inject({
+      method: 'PATCH', url: '/api/ranking',
+      payload: { signals: { author: { enabled: false } }, discovery: { share: 0 }, muted_features: ['tag:x'] },
+    });
+    expect(changed.statusCode).toBe(200);
+    expect(changed.json()).toMatchObject({
+      config: { signals: { author: { enabled: false, weight: 1.5 } }, discovery: { enabled: true, share: 0 }, muted_features: ['tag:x'] },
+    });
+
+    const reset = await app.inject({ method: 'POST', url: '/api/ranking/reset' });
+    expect(reset.json()).toMatchObject({ config: { signals: { author: { enabled: true } }, muted_features: [] } });
   });
 
   it('draws a session newest first until there is feedback, then ranks by taste', async () => {
     const cold = await app.inject({ method: 'GET', url: '/api/items/session' });
     expect(cold.statusCode).toBe(200);
     const coldBody = cold.json() as { size: number; feedback_count: number; items: Array<{ title: string; session: { slot: string } }> };
-    expect(coldBody).toMatchObject({ size: 20, feedback_count: 0, ranking_version: 'rank1' });
+    expect(coldBody).toMatchObject({ size: 20, feedback_count: 0, ranking_version: 'rank2' });
     expect(coldBody.items.map((i) => [i.title, i.session.slot])).toEqual([['Second', 'recent'], ['First', 'recent']]);
 
     const discover = await app.inject({ method: 'GET', url: '/api/items/session?view=discover' });
@@ -561,19 +580,21 @@ describe('/api/items (host content)', () => {
     ]);
     const liked = db.prepare(`SELECT id FROM content_items WHERE source_id = 'e'`).get() as { id: string };
     await app.inject({ method: 'PUT', url: `/api/items/${liked.id}/feedback`, payload: { verdict: 'like' } });
-    await app.inject({ method: 'PATCH', url: '/api/preferences', payload: { exploration_share: 0 } });
+    await app.inject({ method: 'PATCH', url: '/api/ranking', payload: { discovery: { enabled: false } } });
 
     const warm = (await app.inject({ method: 'GET', url: '/api/items/session' })).json() as {
       feedback_count: number;
-      items: Array<{ title: string; session: { slot: string; reasons: string[] } }>;
+      items: Array<{ title: string; session: { slot: string; reasons: string[]; breakdown: Array<{ part: string }> } }>;
     };
     expect(warm.feedback_count).toBe(1);
     expect(warm.items[0]).toMatchObject({ title: 'Liked', session: { slot: 'ranked' } });
     expect(warm.items[0].session.reasons).toContain('liked author: Ada');
+    expect(warm.items[0].session.breakdown.map((p) => p.part)).toEqual(['source', 'author', 'freshness']);
     expect(warm.items.map((i) => i.title)).not.toContain('Also Ada');
 
-    const taste = (await app.inject({ method: 'GET', url: '/api/taste' })).json() as { summary: string };
-    expect(taste.summary).toContain('Ada (news)');
+    const ranking = (await app.inject({ method: 'GET', url: '/api/ranking' })).json() as { summary: string; signals: Array<{ key: string }> };
+    expect(ranking.summary).toContain('Ada (news)');
+    expect(ranking.signals.map((s) => s.key)).toContain('author:news/ada');
   });
 
   it('reports stats and marks all read', async () => {
@@ -591,7 +612,9 @@ describe('/api/items (host content)', () => {
     process.env.NODE_ENV = 'production';
     expect((await app.inject({ method: 'GET', url: '/api/items' })).statusCode).toBe(401);
     expect((await app.inject({ method: 'GET', url: '/api/items/session' })).statusCode).toBe(401);
-    expect((await app.inject({ method: 'GET', url: '/api/taste' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/api/ranking' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'PATCH', url: '/api/ranking', payload: { prior: 1 } })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'POST', url: '/api/ranking/reset' })).statusCode).toBe(401);
     expect((await app.inject({ method: 'GET', url: '/api/items', headers: { authorization: 'Bearer dsess_bogus' } })).statusCode).toBe(401);
 
     const { session_token } = await createVerifiedDevice('dev_reader', app, 'enroll-secret');
