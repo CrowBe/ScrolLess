@@ -10,6 +10,8 @@ export const FEATURE_KINDS = ['source', 'author', 'type', 'tag'] as const;
 export type FeatureKind = (typeof FEATURE_KINDS)[number];
 
 export interface RankingConfig {
+  /** How much evidence is needed before swipes change anything. */
+  evidence: { min_swipes: number; min_signal_swipes: number };
   /** Learned signals: whether each kind counts and how much. */
   signals: Record<FeatureKind, { enabled: boolean; weight: number }>;
   /** What one swipe of each kind teaches. */
@@ -29,6 +31,7 @@ export interface RankingConfig {
 }
 
 export const DEFAULT_RANKING: RankingConfig = {
+  evidence: { min_swipes: 30, min_signal_swipes: 5 },
   signals: {
     source: { enabled: true, weight: 1 },
     author: { enabled: true, weight: 1.5 },
@@ -45,6 +48,8 @@ export const DEFAULT_RANKING: RankingConfig = {
 };
 
 export const RANKING_LIMITS = {
+  minSwipes: 1000,
+  minSignalSwipes: [1, 100],
   signalWeight: 5,
   verdictWeight: 5,
   halfLifeDays: [1, 3650],
@@ -65,6 +70,10 @@ const verdict = z.number().min(-RANKING_LIMITS.verdictWeight).max(RANKING_LIMITS
 
 /** A patch may set any subset of fields; omitted fields keep their value. */
 export const rankingPatchSchema = z.object({
+  evidence: z.object({
+    min_swipes: z.number().int().min(0).max(RANKING_LIMITS.minSwipes),
+    min_signal_swipes: z.number().int().min(RANKING_LIMITS.minSignalSwipes[0]).max(RANKING_LIMITS.minSignalSwipes[1]),
+  }).partial(),
   signals: z.object({ source: signal, author: signal, type: signal, tag: signal }).partial(),
   verdicts: z.object({ like: verdict, save: verdict, dislike: verdict }).partial(),
   memory: z.object({
@@ -93,6 +102,7 @@ function merge(base: RankingConfig, patch: RankingPatch): RankingConfig {
     signals[kind] = { ...base.signals[kind], ...patch.signals?.[kind] };
   }
   return {
+    evidence: { ...base.evidence, ...patch.evidence },
     signals,
     verdicts: { ...base.verdicts, ...patch.verdicts },
     memory: { ...base.memory, ...patch.memory },

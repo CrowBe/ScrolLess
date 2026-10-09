@@ -7,6 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createContentMcpServer } from './mcp-content-tools.js';
 import { recordFeedback, type PushResult } from './content-store.js';
+import { updateRankingConfig } from './ranking-config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -71,6 +72,7 @@ describe('content MCP server', () => {
       },
     }))) as PushResult;
     recordFeedback(db, 'local', push.receipts[0].id!, 'save');
+    updateRankingConfig(db, 'local', { evidence: { min_swipes: 1, min_signal_swipes: 1 } });
 
     const taste = JSON.parse(textOf(await client.callTool({ name: 'get_taste_profile', arguments: {} }))) as {
       feedback: { total: number; saves: number };

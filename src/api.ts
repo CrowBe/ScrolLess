@@ -191,6 +191,7 @@ export interface SessionItem extends FeedItem {
 
 /** Every tunable the session ranker uses; see docs/RANKING.md. */
 export interface RankingConfig {
+  evidence: { min_swipes: number; min_signal_swipes: number };
   signals: Record<SignalKind, { enabled: boolean; weight: number }>;
   verdicts: { like: number; save: number; dislike: number };
   memory: { decay: boolean; half_life_days: number };
@@ -215,6 +216,8 @@ export interface SessionPage {
   config: RankingConfig;
   discovery_count: number;
   feedback_count: number;
+  /** False until there are enough swipes; the session is then newest first. */
+  ranking_active: boolean;
   items: SessionItem[];
 }
 
@@ -236,8 +239,9 @@ export interface LearnedSignal {
   evidence: number;
   score: number;
   muted: boolean;
-  /** False when muted or its kind is switched off. */
-  active: boolean;
+  /** active counts; learning needs more swipes; muted or off by your choice. */
+  status: 'active' | 'learning' | 'muted' | 'off';
+  swipes: number;
 }
 
 export interface RankingReview {
@@ -245,6 +249,7 @@ export interface RankingReview {
   config: RankingConfig;
   feedback: { total: number; likes: number; saves: number; dislikes: number; latest_at: string | null };
   summary: string;
+  ranking_active: boolean;
   signals: LearnedSignal[];
 }
 

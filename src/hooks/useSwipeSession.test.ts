@@ -15,7 +15,7 @@ vi.mock('../api', () => ({
 import { useSwipeSession } from './useSwipeSession';
 
 function session(items: unknown[], size = 2) {
-  return { ranking_version: 'rank2', size, config: {}, discovery_count: 0, feedback_count: 0, items };
+  return { ranking_version: 'rank3', size, config: {}, discovery_count: 0, feedback_count: 0, ranking_active: true, items };
 }
 
 function item(id: string, slot = 'ranked') {

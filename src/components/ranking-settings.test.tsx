@@ -11,6 +11,7 @@ vi.mock('../api', () => ({
 import { RankingSection } from './ranking-settings';
 
 const config = {
+  evidence: { min_swipes: 30, min_signal_swipes: 5 },
   signals: {
     source: { enabled: true, weight: 1 },
     author: { enabled: true, weight: 1.5 },
@@ -29,13 +30,15 @@ const config = {
 function review(overrides: Partial<typeof config> = {}) {
   const c = { ...config, ...overrides };
   return {
-    ranking_version: 'rank2',
+    ranking_version: 'rank3',
     config: c,
     feedback: { total: 3, likes: 2, saves: 1, dislikes: 0, latest_at: null },
     summary: 'Based on 3 swipes. Leans toward: authors Ada (news).',
+    ranking_active: false,
     signals: [{
       key: 'author:news/ada', kind: 'author', label: 'Ada', source: 'news', likes: 2, saves: 1, dislikes: 0,
-      evidence: 3, score: 0.8, muted: c.muted_features.includes('author:news/ada'), active: !c.muted_features.includes('author:news/ada'),
+      evidence: 3, score: 0.8, muted: c.muted_features.includes('author:news/ada'), swipes: 3,
+      status: c.muted_features.includes('author:news/ada') ? 'muted' : 'learning',
     }],
   };
 }
@@ -52,6 +55,8 @@ describe('RankingSection', () => {
     expect(screen.getByText('Ada (news)')).toBeInTheDocument();
     expect(screen.getByText('+0.80')).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: 'Author' })).toBeChecked();
+    expect(screen.getByText('Newest first for now: 3 of 30 swipes.')).toBeInTheDocument();
+    expect(screen.getByText(/learning 3\/5/)).toBeInTheDocument();
   });
 
   it('saves edited weights and switched-off parts', async () => {
@@ -60,12 +65,14 @@ describe('RankingSection', () => {
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Topics' }));
     fireEvent.input(screen.getByDisplayValue('1.5'), { target: { value: '3' } });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Discovery cards' }));
+    fireEvent.input(screen.getByDisplayValue('30'), { target: { value: '50' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save ranking' }));
     await waitFor(() => expect(api.updateRanking).toHaveBeenCalled());
     const patch = api.updateRanking.mock.calls[0][0];
     expect(patch.signals.tag.enabled).toBe(false);
     expect(patch.signals.author).toEqual({ enabled: true, weight: 3 });
     expect(patch.discovery.enabled).toBe(false);
+    expect(patch.evidence).toEqual({ min_swipes: 50, min_signal_swipes: 5 });
     expect(await screen.findByText('Ranking saved.')).toBeInTheDocument();
   });
 

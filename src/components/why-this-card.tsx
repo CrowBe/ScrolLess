@@ -11,7 +11,7 @@ const PART_LABEL: Record<string, string> = {
 const SLOT_TEXT = {
   ranked: 'Ranked by your taste: the points below add up to its score, and higher scores come first.',
   discovery: 'Discovery pick: drawn at random from outside your top-ranked cards, favouring things you have few swipes on.',
-  recent: 'Newest first: you have no swipes yet, so nothing is ranked.',
+  recent: 'Newest first: ranking waits until you have swiped enough cards (Settings → Ranking shows how many).',
 };
 
 function fmt(value: number): string {

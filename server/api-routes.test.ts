@@ -537,12 +537,13 @@ describe('/api/items (host content)', () => {
   it('reviews, changes and resets the ranking config', async () => {
     const review = await app.inject({ method: 'GET', url: '/api/ranking' });
     expect(review.statusCode).toBe(200);
-    expect(review.json()).toMatchObject({ ranking_version: 'rank2', config: { discovery: { enabled: true, share: 0.2 } }, signals: [] });
+    expect(review.json()).toMatchObject({ ranking_version: 'rank3', config: { discovery: { enabled: true, share: 0.2 } }, signals: [] });
 
     const bad = [
       { discovery: { share: 0.9 } },
       { signals: { author: { weight: -1 } } },
       { verdicts: { like: 'lots' } },
+      { evidence: { min_signal_swipes: 0 } },
       { unknown_part: true },
     ];
     for (const payload of bad) {
@@ -562,11 +563,11 @@ describe('/api/items (host content)', () => {
     expect(reset.json()).toMatchObject({ config: { signals: { author: { enabled: true } }, muted_features: [] } });
   });
 
-  it('draws a session newest first until there is feedback, then ranks by taste', async () => {
+  it('draws a session newest first until there is enough feedback, then ranks by taste', async () => {
     const cold = await app.inject({ method: 'GET', url: '/api/items/session' });
     expect(cold.statusCode).toBe(200);
     const coldBody = cold.json() as { size: number; feedback_count: number; items: Array<{ title: string; session: { slot: string } }> };
-    expect(coldBody).toMatchObject({ size: 20, feedback_count: 0, ranking_version: 'rank2' });
+    expect(coldBody).toMatchObject({ size: 20, feedback_count: 0, ranking_version: 'rank3' });
     expect(coldBody.items.map((i) => [i.title, i.session.slot])).toEqual([['Second', 'recent'], ['First', 'recent']]);
 
     const discover = await app.inject({ method: 'GET', url: '/api/items/session?view=discover' });
@@ -580,7 +581,16 @@ describe('/api/items (host content)', () => {
     ]);
     const liked = db.prepare(`SELECT id FROM content_items WHERE source_id = 'e'`).get() as { id: string };
     await app.inject({ method: 'PUT', url: `/api/items/${liked.id}/feedback`, payload: { verdict: 'like' } });
-    await app.inject({ method: 'PATCH', url: '/api/ranking', payload: { discovery: { enabled: false } } });
+
+    // One swipe is below the default evidence bar: still newest first
+    const early = (await app.inject({ method: 'GET', url: '/api/items/session' })).json() as { ranking_active: boolean; items: Array<{ title: string }> };
+    expect(early.ranking_active).toBe(false);
+    expect(early.items[0].title).toBe('Second');
+
+    await app.inject({
+      method: 'PATCH', url: '/api/ranking',
+      payload: { discovery: { enabled: false }, evidence: { min_swipes: 1, min_signal_swipes: 1 } },
+    });
 
     const warm = (await app.inject({ method: 'GET', url: '/api/items/session' })).json() as {
       feedback_count: number;

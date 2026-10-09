@@ -9,6 +9,7 @@ import { buildTasteProfile, drawSession, reviewRanking, summarizeTaste, SUMMARY 
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const NOW = new Date('2026-10-09T00:00:00Z');
+const LOW_EVIDENCE = { evidence: { min_swipes: 1, min_signal_swipes: 1 } };
 
 function createTestDb(): Database.Database {
   const db = new Database(':memory:');
@@ -83,7 +84,8 @@ describe('buildTasteProfile', () => {
 
 describe('drawSession', () => {
   let db: Database.Database;
-  beforeEach(() => { db = createTestDb(); });
+  // Small fixtures: rank from the first swipe; evidence gates have their own tests
+  beforeEach(() => { db = createTestDb(); updateRankingConfig(db, 'local', LOW_EVIDENCE); });
   afterEach(() => { db.close(); });
 
   it('is newest first with no feedback', () => {
@@ -161,9 +163,60 @@ describe('drawSession', () => {
   });
 });
 
-describe('configurable ranking', () => {
+describe('evidence gates', () => {
   let db: Database.Database;
   beforeEach(() => { db = createTestDb(); });
+  afterEach(() => { db.close(); });
+
+  function swipe(n: number, author: string, verdict: 'like' | 'dislike' = 'like') {
+    const ids = push(db, 'news', Array.from({ length: n }, (_, i) => item(`${author}${i}`, { author })));
+    for (const id of Object.values(ids)) recordFeedback(db, 'local', id, verdict, NOW);
+  }
+
+  it('stays newest first until there are enough swipes in total', () => {
+    updateRankingConfig(db, 'local', { evidence: { min_swipes: 6, min_signal_swipes: 1 }, discovery: { enabled: false } });
+    swipe(5, 'ada');
+    push(db, 'news', [item('old-ada', { author: 'ada', published_at: '2026-09-01T00:00:00Z' }), item('new-cy', { author: 'cy' })]);
+
+    let session = drawSession(db, 'local', { view: 'feed', now: NOW });
+    expect(session).toMatchObject({ ranking_active: false, feedback_count: 5 });
+    expect(session.items.map((i) => [i.source_id, i.session.slot])).toEqual([['new-cy', 'recent'], ['old-ada', 'recent']]);
+    const summary = summarizeTaste(db, 'local', NOW);
+    expect(summary).toMatchObject({ ranking_active: false, liked: { authors: [] } });
+    expect(summary.summary).toBe('5 of 6 swipes needed before ranking starts. Collect broadly; sessions are newest first until then.');
+
+    swipe(1, 'bob', 'dislike');
+    session = drawSession(db, 'local', { view: 'feed', now: NOW });
+    expect(session.ranking_active).toBe(true);
+    expect(session.items[0]).toMatchObject({ source_id: 'old-ada', session: { slot: 'ranked' } });
+  });
+
+  it('ignores a signal until it has enough swipes of its own', () => {
+    updateRankingConfig(db, 'local', { evidence: { min_swipes: 1, min_signal_swipes: 3 }, discovery: { enabled: false }, freshness: { enabled: false } });
+    swipe(3, 'ada');
+    swipe(2, 'bob');
+    push(db, 'news', [item('ada-x', { author: 'ada' }), item('bob-x', { author: 'bob' })]);
+    const items = drawSession(db, 'local', { view: 'feed', source: 'news', now: NOW }).items;
+    const ada = items.find((i) => i.source_id === 'ada-x')!;
+    const bob = items.find((i) => i.source_id === 'bob-x')!;
+    expect(ada.session.breakdown.map((p) => p.part)).toEqual(['source', 'author']);
+    expect(bob.session.breakdown.map((p) => p.part)).toEqual(['source']);
+
+    const review = reviewRanking(db, 'local', NOW);
+    expect(review.signals.find((s) => s.key === 'author:news/ada')).toMatchObject({ status: 'active', swipes: 3 });
+    expect(review.signals.find((s) => s.key === 'author:news/bob')).toMatchObject({ status: 'learning', swipes: 2 });
+    expect(summarizeTaste(db, 'local', NOW).liked.authors.map((a) => a.name)).toEqual(['ada']);
+  });
+
+  it('has conservative defaults', () => {
+    expect(DEFAULT_RANKING.evidence).toEqual({ min_swipes: 30, min_signal_swipes: 5 });
+  });
+});
+
+describe('configurable ranking', () => {
+  let db: Database.Database;
+  // Small fixtures: rank from the first swipe; evidence gates have their own tests
+  beforeEach(() => { db = createTestDb(); updateRankingConfig(db, 'local', LOW_EVIDENCE); });
   afterEach(() => { db.close(); });
 
   function seedAda() {
@@ -203,8 +256,8 @@ describe('configurable ranking', () => {
     expect(session.items[0].session.breakdown.some((p) => p.part === 'author')).toBe(false);
 
     const review = reviewRanking(db, 'local', NOW);
-    expect(review.signals.find((s) => s.key === 'author:news/ada')).toMatchObject({ muted: true, active: false });
-    expect(review.signals.find((s) => s.key === 'tag:rust')).toMatchObject({ muted: false, active: false });
+    expect(review.signals.find((s) => s.key === 'author:news/ada')).toMatchObject({ muted: true, status: 'muted' });
+    expect(review.signals.find((s) => s.key === 'tag:rust')).toMatchObject({ muted: false, status: 'off' });
     expect(summarizeTaste(db, 'local', NOW).summary).toContain('switched off ranking by tag');
   });
 
@@ -234,7 +287,8 @@ describe('configurable ranking', () => {
 
 describe('summarizeTaste', () => {
   let db: Database.Database;
-  beforeEach(() => { db = createTestDb(); });
+  // Small fixtures: rank from the first swipe; evidence gates have their own tests
+  beforeEach(() => { db = createTestDb(); updateRankingConfig(db, 'local', LOW_EVIDENCE); });
   afterEach(() => { db.close(); });
 
   it('describes likes and passes with sanitised labels', () => {

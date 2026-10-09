@@ -1151,6 +1151,7 @@ img { display: block; max-width: 100%; }
 .ranking__signal--inactive { opacity: 0.55; }
 .ranking__signal-kind { color: var(--on-surface-variant); }
 .ranking__signal-label { overflow-wrap: anywhere; }
+.ranking__signal-status { color: var(--on-surface-variant); font-size: 0.75rem; }
 .ranking__signal-score { font-variant-numeric: tabular-nums; font-weight: 700; }
 
 .swipe-card__badge {
